@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/board/raylar_v1p0",
+    "unitsmoke/01_helloworld",
+    "unitsmoke/02_userbutton",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+embassy-stm32 = { version = "0.6.0", features = ["defmt", "exti", "memory-x", "stm32u585ai", "time-driver-any", "unstable-pac"] }
+embassy-executor = { version = "0.10.0", features = ["defmt", "executor-thread", "platform-cortex-m"] }
+embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
+defmt = "1.1.0"
+defmt-rtt = "1.2.0"
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core", "inline-asm"] }
+cortex-m-rt = "0.7.5"
+
+[profile.release]
+lto = false
+opt-level = "s"
+codegen-units = 1
+debug = true

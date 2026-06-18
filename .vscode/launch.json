@@ -1,0 +1,32 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug unit smoke 01 helloworld",
+      "type": "probe-rs-debug",
+      "request": "launch",
+      "preLaunchTask": "cargo build unit smoke 01 helloworld",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "probe-rs",
+      "consoleLogLevel": "Info",
+      "chip": "STM32U585CI",
+      "flashingConfig": {
+        "flashingEnabled": true,
+        "haltAfterReset": true
+      },
+      "coreConfigs": [
+        {
+          "coreIndex": 0,
+          "programBinary": "${workspaceFolder}/target/thumbv8m.main-none-eabihf/release/unit-smoke-01-helloworld",
+          "rttEnabled": true,
+          "rttChannelFormats": [
+            {
+              "channelNumber": 0,
+              "dataFormat": "Defmt"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

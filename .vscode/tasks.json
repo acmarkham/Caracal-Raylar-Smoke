@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo build unit smoke 01 helloworld",
+      "type": "shell",
+      "command": "cargo",
+      "args": [
+        "build",
+        "-p",
+        "unit-smoke-01-helloworld",
+        "--release",
+        "--target",
+        "thumbv8m.main-none-eabihf"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$rustc"
+      ]
+    }
+  ]
+}

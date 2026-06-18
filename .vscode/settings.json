@@ -1,0 +1,15 @@
+{
+    "rust-analyzer.cargo.target": "thumbv8m.main-none-eabihf",
+    "rust-analyzer.cargo.allTargets": false,
+    "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.check.overrideCommand": [
+        "cargo",
+        "check",
+        "--workspace",
+        "--target",
+        "thumbv8m.main-none-eabihf",
+        "--message-format=json-diagnostic-rendered-ansi"
+    ],
+    "rust-analyzer.lens.debug.enable": false,
+    "rust-analyzer.hover.actions.debug.enable": false
+}
