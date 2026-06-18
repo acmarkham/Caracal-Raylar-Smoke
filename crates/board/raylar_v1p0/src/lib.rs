@@ -4,6 +4,8 @@ use embassy_stm32::exti::{self, ExtiInput};
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
 use embassy_stm32::Peripherals;
+use embassy_stm32::Peri;
+use embassy_stm32::peripherals::{PA5, TIM8};
 use embassy_stm32::{bind_interrupts, interrupt};
 
 bind_interrupts!(struct Irqs {
@@ -13,6 +15,7 @@ bind_interrupts!(struct Irqs {
 pub struct Board<'d> {
     pub leds: Leds<'d>,
     pub buttons: Buttons<'d>,
+    pub buzzer: Buzzer<'d>,
 }
 
 pub struct Leds<'d> {
@@ -27,6 +30,12 @@ pub struct Buttons<'d> {
     pub user: ExtiInput<'d, Async>,
 }
 
+// Buzzer on PA5, TIM8_CH1N (can also be exposed as DAC1_OUT2)
+pub struct Buzzer<'d> {
+    pub tim: Peri<'d, TIM8>,
+    pub pin: Peri<'d, PA5>,
+}
+
 impl Board<'static> {
     pub fn new(p: Peripherals) -> Self {
         let Peripherals {
@@ -37,6 +46,8 @@ impl Board<'static> {
             PD5,
             PE2,
             EXTI2,
+            PA5,
+            TIM8,
             ..
         } = p;
 
@@ -50,6 +61,10 @@ impl Board<'static> {
             },
             buttons: Buttons {
                 user: ExtiInput::new(PE2, EXTI2, Pull::Up, Irqs),
+            },
+            buzzer: Buzzer {
+                tim: TIM8,
+                pin: PA5,
             },
         }
     }
