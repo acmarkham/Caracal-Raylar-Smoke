@@ -4,7 +4,9 @@ members = [
     "crates/board/raylar_v1p0",
     "unitsmoke/01_helloworld",
     "unitsmoke/02_userbutton",
-    "unitsmoke/03_buzzer"
+    "unitsmoke/03_buzzer",
+    "unitsmoke/04_sensi2c",
+    "unitsmoke/05_sensi2c_acc",
 ]
 
 [workspace.package]
@@ -12,7 +14,7 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-embassy-stm32 = { version = "0.6.0", features = ["defmt", "exti", "memory-x", "stm32u585ai", "time-driver-any", "unstable-pac"] }
+embassy-stm32 = { version = "0.6.0", features = ["defmt", "exti", "memory-x", "stm32u595vj", "time-driver-any", "unstable-pac"] }
 embassy-executor = { version = "0.10.0", features = ["defmt", "executor-thread", "platform-cortex-m"] }
 embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
 defmt = "1.1.0"

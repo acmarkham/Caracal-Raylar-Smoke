@@ -1,3 +1,10 @@
+// Test of buzzer on the Raylar board. This is a smoke test to verify that the buzzer is working and that the board can generate sound.
+
+// Activity: This test will generate a 1kHz square wave on the buzzer for 1 second, then turn off the buzzer for 1 second, and repeat. The sys_main_red led will be turned on when the buzzer is on, and turned off when the buzzer is off. The sys_main_green led will blink to indicate that the test is running.
+
+// Assumptions: using MSI as the clock source, and the board is powered on and running.
+
+
 #![no_std]
 #![no_main]
 

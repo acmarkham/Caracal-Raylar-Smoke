@@ -1,3 +1,9 @@
+// Test of user button on the Raylar board. This is a smoke test to verify that the button is working and that the board can detect its state.
+
+// Activity:This test will wait for the user button to be pressed, and when it is pressed, it will toggle the sys_main_red led. The sys_main_green led will blink to indicate that the test is running.
+
+// Assumptions: using MSI as the clock source, and the board is powered on and running.
+
 #![no_std]
 #![no_main]
 
