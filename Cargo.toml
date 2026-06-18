@@ -7,6 +7,7 @@ members = [
     "unitsmoke/03_buzzer",
     "unitsmoke/04_sensi2c",
     "unitsmoke/05_sensi2c_acc",
+    "unitsmoke/06_sensi2c_mag",
 ]
 
 [workspace.package]
