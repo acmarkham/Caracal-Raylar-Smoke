@@ -8,6 +8,13 @@ members = [
     "unitsmoke/04_sensi2c",
     "unitsmoke/05_sensi2c_acc",
     "unitsmoke/06_sensi2c_mag",
+    "unitsmoke/07_sensi2c_bq",
+    "unitsmoke/08_serial_gps",
+    "unitsmoke/09_serial_gps_pps",
+    "unitsmoke/10_pdm_mic1_mono",
+    "unitsmoke/11_sdmmc",
+    "unitsmoke/12_ebyte_rf",
+    "unitsmoke/13_ebyte_rx_tx",
 ]
 
 [workspace.package]
