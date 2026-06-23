@@ -1,3 +1,4 @@
 target/
 debug.log
 *.lock
+/.serena
