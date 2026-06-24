@@ -1,6 +1,6 @@
-// Ebyte E80 LR1121 RF module RX/TX smoke test.
+// Ebyte E80 LR1121 sub-GHz LoRa RX/TX smoke test.
 //
-// Runs continuous 2.4 GHz LoRa RX and occasionally transmits a short packet.
+// Runs continuous 868 MHz LoRa RX and occasionally transmits a short packet.
 // Use two boards with this same firmware; each board listens most of the time
 // and sends a randomized ping. TX flashes sys_sd_blue. RX flashes
 // sys_main_green. Messages are printed via defmt.
@@ -35,17 +35,18 @@ use raylar_board_v1p0::{Board, EbyteRf, Leds};
 use {defmt_rtt as _, panic_probe as _};
 
 const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
-const RADIO_FREQUENCY_HZ: u32 = 2_445_000_000;
-const MAX_PAYLOAD_LEN: u8 = 32;
-const TX_PAYLOAD_LEN: usize = 16;
+const RADIO_FREQUENCY_HZ: u32 = 868_000_000;
+const MAX_PAYLOAD_LEN: u8 = 8;
+const TX_PAYLOAD_LEN: usize = 8;
 const RX_TIMEOUT_CONTINUOUS: [u8; 3] = [0xFF, 0xFF, 0xFF];
 const TX_TIMEOUT_RTC: [u8; 3] = [0x00, 0x80, 0x00];
 const LOOP_TICK_MS: u32 = 20;
 const TCXO_TUNE_V1P8: u8 = 0x02;
 const TCXO_STARTUP_DELAY_TICKS: u32 = 320;
 const LFCLK_XTAL_WAIT: u8 = 0x05;
-const HF_PA_CONFIG: [u8; 4] = [0x02, 0x00, 0x00, 0x00];
-const HF_MAX_TX_PARAMS: [u8; 2] = [0x0D, 0x02];
+const SUBGHZ_IMAGE_CALIBRATION: [u8; 2] = [0xD7, 0xDB];
+const SUBGHZ_HP_PA_CONFIG: [u8; 4] = [0x01, 0x01, 0x04, 0x07];
+const SUBGHZ_MAX_TX_PARAMS: [u8; 2] = [0x16, 0x02];
 const EBYTE_RFSW_ENABLE_MASK: u8 = 0x0F;
 const EBYTE_RFSW_STANDBY: u8 = 0x00;
 const EBYTE_RFSW_RX: u8 = 0x02;
@@ -78,6 +79,7 @@ enum Opcode {
     GetErrors = 0x010D,
     ClearErrors = 0x010E,
     Calibrate = 0x010F,
+    CalibImage = 0x0111,
     SetRegMode = 0x0110,
     SetDioAsRfSwitch = 0x0112,
     SetDioIrqParams = 0x0113,
@@ -127,11 +129,11 @@ async fn main(_spawner: Spawner) -> ! {
     let p = embassy_stm32::init(config);
     let Board { ebyte_rf, leds, .. } = Board::new(p);
 
-    info!("Ebyte E80 LR1121 RX/TX smoke test started");
-    run_rf_rx_tx(ebyte_rf, leds).await
+    info!("Ebyte E80 LR1121 sub-GHz LoRa smoke test started");
+    run_rf_subg_lora(ebyte_rf, leds).await
 }
 
-async fn run_rf_rx_tx(rf: EbyteRf<'static>, leds: Leds<'static>) -> ! {
+async fn run_rf_subg_lora(rf: EbyteRf<'static>, leds: Leds<'static>) -> ! {
     let EbyteRf {
         spi,
         sck,
@@ -181,7 +183,7 @@ async fn run_rf_rx_tx(rf: EbyteRf<'static>, leds: Leds<'static>) -> ! {
 
     let mut rx_buf = [0u8; MAX_PAYLOAD_LEN as usize];
     let mut seq = 0u32;
-    let mut rng = 0x4c52_3131u32
+    let mut rng = 0x6c72_3131u32
         ^ ((version[0] as u32) << 24)
         ^ ((version[1] as u32) << 16)
         ^ ((version[2] as u32) << 8)
@@ -215,7 +217,7 @@ async fn run_rf_rx_tx(rf: EbyteRf<'static>, leds: Leds<'static>) -> ! {
 }
 
 async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Input<'static>) {
-    info!("Configuring LR1121 for 2.4 GHz LoRa packet test");
+    info!("Configuring LR1121 for 868 MHz LoRa packet test");
 
     clear_errors(spi, cs, busy).await;
     clear_irqs(spi, cs, busy, IRQ_MASK).await;
@@ -223,6 +225,7 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
     lr11xx_write(spi, cs, busy, Opcode::SetRegMode, &[0x01]).await;
     configure_rf_switches(spi, cs, busy).await;
     lr11xx_write(spi, cs, busy, Opcode::SetPacketType, &[0x02]).await;
+    lr11xx_write(spi, cs, busy, Opcode::CalibImage, &SUBGHZ_IMAGE_CALIBRATION).await;
     lr11xx_write(
         spi,
         cs,
@@ -238,18 +241,17 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
         cs,
         busy,
         Opcode::SetModulationParams,
-       // SF7 BW500k CR4/5 LDRO off
-        //&[0x07, 0x06, 0x01, 0x00],
-        // SF7 BW125k CR4/5 LDRO off
-        &[0x07, 0x04, 0x01, 0x00],
-       // SF12 BW125k CR4/5 LDRO on
+        // SF7 BW500k CR4/5 LDRO off
+        &[0x07, 0x06, 0x01, 0x00],
+        // SF12 BW125k CR4/5 LDRO on
        //&[0x0C, 0x04, 0x01, 0x01],
     )
     .await;
     lr11xx_write(spi, cs, busy, Opcode::SetLoRaSyncWord, &[0x12]).await;
 
-    lr11xx_write(spi, cs, busy, Opcode::SetPaConfig, &HF_PA_CONFIG).await;
-    lr11xx_write(spi, cs, busy, Opcode::SetTxParams, &HF_MAX_TX_PARAMS).await;
+    // Select the sub-GHz high-power PA path and request the maximum 22 dBm TX setting.
+    lr11xx_write(spi, cs, busy, Opcode::SetPaConfig, &SUBGHZ_HP_PA_CONFIG).await;
+    lr11xx_write(spi, cs, busy, Opcode::SetTxParams, &SUBGHZ_MAX_TX_PARAMS).await;
     lr11xx_write(spi, cs, busy, Opcode::SetRxBoosted, &[0x01]).await;
 
     let irq1 = IRQ_MASK.to_be_bytes();
@@ -263,8 +265,6 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
 async fn configure_rf_switches(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Input<'static>) {
     info!("Configuring LR1121 RF switch mapping for Ebyte module");
 
-    // Ebyte routes RFSW0/RFSW1 differently from Semtech reference designs.
-    // RX = RFSW1, sub-GHz TX = RFSW0|RFSW1, sub-GHz TX HP = RFSW0, TX HF = 0.
     lr11xx_write(
         spi,
         cs,
@@ -326,28 +326,50 @@ async fn send_ping(
     tx_led: &mut Output<'static>,
     seq: u32,
 ) {
-    let mut payload = *b"raylar-ping:0000";
+    let mut payload = *b"868:0000";
     let mut n = seq % 10_000;
-    payload[15] = b'0' + (n % 10) as u8;
+    payload[7] = b'0' + (n % 10) as u8;
     n /= 10;
-    payload[14] = b'0' + (n % 10) as u8;
+    payload[6] = b'0' + (n % 10) as u8;
     n /= 10;
-    payload[13] = b'0' + (n % 10) as u8;
+    payload[5] = b'0' + (n % 10) as u8;
     n /= 10;
-    payload[12] = b'0' + (n % 10) as u8;
+    payload[4] = b'0' + (n % 10) as u8;
 
     info!("TX seq={} bytes={=[u8]}", seq, &payload[..]);
     tx_led.set_high();
 
     lr11xx_write(spi, cs, busy, Opcode::SetStandby, &[0x00]).await;
     clear_irqs(spi, cs, busy, IRQ_MASK).await;
+    // Select the sub-GHz high-power PA path and request the maximum 22 dBm TX setting.
+    let pa_cmd_status = lr11xx_write(spi, cs, busy, Opcode::SetPaConfig, &SUBGHZ_HP_PA_CONFIG).await;
+    log_radio_write_diagnostic(
+        spi,
+        cs,
+        busy,
+        "SetPaConfig",
+        &SUBGHZ_HP_PA_CONFIG,
+        pa_cmd_status,
+    )
+    .await;
+    let tx_cmd_status = lr11xx_write(spi, cs, busy, Opcode::SetTxParams, &SUBGHZ_MAX_TX_PARAMS).await;
+    log_radio_write_diagnostic(
+        spi,
+        cs,
+        busy,
+        "SetTxParams",
+        &SUBGHZ_MAX_TX_PARAMS,
+        tx_cmd_status,
+    )
+    .await;
+    //
     configure_lora_packet(spi, cs, busy, TX_PAYLOAD_LEN as u8).await;
     lr11xx_write(spi, cs, busy, Opcode::WriteBuffer8, &payload).await;
     lr11xx_write(spi, cs, busy, Opcode::SetTx, &TX_TIMEOUT_RTC).await;
 
     let started = Instant::now();
     loop {
-        if irq.is_high() || Instant::now().duration_since(started) >= Duration::from_millis(5000) {
+        if irq.is_high() || Instant::now().duration_since(started) >= Duration::from_millis(1500) {
             let irq_status = lr11xx_status(spi, cs, busy).await;
             if irq_status & IRQ_TX_DONE != 0 {
                 info!("TX done seq={}", seq);
@@ -436,7 +458,37 @@ async fn clear_errors(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Input
     lr11xx_cmd(spi, cs, busy, Opcode::ClearErrors).await;
 }
 
+async fn log_radio_write_diagnostic(
+    spi: &mut RadioSpi,
+    cs: &mut Output<'static>,
+    busy: &Input<'static>,
+    name: &str,
+    args: &[u8],
+    cmd_status: [u8; 2],
+) {
+    let (status, irq_status) = lr11xx_status_raw(spi, cs, busy).await;
+    let errors = lr11xx_errors(spi, cs, busy).await;
+    info!(
+        "{} args={=[u8]} cmd_status={=[u8]} get_status={=[u8]} irq=0x{:08x} errors=0x{:04x}",
+        name,
+        args,
+        &cmd_status[..],
+        &status[..],
+        irq_status,
+        errors,
+    );
+}
+
 async fn lr11xx_status(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Input<'static>) -> u32 {
+    let (_, irq_status) = lr11xx_status_raw(spi, cs, busy).await;
+    irq_status
+}
+
+async fn lr11xx_status_raw(
+    spi: &mut RadioSpi,
+    cs: &mut Output<'static>,
+    busy: &Input<'static>,
+) -> ([u8; 2], u32) {
     let op = opcode_bytes(Opcode::GetStatus);
     let mut read = [0u8; 6];
 
@@ -459,7 +511,10 @@ async fn lr11xx_status(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Inpu
         pending_forever().await;
     }
 
-    u32::from_be_bytes([read[2], read[3], read[4], read[5]])
+    (
+        [read[0], read[1]],
+        u32::from_be_bytes([read[2], read[3], read[4], read[5]]),
+    )
 }
 
 async fn rx_buffer_status(
@@ -550,7 +605,7 @@ async fn lr11xx_write(
     busy: &Input<'static>,
     op: Opcode,
     args: &[u8],
-) {
+) -> [u8; 2] {
     if !wait_busy_low(busy, BUSY_TIMEOUT).await {
         error!("RF_BUSY high before write 0x{:04x}", op as u16);
         pending_forever().await;
@@ -577,6 +632,8 @@ async fn lr11xx_write(
         error!("RF_BUSY high after write 0x{:04x}", op as u16);
         pending_forever().await;
     }
+
+    read
 }
 
 async fn lr11xx_write_data(
