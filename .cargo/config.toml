@@ -5,4 +5,4 @@ target = "thumbv8m.main-none-eabihf"
 DEFMT_LOG = { value = "trace", force = true }
 
 [target.thumbv8m.main-none-eabihf]
-runner = "probe-rs run --chip STM32U585CI"
+runner = "powershell -ExecutionPolicy Bypass -File .cargo/probe-rs-runner.ps1"

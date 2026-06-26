@@ -19,6 +19,100 @@ use embassy_stm32::peripherals::{PC8, PC9, PC10, PC11, PC12, PD2, SDMMC1};
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
 use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 
+// Full STM32U595VJT6Q pin map for Raylar v1.00, extracted from the KiCad U1
+// footprint/net assignments. This crate currently models only the subset needed
+// by the existing smoke tests and board bring-up code.
+//
+// Implemented in this crate:
+// - PE2  = SW_USER
+// - PE3  = GPS_RESET
+// - PA2  = GPS_RX_STM_TX
+// - PA3  = GPS_TX_STM_RX
+// - PA5  = PWM_BUZ
+// - PB4  = SYS_GPS_GREEN
+// - PB8  = MIC_CCLK0
+// - PB9  = GPS_PPS
+// - PB15 = SYS_MAIN_RED
+// - PC8  = SDIO_D0
+// - PC9  = SDIO_D1
+// - PC10 = SDIO_D2
+// - PC11 = SDIO_D3
+// - PC12 = SDIO_CLK
+// - PC13 = GPS_EN
+// - PD0  = SENS_I2C_SDA
+// - PD1  = SENS_I2C_SCL
+// - PD2  = SDIO_CMD
+// - PD3  = MIC_SD0
+// - PD4  = SD_SW
+// - PD5  = SYS_SD_BLUE
+// - PD7  = SYS_GPS_RED
+// - PD10 = SYS_MAIN_GREEN
+// - PE0  = SD_PWR
+// - PE8  = RF_CS
+// - PE10 = RF_BUSY
+// - PE11 = RF_NRST
+// - PE12 = RF_IRQ
+// - PE13 = RF_SCK
+// - PE14 = RF_MISO
+// - PE15 = RF_MOSI
+//
+// Present on the MCU but not yet modeled in this crate:
+// - PA0  = V_ADC_DC
+// - PA1  = V_ADC_BATT
+// - PA4  = MBUS_AN
+// - PA6  = EXT_OPA_VINP
+// - PA7  = EXT_OPA_VINM
+// - PA8  = RCC_MCO
+// - PA9  = USB_VBUS
+// - PA10 = unconnected
+// - PA11 = USB_D_N
+// - PA12 = USB_D_P
+// - PA13 = TRACE_SWDIO
+// - PA14 = TRACE_SWCLK
+// - PA15 = unconnected
+// - PB0  = EXT_OPA_VOUT
+// - PB1  = V_ADC_SOLAR
+// - PB2  = MBUS_PWM
+// - PB3  = TRACE_SWO
+// - PB5  = MBUS_INT
+// - PB6  = QWIIC_SCL
+// - PB7  = QWIIC_SDA
+// - PB10 = EXT_I2C_SCL
+// - PB11 = MBUS_RX_STM_RX
+// - PB13 = MBUS_SCK
+// - PB14 = MBUS_MISO
+// - PC0  = MBUS_SCL
+// - PC1  = MBUS_SDA
+// - PC2  = MIC_CCLK1
+// - PC3  = MBUS_MOSI
+// - PC6  = EXT_1
+// - PC7  = EXT_2
+// - PD6  = MIC_SD1
+// - PD8  = MBUS_TX_STM_TX
+// - PD9  = EXT_AN_IN
+// - PD11 = EXT_3
+// - PD12 = unconnected
+// - PD13 = EXT_I2C_SDA
+// - PD14 = unconnected
+// - PD15 = unconnected
+// - PE4  = MIC_SD3
+// - PE5  = MBUS_CS
+// - PE6  = MBUS_RST
+// - PE7  = MIC_SD2
+// - PE9  = CHG_INT
+// - PH3  = BOOT0
+//
+// Power, clocks, and other non-GPIO pins on U1:
+// - VBAT
+// - VSS, VSSA, VSSSMPS
+// - VDD, VDDA, VDDUSB, VDD11, VDDSMPS, VLXSMPS
+// - VREF+
+// - PH0 = HSE_OSC_IN
+// - PH1 = HSE_OSC_OUT
+// - PC14 = 32K_OSC_IN
+// - PC15 = 32K_OSC_OUT
+// - NRST
+
 bind_interrupts!(pub struct Irqs {
     EXTI2 => exti::InterruptHandler<interrupt::typelevel::EXTI2>;
     EXTI9 => exti::InterruptHandler<interrupt::typelevel::EXTI9>;
@@ -64,6 +158,7 @@ pub struct SensI2C<'d> {
 }
 
 // GPS on USART2: STM TX PA2 -> GPS RX, GPS TX -> STM RX PA3, PPS on PB9/EXTI9.
+// Control pins from schematic/PCB: PE3 = GPS_RESET, PC13 = GPS_EN.
 pub struct Gps<'d> {
     pub usart: Peri<'d, USART2>,
     pub tx: Peri<'d, PA2>,
@@ -183,8 +278,8 @@ impl Board<'static> {
                 tx: PA2,
                 rx: PA3,
                 pps: ExtiInput::new(PB9, EXTI9, Pull::None, Irqs),
-                rst: Output::new(PC13, Level::Low, Speed::Medium),
-                en: Output::new(PE3, Level::Low, Speed::Medium),
+                rst: Output::new(PE3, Level::Low, Speed::Medium),
+                en: Output::new(PC13, Level::Low, Speed::Medium),
             },
             pdm_mic1: PdmMic1 {
                 cck0: PB8,

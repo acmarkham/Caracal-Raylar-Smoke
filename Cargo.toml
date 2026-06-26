@@ -19,6 +19,7 @@ members = [
     "unitsmoke/15_ebyte_crate",
     "unitsmoke/16_ebyte_crate_rx",
     "unitsmoke/17_sleep_test",
+    "unitsmoke/18_pdm_mic1_dma",
 ]
 
 [workspace.package]

@@ -55,8 +55,8 @@ async fn app_task() -> ! {
     let mut sys_main_green = Output::new(p.PD10, Level::Low, Speed::Low);
     let mut sys_sd_blue = Output::new(p.PD5, Level::Low, Speed::Low);
 
-    let mut gps_rst = Output::new(p.PC13, Level::Low, Speed::Low);
-    let mut gps_en = Output::new(p.PE3, Level::Low, Speed::Low);
+    let mut gps_rst = Output::new(p.PE3, Level::Low, Speed::Low);
+    let mut gps_en = Output::new(p.PC13, Level::Low, Speed::Low);
     let mut sd_power = Output::new(p.PE0, Level::High, Speed::Low);
     let mut rf_cs = Output::new(p.PE8, Level::High, Speed::Low);
     let mut rf_nrst = Output::new(p.PE11, Level::Low, Speed::Low);
