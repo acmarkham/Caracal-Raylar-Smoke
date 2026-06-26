@@ -3,18 +3,18 @@
 use embassy_stm32::exti::{self, ExtiInput};
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
-use embassy_stm32::Peripherals;
 use embassy_stm32::Peri;
+use embassy_stm32::Peripherals;
 // buzzer imports
 use embassy_stm32::peripherals::{PA5, TIM8};
 // i2c imports
-use embassy_stm32::peripherals::{I2C5, PD0, PD1};
+use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
 // gps imports
 use embassy_stm32::peripherals::{PA2, PA3, USART2};
 // pdm microphone imports
 use embassy_stm32::peripherals::{PB8, PD3};
 // microSD imports
-use embassy_stm32::peripherals::{PC8, PC9, PC10, PC11, PC12, PD2, SDMMC1};
+use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
 use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
@@ -30,6 +30,8 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // - PA3  = GPS_TX_STM_RX
 // - PA5  = PWM_BUZ
 // - PB4  = SYS_GPS_GREEN
+// - PB6  = QWIIC_SCL
+// - PB7  = QWIIC_SDA
 // - PB8  = MIC_CCLK0
 // - PB9  = GPS_PPS
 // - PB15 = SYS_MAIN_RED
@@ -75,8 +77,6 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // - PB2  = MBUS_PWM
 // - PB3  = TRACE_SWO
 // - PB5  = MBUS_INT
-// - PB6  = QWIIC_SCL
-// - PB7  = QWIIC_SDA
 // - PB10 = EXT_I2C_SCL
 // - PB11 = MBUS_RX_STM_RX
 // - PB13 = MBUS_SCK
@@ -126,6 +126,7 @@ pub struct Board<'d> {
     pub buttons: Buttons<'d>,
     pub buzzer: Buzzer<'d>,
     pub sens_i2c: SensI2C<'d>,
+    pub qwiic_i2c: QwiicI2C<'d>,
     pub gps: Gps<'d>,
     pub pdm_mic1: PdmMic1<'d>,
     pub sd: SdCard<'d>,
@@ -155,6 +156,13 @@ pub struct SensI2C<'d> {
     pub i2c: Peri<'d, I2C5>,
     pub sda: Peri<'d, PD0>,
     pub scl: Peri<'d, PD1>,
+}
+
+// QWIIC connector on PB7 (SDA) and PB6 (SCL) using I2C1.
+pub struct QwiicI2C<'d> {
+    pub i2c: Peri<'d, I2C1>,
+    pub sda: Peri<'d, PB7>,
+    pub scl: Peri<'d, PB6>,
 }
 
 // GPS on USART2: STM TX PA2 -> GPS RX, GPS TX -> STM RX PA3, PPS on PB9/EXTI9.
@@ -199,7 +207,6 @@ pub struct EbyteRf<'d> {
     pub irq: ExtiInput<'d, Async>,
 }
 
-
 impl Board<'static> {
     pub fn new(p: Peripherals) -> Self {
         let Peripherals {
@@ -215,10 +222,14 @@ impl Board<'static> {
             // buzzer
             PA5,
             TIM8,
-            // sens_i2c 
+            // sens_i2c
             PD0,
             PD1,
             I2C5,
+            // qwiic_i2c
+            PB6,
+            PB7,
+            I2C1,
             // gps
             PC13,
             PE3,
@@ -272,6 +283,11 @@ impl Board<'static> {
                 i2c: I2C5,
                 sda: PD0,
                 scl: PD1,
+            },
+            qwiic_i2c: QwiicI2C {
+                i2c: I2C1,
+                sda: PB7,
+                scl: PB6,
             },
             gps: Gps {
                 usart: USART2,
