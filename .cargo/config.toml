@@ -2,7 +2,7 @@
 target = "thumbv8m.main-none-eabihf"
 
 [env]
-DEFMT_LOG = { value = "trace", force = true }
+DEFMT_LOG = { value = "info", force = true }
 
 [target.thumbv8m.main-none-eabihf]
 runner = "powershell -ExecutionPolicy Bypass -File .cargo/probe-rs-runner.ps1"

@@ -5,6 +5,8 @@ use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
 use embassy_stm32::Peri;
 use embassy_stm32::Peripherals;
+// ADC voltage sense imports
+use embassy_stm32::peripherals::{ADC1, ADC4, PA0, PA1, PB1};
 // buzzer imports
 use embassy_stm32::peripherals::{PA5, TIM8};
 // i2c imports
@@ -26,10 +28,13 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // Implemented in this crate:
 // - PE2  = SW_USER
 // - PE3  = GPS_RESET
+// - PA0  = V_ADC_DC
+// - PA1  = V_ADC_BATT
 // - PA2  = GPS_RX_STM_TX
 // - PA3  = GPS_TX_STM_RX
 // - PA5  = PWM_BUZ
 // - PB4  = SYS_GPS_GREEN
+// - PB1  = V_ADC_SOLAR
 // - PB6  = QWIIC_SCL
 // - PB7  = QWIIC_SDA
 // - PB8  = MIC_CCLK0
@@ -59,8 +64,6 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // - PE15 = RF_MOSI
 //
 // Present on the MCU but not yet modeled in this crate:
-// - PA0  = V_ADC_DC
-// - PA1  = V_ADC_BATT
 // - PA4  = MBUS_AN
 // - PA6  = EXT_OPA_VINP
 // - PA7  = EXT_OPA_VINM
@@ -73,7 +76,6 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // - PA14 = TRACE_SWCLK
 // - PA15 = unconnected
 // - PB0  = EXT_OPA_VOUT
-// - PB1  = V_ADC_SOLAR
 // - PB2  = MBUS_PWM
 // - PB3  = TRACE_SWO
 // - PB5  = MBUS_INT
@@ -124,6 +126,7 @@ bind_interrupts!(pub struct Irqs {
 pub struct Board<'d> {
     pub leds: Leds<'d>,
     pub buttons: Buttons<'d>,
+    pub adc_voltages: AdcVoltages<'d>,
     pub buzzer: Buzzer<'d>,
     pub sens_i2c: SensI2C<'d>,
     pub qwiic_i2c: QwiicI2C<'d>,
@@ -143,6 +146,15 @@ pub struct Leds<'d> {
 
 pub struct Buttons<'d> {
     pub user: ExtiInput<'d, Async>,
+}
+
+// ADC voltage sense pins on ADC1.
+pub struct AdcVoltages<'d> {
+    pub adc: Peri<'d, ADC1>,
+    pub adc4: Peri<'d, ADC4>,
+    pub v_dc: Peri<'d, PA0>,
+    pub v_batt: Peri<'d, PA1>,
+    pub v_solar: Peri<'d, PB1>,
 }
 
 // Buzzer on PA5, TIM8_CH1N (can also be exposed as DAC1_OUT2)
@@ -219,6 +231,12 @@ impl Board<'static> {
             // user button
             PE2,
             EXTI2,
+            // adc voltage sense
+            ADC1,
+            ADC4,
+            PA0,
+            PA1,
+            PB1,
             // buzzer
             PA5,
             TIM8,
@@ -274,6 +292,13 @@ impl Board<'static> {
             },
             buttons: Buttons {
                 user: ExtiInput::new(PE2, EXTI2, Pull::Up, Irqs),
+            },
+            adc_voltages: AdcVoltages {
+                adc: ADC1,
+                adc4: ADC4,
+                v_dc: PA0,
+                v_batt: PA1,
+                v_solar: PB1,
             },
             buzzer: Buzzer {
                 tim: TIM8,

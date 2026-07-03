@@ -3,7 +3,7 @@ param(
     [string[]]$RunnerArgs
 )
 
-$defmtLog = "trace"
+$defmtLog = "info"
 
 foreach ($arg in $RunnerArgs) {
     if ($arg -match 'unit-smoke-09_serial-gps_pps') {

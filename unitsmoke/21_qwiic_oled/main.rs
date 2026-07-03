@@ -25,6 +25,9 @@ const DISPLAY_WIDTH: usize = 128;
 const DISPLAY_HEIGHT: u8 = 128;
 const PAGE_HEIGHT: u8 = 8;
 const DISPLAY_PAGES: u8 = DISPLAY_HEIGHT / PAGE_HEIGHT;
+const DISPLAY_MUX_RATIO: u8 = DISPLAY_HEIGHT - 1;
+const DATA_CHUNK_BYTES: usize = 32;
+const COLUMN_OFFSET: u8 = 0;
 
 type BlockingI2c = I2c<'static, Blocking, Master>;
 
@@ -130,17 +133,25 @@ fn scan_qwiic_bus(i2c: &mut BlockingI2c) -> Option<u8> {
 fn init_sh1107(i2c: &mut BlockingI2c, addr: u8) {
     let init_commands = [
         0xae, // display off
-        0xd5, 0x50, // display clock
-        0xa8, 0x3f, // 1/64 multiplex
-        0xd3, 0x00, // display offset
+        0xd5,
+        0x50, // display clock
+        0xa8,
+        DISPLAY_MUX_RATIO, // multiplex ratio
+        0xd3,
+        0x00, // display offset
         0x40, // display start line
-        0xad, 0x8b, // internal DC-DC on
+        0xad,
+        0x8b, // internal DC-DC on
         0xa0, // normal segment remap
         0xc0, // normal COM scan direction
-        0xda, 0x12, // COM pins
-        0x81, 0x80, // contrast
-        0xd9, 0x22, // pre-charge
-        0xdb, 0x35, // VCOM deselect
+        0xda,
+        0x12, // COM pins
+        0x81,
+        0x80, // contrast
+        0xd9,
+        0x22, // pre-charge
+        0xdb,
+        0x35, // VCOM deselect
         0xa4, // display follows RAM
         0xa6, // normal display
         0xaf, // display on
@@ -160,18 +171,30 @@ fn write_commands(i2c: &mut BlockingI2c, addr: u8, commands: &[u8]) {
 }
 
 fn write_page(i2c: &mut BlockingI2c, addr: u8, page: u8, pattern: u8) {
-    let page_commands = [0xb0 | page, 0x00, 0x10];
-    write_commands(i2c, addr, &page_commands);
+    let mut column = 0;
 
-    let mut data = [0u8; DISPLAY_WIDTH + 1];
-    data[0] = 0x40;
-    for byte in data[1..].iter_mut() {
-        *byte = pattern;
-    }
+    while column < DISPLAY_WIDTH {
+        let chunk_len = core::cmp::min(DATA_CHUNK_BYTES, DISPLAY_WIDTH - column);
+        let column_addr = COLUMN_OFFSET + column as u8;
+        let page_commands = [
+            0xb0 | page,
+            0x00 | (column_addr & 0x0f),
+            0x10 | ((column_addr >> 4) & 0x0f),
+        ];
+        write_commands(i2c, addr, &page_commands);
 
-    match i2c.blocking_write(addr, &data) {
-        Ok(_) => {}
-        Err(e) => warn!("OLED page {} data error: {:?}", page, e),
+        let mut data = [0u8; DATA_CHUNK_BYTES + 1];
+        data[0] = 0x40;
+        for byte in data[1..=chunk_len].iter_mut() {
+            *byte = pattern;
+        }
+
+        match i2c.blocking_write(addr, &data[..=chunk_len]) {
+            Ok(_) => {}
+            Err(e) => warn!("OLED page {} column {} data error: {:?}", page, column, e),
+        }
+
+        column += chunk_len;
     }
 }
 

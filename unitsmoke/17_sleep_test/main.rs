@@ -27,6 +27,9 @@ fn park_analog(pin: Peri<'static, impl Pin>) -> Flex<'static> {
 
 #[embassy_executor::task]
 async fn app_task() -> ! {
+    info!("17_sleep_test app_task entered");
+    defmt::flush();
+
     let mut config = embassy_stm32::Config::default();
 
     config.rcc.hse = Some(Hse {
@@ -45,10 +48,12 @@ async fn app_task() -> ! {
 
     config.rcc.sys = Sysclk::PLL1_R;
     config.min_stop_pause = Duration::from_millis(100);
-    config.enable_debug_during_sleep = false;
+    config.enable_debug_during_sleep = true;
     config.enable_independent_analog_supply = false;
 
     let p = embassy_stm32::init(config);
+    info!("STM32 init complete");
+    defmt::flush();
     let mut sys_gps_green = Output::new(p.PB4, Level::Low, Speed::Low);
     let mut sys_gps_red = Output::new(p.PD7, Level::Low, Speed::Low);
     let mut sys_main_red = Output::new(p.PB15, Level::Low, Speed::Low);
@@ -98,20 +103,27 @@ async fn app_task() -> ! {
     info!("17_sleep_test started");
     info!("GPS off, SD off, radio held in reset");
     info!("Unused GPIOs parked in analog mode");
+    info!("Debug probe kept enabled during sleep");
+    defmt::flush();
 
     loop {
         info!("CPU awake for 5 seconds");
+        defmt::flush();
         sys_main_red.set_high();
         Timer::after_secs(5).await;
 
         sys_main_red.set_low();
         info!("Entering low-power sleep for 10 seconds");
+        defmt::flush();
         Timer::after_secs(10).await;
     }
 }
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    info!("17_sleep_test reset entry");
+    defmt::flush();
+
     let mut executor = embassy_stm32::executor::Executor::new();
     let executor = unsafe {
         core::mem::transmute::<
