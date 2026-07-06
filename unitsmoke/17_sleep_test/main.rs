@@ -5,7 +5,7 @@
 // - Keep the microSD card power rail off.
 // - Hold the LR1121 radio in reset with chip select inactive.
 // - Turn the main red LED on for 5 seconds while the CPU is awake.
-// - Turn the LED off and let the STM32 enter low-power sleep for 10 seconds.
+// - Stay awake while exercising the GPS UART standby command.
 
 #![no_std]
 #![no_main]
@@ -15,6 +15,7 @@ use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Flex, Level, Output, Pin, Speed};
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
+use embassy_stm32::usart::{Config as UartConfig, DataBits, Parity, StopBits, UartTx};
 use embassy_stm32::Peri;
 use embassy_time::{Duration, Timer};
 use {defmt_rtt as _, panic_probe as _};
@@ -25,9 +26,9 @@ fn park_analog(pin: Peri<'static, impl Pin>) -> Flex<'static> {
     pin
 }
 
-#[embassy_executor::task]
-async fn app_task() -> ! {
-    info!("17_sleep_test app_task entered");
+#[embassy_executor::main]
+async fn main(_spawner: Spawner) -> ! {
+    info!("17_sleep_test main entered");
     defmt::flush();
 
     let mut config = embassy_stm32::Config::default();
@@ -47,9 +48,6 @@ async fn app_task() -> ! {
     });
 
     config.rcc.sys = Sysclk::PLL1_R;
-    config.min_stop_pause = Duration::from_millis(100);
-    config.enable_debug_during_sleep = true;
-    config.enable_independent_analog_supply = false;
 
     let p = embassy_stm32::init(config);
     info!("STM32 init complete");
@@ -64,14 +62,40 @@ async fn app_task() -> ! {
     let mut gps_en = Output::new(p.PC13, Level::Low, Speed::Low);
     let mut sd_power = Output::new(p.PE0, Level::High, Speed::Low);
     let mut rf_cs = Output::new(p.PE8, Level::High, Speed::Low);
-    let mut rf_nrst = Output::new(p.PE11, Level::Low, Speed::Low);
+    let mut rf_nrst = Output::new(p.PE11, Level::High, Speed::Low);
+
+    gps_en.set_low();
+    gps_rst.set_high();
+    info!("GPS_EN=HIGH GPS_RST=HIGH, sending L86 standby command");
+    Timer::after_millis(250).await;
+    info!("GPS standby command settle complete");
+
+    let mut gps_uart_config = UartConfig::default();
+    gps_uart_config.baudrate = 9_600;
+    gps_uart_config.data_bits = DataBits::DataBits8;
+    gps_uart_config.parity = Parity::ParityNone;
+    gps_uart_config.stop_bits = StopBits::STOP1;
+
+    let mut gps_uart = unwrap!(UartTx::new_blocking(p.USART2, p.PA2, gps_uart_config));
+    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
+    Timer::after(Duration::from_millis(250)).await;
+    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
+    Timer::after(Duration::from_millis(250)).await;
+    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
+    Timer::after(Duration::from_millis(250)).await;
+    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
+    Timer::after(Duration::from_millis(250)).await;
+    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
+    unwrap!(gps_uart.blocking_flush());
+    drop(gps_uart);
+    info!("GPS standby command sent");
+    defmt::flush();
 
     let _parked_unused_pins = (
         park_analog(p.PE2),
         park_analog(p.PA5),
         park_analog(p.PD0),
         park_analog(p.PD1),
-        park_analog(p.PA2),
         park_analog(p.PA3),
         park_analog(p.PB9),
         park_analog(p.PB8),
@@ -94,44 +118,27 @@ async fn app_task() -> ! {
     sys_gps_red.set_low();
     sys_main_green.set_low();
     sys_sd_blue.set_low();
-    gps_en.set_low();
-    gps_rst.set_low();
+    gps_en.set_low(); // GPS enabled
+    gps_rst.set_high(); // GPS enabled
     sd_power.set_high();
-    rf_cs.set_high();
+    rf_cs.set_low();
     rf_nrst.set_low();
 
     info!("17_sleep_test started");
-    info!("GPS off, SD off, radio held in reset");
+    info!("GPS standby requested, SD off, radio held in reset");
     info!("Unused GPIOs parked in analog mode");
-    info!("Debug probe kept enabled during sleep");
+    info!("STM32 sleep/standby disabled while debugging GPS UART");
     defmt::flush();
 
     loop {
-        info!("CPU awake for 5 seconds");
-        defmt::flush();
         sys_main_red.set_high();
-        Timer::after_secs(5).await;
+        info!("CPU awake, red LED on");
+        defmt::flush();
+        Timer::after_secs(1).await;
 
         sys_main_red.set_low();
-        info!("Entering low-power sleep for 10 seconds");
+        info!("CPU awake, red LED off");
         defmt::flush();
-        Timer::after_secs(10).await;
+        Timer::after_secs(1).await;
     }
-}
-
-#[cortex_m_rt::entry]
-fn main() -> ! {
-    info!("17_sleep_test reset entry");
-    defmt::flush();
-
-    let mut executor = embassy_stm32::executor::Executor::new();
-    let executor = unsafe {
-        core::mem::transmute::<
-            &mut embassy_stm32::executor::Executor,
-            &'static mut embassy_stm32::executor::Executor,
-        >(&mut executor)
-    };
-    executor.run(|spawner: Spawner| {
-        spawner.spawn(unwrap!(app_task()));
-    })
 }
