@@ -27,6 +27,7 @@ members = [
     "unitsmoke/21_qwiic_oled",
     "unitsmoke/22_read_adc",
     "unitsmoke/23_gps_standby",
+    "unitsmoke/24_batt_charger",
 ]
 
 [workspace.package]
