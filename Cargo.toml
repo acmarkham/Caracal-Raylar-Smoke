@@ -30,6 +30,7 @@ members = [
     "unitsmoke/24_batt_charger",
     "unitsmoke/25_sd_rawspeed",
     "unitsmoke/26_tempsensors",
+    "unitsmoke/27_USB_CDC",
 ]
 
 [workspace.package]
@@ -40,6 +41,7 @@ license = "MIT"
 embassy-stm32 = { version = "0.6.0", features = ["defmt", "exti", "memory-x", "stm32u595vj", "time-driver-any", "unstable-pac"] }
 embassy-executor = { version = "0.10.0", features = ["defmt", "executor-thread", "platform-cortex-m"] }
 embassy-time = { version = "0.5.1", features = ["defmt", "defmt-timestamp-uptime", "tick-hz-32_768"] }
+embassy-usb = { version = "0.5.1", features = ["defmt"] }
 defmt = "1.1.0"
 defmt-rtt = "1.2.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }

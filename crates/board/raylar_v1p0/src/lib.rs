@@ -9,6 +9,8 @@ use embassy_stm32::Peripherals;
 use embassy_stm32::peripherals::{ADC1, ADC4, PA0, PA1, PB1};
 // buzzer imports
 use embassy_stm32::peripherals::{PA5, TIM8};
+// USB-C CDC imports
+use embassy_stm32::peripherals::{PA11, PA12, USB_OTG_HS};
 // i2c imports
 use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
 // gps imports
@@ -19,7 +21,7 @@ use embassy_stm32::peripherals::{PB8, PD3};
 use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
-use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
+use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart, usb};
 
 // Full STM32U595VJT6Q pin map for Raylar v1.00, extracted from the KiCad U1
 // footprint/net assignments. This crate currently models only the subset needed
@@ -33,6 +35,9 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // - PA2  = GPS_RX_STM_TX
 // - PA3  = GPS_TX_STM_RX
 // - PA5  = PWM_BUZ
+// - PA9  = USB_VBUS
+// - PA11 = USB_D_N
+// - PA12 = USB_D_P
 // - PB4  = SYS_GPS_GREEN
 // - PB1  = V_ADC_SOLAR
 // - PB6  = QWIIC_SCL
@@ -68,10 +73,7 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart};
 // - PA6  = EXT_OPA_VINP
 // - PA7  = EXT_OPA_VINM
 // - PA8  = RCC_MCO
-// - PA9  = USB_VBUS
 // - PA10 = unconnected
-// - PA11 = USB_D_N
-// - PA12 = USB_D_P
 // - PA13 = TRACE_SWDIO
 // - PA14 = TRACE_SWCLK
 // - PA15 = unconnected
@@ -120,6 +122,7 @@ bind_interrupts!(pub struct Irqs {
     EXTI9 => exti::InterruptHandler<interrupt::typelevel::EXTI9>;
     EXTI12 => exti::InterruptHandler<interrupt::typelevel::EXTI12>;
     SDMMC1 => sdmmc::InterruptHandler<SDMMC1>;
+    OTG_HS => usb::InterruptHandler<USB_OTG_HS>;
     USART2 => usart::BufferedInterruptHandler<USART2>;
 });
 
@@ -134,6 +137,7 @@ pub struct Board<'d> {
     pub pdm_mic1: PdmMic1<'d>,
     pub sd: SdCard<'d>,
     pub ebyte_rf: EbyteRf<'d>,
+    pub usb_cdc: UsbCdc<'d>,
 }
 
 pub struct Leds<'d> {
@@ -219,6 +223,14 @@ pub struct EbyteRf<'d> {
     pub irq: ExtiInput<'d, Async>,
 }
 
+// USB-C connector on PA11/PA12, with VBUS divider on PA9.
+pub struct UsbCdc<'d> {
+    pub usb: Peri<'d, USB_OTG_HS>,
+    pub dm: Peri<'d, PA11>,
+    pub dp: Peri<'d, PA12>,
+    pub vbus: Input<'d>,
+}
+
 impl Board<'static> {
     pub fn new(p: Peripherals) -> Self {
         let Peripherals {
@@ -237,6 +249,11 @@ impl Board<'static> {
             PA0,
             PA1,
             PB1,
+            // USB-C CDC
+            USB_OTG_HS,
+            PA9,
+            PA11,
+            PA12,
             // buzzer
             PA5,
             TIM8,
@@ -346,6 +363,12 @@ impl Board<'static> {
                 busy: Input::new(PE10, Pull::None),
                 nrst: Output::new(PE11, Level::High, Speed::Medium),
                 irq: ExtiInput::new(PE12, EXTI12, Pull::None, Irqs),
+            },
+            usb_cdc: UsbCdc {
+                usb: USB_OTG_HS,
+                dm: PA11,
+                dp: PA12,
+                vbus: Input::new(PA9, Pull::None),
             },
         }
     }
