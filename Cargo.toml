@@ -29,6 +29,7 @@ members = [
     "unitsmoke/23_gps_standby",
     "unitsmoke/24_batt_charger",
     "unitsmoke/25_sd_rawspeed",
+    "unitsmoke/26_tempsensors",
 ]
 
 [workspace.package]
