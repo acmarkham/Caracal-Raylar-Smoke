@@ -1,0 +1,23 @@
+[package]
+name = "raylar-drivers"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raylar_drivers"
+path = "src/lib.rs"
+
+[features]
+default = []
+defmt = ["dep:defmt", "embassy-sync/defmt"]
+stm32 = ["dep:embassy-stm32"]
+trustzone-secure = ["stm32", "embassy-stm32/trustzone-secure"]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+embassy-stm32 = { workspace = true, optional = true }
+embassy-sync = "0.7.2"
+embassy-time.workspace = true
+embedded-io-async = "0.7.0"
+heapless = "0.8.0"

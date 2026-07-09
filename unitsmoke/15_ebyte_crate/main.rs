@@ -27,7 +27,7 @@ use {defmt_rtt as _, panic_probe as _};
 
 const RADIO_FREQUENCY_HZ: u32 = 868_000_000;
 const BUSY_STARTUP_TIMEOUT: Duration = Duration::from_millis(500);
-const TX_INTERVAL: Duration = Duration::from_secs(4);
+const TX_INTERVAL: Duration = Duration::from_secs(10);
 const TX_WAIT_TIMEOUT: Duration = Duration::from_millis(1500);
 const TX_TIMEOUT_RTC: u24 = u24::new(0x008000);
 const TCXO_STARTUP_DELAY_TICKS: u24 = u24::new(320);
