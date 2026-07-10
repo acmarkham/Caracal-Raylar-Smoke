@@ -31,6 +31,7 @@ members = [
     "unitsmoke/25_sd_rawspeed",
     "unitsmoke/26_tempsensors",
     "unitsmoke/27_USB_CDC",
+    "unitsmoke/28_GPS_TIM_CC",
 ]
 
 [workspace.package]
