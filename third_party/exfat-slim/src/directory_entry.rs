@@ -1,0 +1,630 @@
+use alloc::vec::Vec;
+use bitflags::bitflags;
+use thiserror::Error;
+
+use super::{
+    BlockDevice, bisync,
+    directory::DirectoryEntryFilter,
+    file::FileDetails,
+    file_system::{ExFatResult, FileSystem, FileSystemDetails},
+    utils::{decode_utf16, read_u16_le, read_u32_le, read_u64_le},
+};
+
+pub const RAW_ENTRY_LEN: usize = 32;
+//pub const DIR_ENTRIES_PER_BLOCK: usize = BLOCK_SIZE / RAW_ENTRY_LEN;
+
+pub type RawDirEntry = [u8; RAW_ENTRY_LEN];
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Error, Debug, Clone, Copy)]
+pub enum Error {
+    #[error("invalid uft16 string encountered ({reason})")]
+    InvalidUtf16String { reason: &'static str },
+}
+
+/// Entry Type (identifies what kind of 32 byte entry this is)
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum EntryType {
+    UnusedOrEndOfDirectory,
+    AllocationBitmap,
+    UpcaseTable,
+    VolumeLabel,
+    FileAndDirectory,
+    VolumeGuid,
+    TexFATPadding,
+    StreamExtension,
+    Filename,
+    Reserved(u8),
+}
+
+/// Allocation bitmap
+#[derive(Debug)]
+pub(crate) struct AllocationBitmapDirEntry {
+    pub _bitmap_flags: BitmapFlags,
+    pub first_cluster: u32,
+    /// size, in bytes, of the allocation bitmap
+    pub data_length: u64,
+}
+
+/// Up-case table
+#[derive(Debug)]
+pub(crate) struct UpcaseTableDirEntry {
+    pub _table_checksum: u32,
+    pub first_cluster: u32,
+    pub _data_length: u64,
+}
+
+/// Volume label
+#[derive(Debug)]
+#[allow(unused)]
+pub(crate) struct VolumeLabelDirEntry(pub heapless::String<22>); // 11 characters
+
+/// File and directory (file attribute and timestamp) also known as DirectoryEntry
+#[derive(Debug)]
+pub(crate) struct FileDirEntry {
+    /// the number of entries following this one
+    pub secondary_count: u8,
+
+    /// the checksum of all the directory entries in this set (excluding this field)
+    pub set_checksum: u16,
+
+    /// file or directory flags like Directory or Archive for example
+    pub file_attributes: FileAttributes,
+
+    /// local date and time of creation of the entry set (see spec for bit offsets - it is NOT a unix timestamp)
+    pub create_timestamp: u32,
+
+    /// local date and time that any of the clusters associated with the stream extension were last modified
+    pub last_modified_timestamp: u32,
+
+    /// local date and time that any of the clusters associated with the stream extension were last modified or read
+    pub last_accessed_timestamp: u32,
+
+    /// extra resolution for create timestamp (0-199 = 0ms-1990ms)
+    pub create_10ms_increment: u8,
+
+    /// extra resolution for modify timestamp (0-199 = 0ms-1990ms)
+    pub last_modified_10ms_increment: u8,
+
+    /// utc offset of the local time for the create timestamp
+    pub create_utc_offset: u8,
+
+    /// utc offset of the local time for the modify timestamp
+    pub last_modified_utc_offset: u8,
+
+    /// utc offset of the local time for the last accessed timestamp
+    pub last_accessed_utc_offset: u8,
+}
+
+impl FileDirEntry {
+    pub(crate) fn serialize(&self) -> RawDirEntry {
+        let mut raw = [0u8; RAW_ENTRY_LEN];
+        raw[0] = EntryType::FileAndDirectory.serialize();
+        raw[1] = self.secondary_count;
+        raw[2..4].copy_from_slice(&self.set_checksum.to_le_bytes());
+        raw[4..6].copy_from_slice(&self.file_attributes.bits().to_le_bytes());
+        raw[8..12].copy_from_slice(&self.create_timestamp.to_le_bytes());
+        raw[12..16].copy_from_slice(&self.last_modified_timestamp.to_le_bytes());
+        raw[16..20].copy_from_slice(&self.last_accessed_timestamp.to_le_bytes());
+        raw[20] = self.create_10ms_increment;
+        raw[21] = self.last_modified_10ms_increment;
+        raw[22] = self.create_utc_offset;
+        raw[23] = self.last_modified_utc_offset;
+        raw[24] = self.last_accessed_utc_offset;
+        raw
+    }
+}
+
+/// Stream extension (file allocation information)
+#[derive(Debug)]
+pub(crate) struct StreamExtensionDirEntry {
+    pub general_secondary_flags: GeneralSecondaryFlags,
+
+    // length, in number of characters, of the unicode string (range 1-255 is valid)
+    pub name_length: u8,
+
+    /// hash of the upcased filename
+    pub name_hash: u16,
+
+    /// how far into the data stream the user data has been written in number of bytes.
+    /// if the user requests data beyond the valid data length then zeros must be supplied.
+    pub valid_data_length: u64,
+
+    /// first cluster of the data stream
+    pub first_cluster: u32,
+
+    /// size, in bytes, of the data the associated cluster allocation contains
+    pub data_length: u64,
+}
+
+impl StreamExtensionDirEntry {
+    pub(crate) fn serialize(&self) -> RawDirEntry {
+        let mut raw = [0u8; RAW_ENTRY_LEN];
+        raw[0] = EntryType::StreamExtension.serialize();
+        raw[1] = self.general_secondary_flags.bits();
+        raw[3] = self.name_length;
+        raw[4..6].copy_from_slice(&self.name_hash.to_le_bytes());
+        raw[8..16].copy_from_slice(&self.valid_data_length.to_le_bytes());
+        raw[20..24].copy_from_slice(&self.first_cluster.to_le_bytes());
+        raw[24..32].copy_from_slice(&self.data_length.to_le_bytes());
+        raw
+    }
+}
+
+/// File name (name of the file - part)
+#[derive(Debug)]
+pub(crate) struct FileNameDirEntry {
+    pub general_secondary_flags: GeneralSecondaryFlags,
+    pub file_name: [u16; 15], // utf16 formatted
+}
+
+impl FileNameDirEntry {
+    pub(crate) fn serialize(&self) -> RawDirEntry {
+        let mut raw = [0u8; RAW_ENTRY_LEN];
+        raw[0] = EntryType::Filename.serialize();
+        raw[1] = self.general_secondary_flags.bits();
+
+        let (chunks, _remainder) = raw[2..32].as_chunks_mut::<2>();
+        for (to, from) in chunks.iter_mut().zip(&self.file_name) {
+            to.copy_from_slice(&from.to_le_bytes());
+        }
+        raw
+    }
+}
+
+impl From<u8> for EntryType {
+    fn from(value: u8) -> Self {
+        match value {
+            0x00 => Self::UnusedOrEndOfDirectory,
+            0x81 => Self::AllocationBitmap,
+            0x82 => Self::UpcaseTable,
+            0x83 => Self::VolumeLabel,
+            0x85 => Self::FileAndDirectory,
+            0xA0 => Self::VolumeGuid,
+            0xA1 => Self::TexFATPadding,
+            0xC0 => Self::StreamExtension,
+            0xC1 => Self::Filename,
+            x => Self::Reserved(x),
+        }
+    }
+}
+
+impl EntryType {
+    pub(crate) fn serialize(&self) -> u8 {
+        match self {
+            Self::UnusedOrEndOfDirectory => 0x00,
+            Self::AllocationBitmap => 0x81,
+            Self::UpcaseTable => 0x82,
+            Self::VolumeLabel => 0x83,
+            Self::FileAndDirectory => 0x85,
+            Self::VolumeGuid => 0xA0,
+            Self::TexFATPadding => 0xA1,
+            Self::StreamExtension => 0xC0,
+            Self::Filename => 0xC1,
+            Self::Reserved(x) => *x,
+        }
+    }
+}
+
+impl From<&[u8; RAW_ENTRY_LEN]> for AllocationBitmapDirEntry {
+    fn from(value: &[u8; RAW_ENTRY_LEN]) -> Self {
+        let _bitmap_flags = BitmapFlags::from_bits_truncate(value[1]);
+        let first_cluster = read_u32_le::<20, _>(value);
+        let data_length = read_u64_le::<24, _>(value);
+        Self {
+            _bitmap_flags,
+            first_cluster,
+            data_length,
+        }
+    }
+}
+
+impl From<&[u8; RAW_ENTRY_LEN]> for UpcaseTableDirEntry {
+    fn from(value: &[u8; RAW_ENTRY_LEN]) -> Self {
+        let _table_checksum = read_u32_le::<4, _>(value);
+        let first_cluster = read_u32_le::<20, _>(value);
+        let _data_length = read_u64_le::<24, _>(value);
+
+        Self {
+            _table_checksum,
+            first_cluster,
+            _data_length,
+        }
+    }
+}
+
+impl TryFrom<&[u8; RAW_ENTRY_LEN]> for VolumeLabelDirEntry {
+    type Error = Error;
+
+    fn try_from(value: &[u8; RAW_ENTRY_LEN]) -> Result<Self, Self::Error> {
+        let character_count = value[1] as usize;
+        if character_count > 11 {
+            return Err(Error::InvalidUtf16String {
+                reason: "character count exceeds 11",
+            });
+        }
+        let character_num_bytes = character_count * 2; // utf-16 encoded
+
+        let volume_label = decode_utf16_le(&value[2..2 + character_num_bytes])?;
+        Ok(Self(volume_label))
+    }
+}
+
+impl From<&[u8; RAW_ENTRY_LEN]> for FileDirEntry {
+    fn from(value: &[u8; RAW_ENTRY_LEN]) -> Self {
+        let secondary_count = value[1];
+        let set_checksum = read_u16_le::<2, _>(value);
+        let file_attributes = FileAttributes::from_bits_truncate(read_u16_le::<4, _>(value));
+        let create_timestamp = read_u32_le::<8, _>(value);
+        let last_modified_timestamp = read_u32_le::<12, _>(value);
+        let last_accessed_timestamp = read_u32_le::<16, _>(value);
+        let create_10ms_increment = value[20];
+        let last_modified_10ms_increment = value[21];
+        let create_utc_offset = value[22];
+        let last_modified_utc_offset = value[23];
+        let last_accessed_utc_offset = value[24];
+
+        Self {
+            secondary_count,
+            set_checksum,
+            file_attributes,
+            create_timestamp,
+            last_modified_timestamp,
+            last_accessed_timestamp,
+            create_10ms_increment,
+            last_modified_10ms_increment,
+            create_utc_offset,
+            last_modified_utc_offset,
+            last_accessed_utc_offset,
+        }
+    }
+}
+
+impl From<&[u8; RAW_ENTRY_LEN]> for StreamExtensionDirEntry {
+    fn from(value: &[u8; RAW_ENTRY_LEN]) -> Self {
+        let general_secondary_flags = GeneralSecondaryFlags::from_bits_truncate(value[1]);
+        let name_length = value[3];
+        let name_hash = read_u16_le::<4, _>(value);
+        let valid_data_length = read_u64_le::<8, _>(value);
+        let first_cluster = read_u32_le::<20, _>(value);
+        let data_length = read_u64_le::<24, _>(value);
+
+        Self {
+            general_secondary_flags,
+            name_length,
+            name_hash,
+            valid_data_length,
+            first_cluster,
+            data_length,
+        }
+    }
+}
+
+impl From<&[u8; RAW_ENTRY_LEN]> for FileNameDirEntry {
+    fn from(value: &[u8; RAW_ENTRY_LEN]) -> Self {
+        let general_secondary_flags = GeneralSecondaryFlags::from_bits_truncate(value[1]);
+        let mut file_name: [u16; 15] = [0; 15];
+        let (chunks, _remainder) = value[2..RAW_ENTRY_LEN].as_chunks::<2>();
+        let u16_iter = chunks.iter().map(|x| u16::from_le_bytes(*x));
+        for (from, to) in u16_iter.zip(file_name.iter_mut()) {
+            *to = from;
+        }
+
+        Self {
+            general_secondary_flags,
+            file_name,
+        }
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for FileAttributes {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "FileAttributes({=u16:#010b})", self.bits());
+    }
+}
+
+#[cfg(feature = "defmt")]
+impl defmt::Format for GeneralSecondaryFlags {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(f, "GeneralSecondaryFlags({=u8:#010b})", self.bits());
+    }
+}
+
+bitflags! {
+    /// Represents a set of bitmap flags.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub(crate) struct BitmapFlags: u8 {
+        /// The value `FirstOrSecondBitmap`, at bit position `0`.
+        /// 0 = 1st bitmap
+        /// 1 = 2nd bitmap
+        const FirstOrSecondBitmap = 0b0000_0001;
+    }
+
+
+    /// Represents a set of volume flags.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub(crate) struct GeneralSecondaryFlags: u8 {
+        /// The value `AllocationPossible`, at bit position `0`.
+        /// 0 = Cluster allocation is not possible and FirstCluster and DataLength field are undefined,
+        /// 1 = Cluster allocation is possible and FirstCluster and DataLength field are valid as defined.
+        const AllocationPossible = 0b0000_0001;
+
+        /// The value `NoFatChain`, at bit position `1`.
+        /// 0 = Cluster chain on the FAT is valid, 1 = Cluster chain is contiguous and not recorded on the FAT.
+        const NoFatChain = 0b0000_0010;
+    }
+
+    /// Represents a set of file attributes.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    pub(crate) struct FileAttributes: u16 {
+        /// The value `ReadOnly`, at bit position `0`.
+        const ReadOnly = 0b0000_0001;
+
+        /// The value `ReadOnly`, at bit position `1`.
+        const Hidden = 0b0000_0010;
+
+        /// The value `ReadOnly`, at bit position `2`.
+        const System = 0b0000_0100;
+
+        /// The value `ReadOnly`, at bit position `4`.
+        const Directory = 0b0001_0000;
+
+        /// The value `ReadOnly`, at bit position `5`.
+        const Archive = 0b0010_0000;
+    }
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Location {
+    /// the absolute sector_id.
+    /// all sectors in a cluster are contiguous
+    pub sector_id: u32,
+
+    /// number of 32 byte directory entries to skip
+    pub dir_entry_offset: usize,
+}
+
+impl Location {
+    pub(crate) fn new(sector_id: u32, dir_entry_offset: usize) -> Self {
+        Self {
+            sector_id,
+            dir_entry_offset,
+        }
+    }
+}
+
+fn decode_utf16_le<const N: usize>(bytes: &[u8]) -> Result<heapless::String<N>, Error> {
+    let (chunks, _remainder) = bytes.as_chunks::<2>();
+    let u16_iter = chunks.iter().map(|x| u16::from_le_bytes(*x));
+
+    let decoded = core::char::decode_utf16(u16_iter)
+        .map(|r| {
+            // TODO reject illegal character like quotes (see spec)
+            r.map_err(|_| Error::InvalidUtf16String {
+                reason: "invalid u16 char detected",
+            })
+        })
+        .collect::<Result<heapless::String<N>, _>>()?;
+    Ok(decoded)
+}
+
+pub(crate) struct DirectoryEntryChain<const SIZE: usize> {
+    cluster_id: u32,
+    fs: FileSystemDetails,
+    // offset, in number of sectors, from start of cluster
+    cluster_offset: usize,
+    // offset, in number of RAW_ENTRY_LEN chunks, from start of sector
+    dir_entry_offset: usize,
+    buf: [u8; SIZE],
+    fetch_required: bool,
+}
+
+impl<const SIZE: usize> DirectoryEntryChain<SIZE> {
+    pub(crate) fn new_from_location(location: &Location, fs: &FileSystemDetails) -> Self {
+        // This is so gross, make it better
+        let sector_id_from_start = location.sector_id - fs.cluster_heap_offset;
+        let cluster_id = 2 + sector_id_from_start / fs.sectors_per_cluster;
+        let cluster_offset = (sector_id_from_start % fs.sectors_per_cluster) as usize;
+        let dir_entry_offset = location.dir_entry_offset;
+
+        Self {
+            buf: [0; SIZE],
+            fs: fs.clone(),
+            cluster_id,
+            cluster_offset,
+            dir_entry_offset,
+            fetch_required: true,
+        }
+    }
+
+    pub(crate) fn new(cluster_id: u32, fs: &FileSystemDetails) -> Self {
+        Self {
+            buf: [0; SIZE],
+            fs: fs.clone(),
+            cluster_id,
+            cluster_offset: 0,
+            dir_entry_offset: 0,
+            fetch_required: true,
+        }
+    }
+
+    #[bisync]
+    pub(crate) async fn next_file_dir_entry<D, const N: usize>(
+        &mut self,
+        fs: &mut FileSystem<D, SIZE, N>,
+    ) -> ExFatResult<Option<(FileDirEntry, Location)>, D, SIZE>
+    where
+        D: BlockDevice<SIZE>,
+    {
+        while let Some((entry, location)) = self.next(fs).await? {
+            let entry_type_val = entry[0];
+            match EntryType::from(entry_type_val) {
+                EntryType::UnusedOrEndOfDirectory => {
+                    if is_end_of_directory(entry) {
+                        return Ok(None);
+                    }
+                }
+                EntryType::FileAndDirectory => {
+                    let file_entry: FileDirEntry = entry.into();
+                    return Ok(Some((file_entry, location)));
+                }
+                _entry_type => {} // ignore and keep going
+            }
+        }
+
+        Ok(None)
+    }
+
+    #[bisync]
+    pub(crate) async fn next_file_entry<D, const N: usize>(
+        &mut self,
+        fs: &mut FileSystem<D, SIZE, N>,
+        filter: &impl DirectoryEntryFilter,
+    ) -> ExFatResult<Option<FileDetails>, D, SIZE>
+    where
+        D: BlockDevice<SIZE>,
+    {
+        'outer: loop {
+            if let Some((file_dir_entry, location)) = self.next_file_dir_entry(fs).await? {
+                if let Some((stream_entry, _location)) = self.next(fs).await? {
+                    // TODO: check entry type
+                    let stream_entry: StreamExtensionDirEntry = stream_entry.into();
+                    if !filter.hash(stream_entry.name_hash, file_dir_entry.file_attributes) {
+                        continue 'outer;
+                    }
+
+                    // read the entire file_name
+                    let name_length = stream_entry.name_length as usize;
+                    let mut file_name: Vec<u16> = Vec::with_capacity(name_length);
+                    'inner: loop {
+                        if let Some((file_name_entry, _location)) = self.next(fs).await? {
+                            // TODO: check entry type
+                            let file_name_entry: FileNameDirEntry = file_name_entry.into();
+                            let len = (name_length - file_name.len())
+                                .min(file_name_entry.file_name.len());
+                            file_name.extend_from_slice(&file_name_entry.file_name[..len]);
+                            if file_name.len() == name_length {
+                                break 'inner;
+                            }
+                        } else {
+                            return Ok(None);
+                        }
+                    }
+
+                    if !filter.file_name(&file_name, &fs.upcase_table) {
+                        continue 'outer;
+                    }
+
+                    let name = decode_utf16::<D, SIZE>(file_name)?;
+                    let file_details = FileDetails {
+                        attributes: file_dir_entry.file_attributes,
+                        data_length: stream_entry.data_length,
+                        valid_data_length: stream_entry.valid_data_length,
+                        first_cluster: stream_entry.first_cluster,
+                        name,
+                        location,
+                        flags: stream_entry.general_secondary_flags,
+                        secondary_count: file_dir_entry.secondary_count,
+                    };
+                    return Ok(Some(file_details));
+                } else {
+                    return Ok(None);
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+    }
+
+    fn get_current_sector_id<D>(&self) -> ExFatResult<u32, D, SIZE>
+    where
+        D: BlockDevice<SIZE>,
+    {
+        let mut sector_id = self.fs.get_heap_sector_id::<D, SIZE>(self.cluster_id)?;
+        sector_id += self.cluster_offset as u32;
+        Ok(sector_id)
+    }
+
+    const fn dir_entries_per_block() -> usize {
+        SIZE / RAW_ENTRY_LEN
+    }
+
+    #[bisync]
+    pub(crate) async fn next<D, const N: usize>(
+        &mut self,
+        fs: &mut FileSystem<D, SIZE, N>,
+    ) -> ExFatResult<Option<(&[u8; RAW_ENTRY_LEN], Location)>, D, SIZE>
+    where
+        D: BlockDevice<SIZE>,
+    {
+        if self.dir_entry_offset >= Self::dir_entries_per_block() {
+            self.cluster_offset += 1;
+            self.dir_entry_offset = 0;
+            self.fetch_required = true;
+        }
+
+        if self.cluster_offset >= self.fs.sectors_per_cluster as usize {
+            // we have reached the end of the cluster
+            let cluster_id = fs
+                .fat
+                .next_cluster_in_fat_chain(self.cluster_id, &mut fs.dev)
+                .await?;
+            match cluster_id {
+                Some(cluster_id) => {
+                    self.cluster_id = cluster_id;
+                    self.cluster_offset = 0;
+                    self.dir_entry_offset = 0;
+                    self.fetch_required = true;
+                }
+                None => return Ok(None),
+            }
+        }
+
+        if self.fetch_required {
+            let sector_id = self.get_current_sector_id::<D>()?;
+            let slot = fs.data_blocks.read(sector_id, &mut fs.dev).await?;
+            self.buf.copy_from_slice(slot.as_slice());
+            self.fetch_required = false;
+        }
+
+        let (entries, _remainder) = self.buf.as_chunks::<RAW_ENTRY_LEN>();
+        let entry = &entries[self.dir_entry_offset];
+        let location = Location::new(self.get_current_sector_id::<D>()?, self.dir_entry_offset);
+        self.dir_entry_offset += 1;
+        Ok(Some((entry, location)))
+    }
+}
+
+pub(crate) fn is_end_of_directory(directory_entry: &[u8; 32]) -> bool {
+    // all bytes in the entry must be zero for this to be an end of directory marker
+    directory_entry.iter().all(|&x| x == 0)
+}
+
+/// calculates the checksum for a file directory set
+fn calc_checksum(dir_entry_set: &[RawDirEntry]) -> u16 {
+    if dir_entry_set.is_empty() {
+        return 0;
+    }
+
+    let mut checksum: u16 = 0;
+
+    for (entry_index, entry) in dir_entry_set.iter().enumerate() {
+        for (byte_index, &b) in entry.iter().enumerate() {
+            if entry_index == 0 && (byte_index == 2 || byte_index == 3) {
+                continue;
+            }
+
+            checksum = checksum.rotate_right(1).wrapping_add(b as u16);
+        }
+    }
+
+    checksum
+}
+
+/// calculate and update the set_checksum field
+pub(crate) fn update_checksum(dir_entries: &mut [RawDirEntry]) {
+    let set_checksum = calc_checksum(dir_entries);
+    dir_entries[0][2..4].copy_from_slice(&set_checksum.to_le_bytes());
+}
