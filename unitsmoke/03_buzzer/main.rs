@@ -4,7 +4,6 @@
 
 // Assumptions: using MSI as the clock source, and the board is powered on and running.
 
-
 #![no_std]
 #![no_main]
 
@@ -18,23 +17,19 @@ use {defmt_rtt as _, panic_probe as _};
 // pwm imports
 use embassy_stm32::gpio::OutputType;
 use embassy_stm32::time::hz;
-use embassy_stm32::timer::complementary_pwm::{
-    ComplementaryPwm,
-    ComplementaryPwmPin,
-};
+use embassy_stm32::timer::complementary_pwm::{ComplementaryPwm, ComplementaryPwmPin};
 use embassy_stm32::timer::low_level::CountingMode;
 use embassy_stm32::timer::Channel;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     let p = embassy_stm32::init(Default::default());
-    let Board { leds, buzzer ,..} = Board::new(p);
+    let Board { leds, buzzer, .. } = Board::new(p);
     let Leds {
         sys_main_red,
         sys_main_green,
         ..
     } = leds;
-    
 
     info!("Buzzer smoke test started");
 
@@ -55,10 +50,7 @@ async fn heartbeat_task(mut led: Output<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn buzzer_task(
-    buzzer: Buzzer<'static>,
-    mut led: Output<'static>,
-) -> ! {
+async fn buzzer_task(buzzer: Buzzer<'static>, mut led: Output<'static>) -> ! {
     let Buzzer { tim, pin } = buzzer;
 
     let ch1n = ComplementaryPwmPin::new(pin, OutputType::PushPull);
@@ -89,7 +81,6 @@ async fn buzzer_task(
         led.set_low();
 
         pwm.disable(Channel::Ch1);
-        
 
         Timer::after_secs(1).await;
     }

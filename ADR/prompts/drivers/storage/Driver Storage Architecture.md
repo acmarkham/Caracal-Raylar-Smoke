@@ -69,6 +69,15 @@ The storage driver should use these components as stubs when writing the driver.
 The exfat-slim crate has been locally patched to handle large (>128kib) clusters. Use this patched crate.
 
 ---
+Create the driver under:
+crates\drivers\src\storage
+
+There is another existing driver under 
+crates\drivers\src\gps
+if you need to make consistent structure and naming
+
+
+---
 
 # Design Goals
 
@@ -483,7 +492,7 @@ The storage driver should be designed so these higher-level features can be adde
 # Tests:
 
 Under:
-drivertests\storage 
+drivertests\storage
 make a test suite that exercises:
 - filesystem mounting
 - error handling e.g. sd card absent, no filesystem

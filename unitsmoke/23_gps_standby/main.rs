@@ -58,11 +58,7 @@ async fn main(spawner: Spawner) -> ! {
     gps_standby_test(spawner, gps, leds.sys_gps_green).await
 }
 
-async fn gps_standby_test(
-    spawner: Spawner,
-    gps: Gps<'static>,
-    serial_led: Output<'static>,
-) -> ! {
+async fn gps_standby_test(spawner: Spawner, gps: Gps<'static>, serial_led: Output<'static>) -> ! {
     let Gps {
         usart,
         tx,

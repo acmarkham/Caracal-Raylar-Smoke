@@ -12,19 +12,17 @@ use embassy_executor::Spawner;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::mode::Async;
 use embassy_time::{Duration, Timer};
-use raylar_board_v1p0::{Board, SensI2C, Leds};
+use raylar_board_v1p0::{Board, Leds, SensI2C};
 use {defmt_rtt as _, panic_probe as _};
 // i2c imports
 use embassy_stm32::i2c::{Config, I2c};
-use embassy_stm32::time::Hertz;
 use embassy_stm32::time::mhz;
+use embassy_stm32::time::Hertz;
 
 use embassy_stm32::rcc::*;
 
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
-
     let mut config = embassy_stm32::Config::default();
 
     config.rcc.hse = Some(Hse {
@@ -45,13 +43,13 @@ async fn main(spawner: Spawner) -> ! {
 
     let p = embassy_stm32::init(config);
     //let p = embassy_stm32::init(Default::default());
-    let Board { leds, sens_i2c,..} = Board::new(p);
+    let Board { leds, sens_i2c, .. } = Board::new(p);
     let Leds {
         sys_main_red,
         sys_main_green,
         ..
     } = leds;
-    
+
     info!("SENS I2C smoke test started");
 
     spawner.spawn(unwrap!(heartbeat_task(sys_main_green)));
@@ -71,20 +69,12 @@ async fn heartbeat_task(mut led: Output<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn i2c_task(
-    sens_i2c: SensI2C<'static>,
-    mut led: Output<'static>,
-) -> ! {
-    let SensI2C{ i2c, scl, sda } = sens_i2c;
+async fn i2c_task(sens_i2c: SensI2C<'static>, mut led: Output<'static>) -> ! {
+    let SensI2C { i2c, scl, sda } = sens_i2c;
     let mut config = Config::default();
     config.frequency = Hertz(100_000);
 
-    let mut i2c = I2c::new_blocking(
-        i2c,
-        scl,
-        sda,
-        config,
-    );
+    let mut i2c = I2c::new_blocking(i2c, scl, sda, config);
 
     let mut whoami = [0u8; 1];
 
@@ -92,24 +82,24 @@ async fn i2c_task(
     // bq25186
     //
     const BQ25186_ADDR: u8 = 0x6A;
-    const REG_STAT0: u8       = 0x00;
-    const REG_STAT1: u8       = 0x01;
-    const REG_FLAG0: u8       = 0x02;
+    const REG_STAT0: u8 = 0x00;
+    const REG_STAT1: u8 = 0x01;
+    const REG_FLAG0: u8 = 0x02;
 
-    const REG_VBAT_CTRL: u8   = 0x03;
-    const REG_ICHG_CTRL: u8   = 0x04;
+    const REG_VBAT_CTRL: u8 = 0x03;
+    const REG_ICHG_CTRL: u8 = 0x04;
 
     const REG_CHARGECTRL0: u8 = 0x05;
     const REG_CHARGECTRL1: u8 = 0x06;
 
-    const REG_IC_CTRL: u8     = 0x07;
-    const REG_TMR_ILIM: u8    = 0x08;
+    const REG_IC_CTRL: u8 = 0x07;
+    const REG_TMR_ILIM: u8 = 0x08;
 
-    const REG_SHIP_RST: u8    = 0x09;
-    const REG_SYS_REG: u8     = 0x0A;
-    const REG_TS_CONTROL: u8  = 0x0B;
+    const REG_SHIP_RST: u8 = 0x09;
+    const REG_SYS_REG: u8 = 0x0A;
+    const REG_TS_CONTROL: u8 = 0x0B;
 
-    const REG_MASK_ID: u8     = 0x0C;
+    const REG_MASK_ID: u8 = 0x0C;
 
     // Check whoami
     match i2c.blocking_write_read(BQ25186_ADDR, &[REG_MASK_ID], &mut whoami) {
@@ -119,25 +109,21 @@ async fn i2c_task(
 
     loop {
         led.set_high();
-        
+
         let mut stat0 = [0u8; 1];
 
-        match i2c.blocking_write_read(
-            BQ25186_ADDR,
-            &[REG_STAT0],
-            &mut stat0,
-        ) {
+        match i2c.blocking_write_read(BQ25186_ADDR, &[REG_STAT0], &mut stat0) {
             Ok(_) => {
                 let v = stat0[0];
 
                 info!("STAT0 = 0x{=u8:02x}", v);
-                let ts_open           = (v & 0x80) != 0;
-                let chg_stat          = (v >> 5) & 0x03;
-                let ilim_active       = (v & 0x10) != 0;
-                let vdppm_active      = (v & 0x08) != 0;
-                let vindpm_active     = (v & 0x04) != 0;
-                let thermreg_active   = (v & 0x02) != 0;
-                let vin_pgood         = (v & 0x01) != 0;
+                let ts_open = (v & 0x80) != 0;
+                let chg_stat = (v >> 5) & 0x03;
+                let ilim_active = (v & 0x10) != 0;
+                let vdppm_active = (v & 0x08) != 0;
+                let vindpm_active = (v & 0x04) != 0;
+                let thermreg_active = (v & 0x02) != 0;
+                let vin_pgood = (v & 0x01) != 0;
                 let chg_state = match chg_stat {
                     0b00 => "NotCharging",
                     0b01 => "ConstantCurrent",
@@ -155,19 +141,13 @@ async fn i2c_task(
                     thermreg_active,
                     vin_pgood,
                 );
-
-
             }
             Err(e) => info!("BQ25186 STAT0 read failed: {=?}", e),
         }
 
         let mut stat1 = [0u8; 1];
 
-        match i2c.blocking_write_read(
-            BQ25186_ADDR,
-            &[REG_STAT1],
-            &mut stat1,
-        ) {
+        match i2c.blocking_write_read(BQ25186_ADDR, &[REG_STAT1], &mut stat1) {
             Ok(_) => {
                 let v = stat1[0];
 
@@ -190,19 +170,14 @@ async fn i2c_task(
 
                 info!(
                     "STAT1: VIN_OVP={} BUVLO={} TS={} SAFETY_TMR={} WAKE1={} WAKE2={}",
-                    vin_ovp,
-                    buvlo,
-                    ts_state,
-                    safety_timer_fault,
-                    wake1,
-                    wake2,
+                    vin_ovp, buvlo, ts_state, safety_timer_fault, wake1, wake2,
                 );
             }
             Err(e) => {
                 info!("BQ25186 STAT1 read failed: {=?}", e);
             }
         }
-        
+
         led.set_low();
 
         Timer::after_secs(1).await;

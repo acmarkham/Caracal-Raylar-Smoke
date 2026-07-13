@@ -93,11 +93,7 @@ async fn run_mic_smoke(pdm_mic1: PdmMic1<'static>) -> ! {
             if sample_count % 2000 == 0 {
                 info!(
                     "MIC1 raw {} sample {} value={} overrun={} ckab={}",
-                    raw,
-                    sample_count,
-                    sample,
-                    overrun_count,
-                    clock_absence_count,
+                    raw, sample_count, sample, overrun_count, clock_absence_count,
                 );
             }
         } else {
@@ -110,10 +106,7 @@ fn configure_mdf_pins(pdm_mic1: PdmMic1<'static>) {
     let PdmMic1 { cck0, sdio } = pdm_mic1;
 
     let mut cck0 = Flex::new(cck0);
-    cck0.set_as_af_unchecked(
-        5,
-        AfType::output(OutputType::PushPull, Speed::VeryHigh),
-    );
+    cck0.set_as_af_unchecked(5, AfType::output(OutputType::PushPull, Speed::VeryHigh));
     core::mem::forget(cck0);
 
     let mut sdio = Flex::new(sdio);

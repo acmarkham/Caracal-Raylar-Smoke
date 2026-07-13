@@ -4,6 +4,7 @@ members = [
     "crates/drivers",
     "crates/board/raylar_v1p0",
     "drivertests/gps",
+    "drivertests/storage",
     "unitsmoke/01_helloworld",
     "unitsmoke/02_userbutton",
     "unitsmoke/03_buzzer",

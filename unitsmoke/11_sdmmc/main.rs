@@ -71,7 +71,7 @@ async fn run_sd_smoke(mut sd: SdCard<'static>) -> ! {
 
     info!("Card present: SD_SW is low");
     // init
-        let mut sdmmc = Sdmmc::new_4bit(
+    let mut sdmmc = Sdmmc::new_4bit(
         sd.sdmmc,
         Irqs,
         sd.clk,
@@ -89,9 +89,12 @@ async fn run_sd_smoke(mut sd: SdCard<'static>) -> ! {
         Ok(_card) => {
             error!("SD card init succeeded when it should have been off");
             pending_forever().await;
-        },
+        }
         Err(e) => {
-            info!("SD card init cannot cannot be completed (correct behavior when card is off): {}", e);
+            info!(
+                "SD card init cannot cannot be completed (correct behavior when card is off): {}",
+                e
+            );
         }
     };
     // Now turn the card on properly and try again
@@ -99,13 +102,14 @@ async fn run_sd_smoke(mut sd: SdCard<'static>) -> ! {
     sd.power.set_low();
     Timer::after_secs(1).await;
 
-    let mut card = match StorageDevice::new_sd_card(&mut sdmmc, &mut cmd_block, SD_TARGET_FREQ).await {
-        Ok(card) => card,
-        Err(e) => {
-            error!("SD card init failed: {}", e);
-            pending_forever().await;
-        }
-    };
+    let mut card =
+        match StorageDevice::new_sd_card(&mut sdmmc, &mut cmd_block, SD_TARGET_FREQ).await {
+            Ok(card) => card,
+            Err(e) => {
+                error!("SD card init failed: {}", e);
+                pending_forever().await;
+            }
+        };
 
     let info = card.card();
     let capacity_kind = match info.card_type {
@@ -148,7 +152,11 @@ async fn write_read_validate(
     let mut write_block = DataBlock::new();
     fill_pattern(&mut write_block, pattern);
 
-    info!("Writing block {} with pattern {}", block_idx, pattern.name());
+    info!(
+        "Writing block {} with pattern {}",
+        block_idx,
+        pattern.name()
+    );
     if let Err(e) = card.write_block(block_idx, &write_block).await {
         error!("Write block {} failed: {}", block_idx, e);
         pending_forever().await;

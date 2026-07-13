@@ -12,19 +12,17 @@ use embassy_executor::Spawner;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::mode::Async;
 use embassy_time::{Duration, Timer};
-use raylar_board_v1p0::{Board, SensI2C, Leds};
+use raylar_board_v1p0::{Board, Leds, SensI2C};
 use {defmt_rtt as _, panic_probe as _};
 // i2c imports
 use embassy_stm32::i2c::{Config, I2c};
-use embassy_stm32::time::Hertz;
 use embassy_stm32::time::mhz;
+use embassy_stm32::time::Hertz;
 
 use embassy_stm32::rcc::*;
 
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
-
     let mut config = embassy_stm32::Config::default();
 
     config.rcc.hse = Some(Hse {
@@ -45,13 +43,13 @@ async fn main(spawner: Spawner) -> ! {
 
     let p = embassy_stm32::init(config);
     //let p = embassy_stm32::init(Default::default());
-    let Board { leds, sens_i2c,..} = Board::new(p);
+    let Board { leds, sens_i2c, .. } = Board::new(p);
     let Leds {
         sys_main_red,
         sys_main_green,
         ..
     } = leds;
-    
+
     info!("SENS I2C smoke test started");
 
     spawner.spawn(unwrap!(heartbeat_task(sys_main_green)));
@@ -71,34 +69,24 @@ async fn heartbeat_task(mut led: Output<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn i2c_task(
-    sens_i2c: SensI2C<'static>,
-    mut led: Output<'static>,
-) -> ! {
-    let SensI2C{ i2c, scl, sda } = sens_i2c;
+async fn i2c_task(sens_i2c: SensI2C<'static>, mut led: Output<'static>) -> ! {
+    let SensI2C { i2c, scl, sda } = sens_i2c;
     let mut config = Config::default();
     config.frequency = Hertz(100_000);
 
-    let mut i2c = I2c::new_blocking(
-        i2c,
-        scl,
-        sda,
-        config,
-    );
+    let mut i2c = I2c::new_blocking(i2c, scl, sda, config);
 
     let mut whoami = [0u8; 1];
 
     info!("Scanning I2C bus for devices...");
     for addr in 0x08..0x78 {
-    if i2c.blocking_write(addr, &[]).is_ok() {
-        info!("Found device at 0x{:02x}", addr);
+        if i2c.blocking_write(addr, &[]).is_ok() {
+            info!("Found device at 0x{:02x}", addr);
         }
     }
 
     loop {
         led.set_high();
-
-
 
         //
         // LIS2HH12

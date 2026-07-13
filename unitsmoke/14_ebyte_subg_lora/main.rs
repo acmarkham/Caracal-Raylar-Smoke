@@ -244,7 +244,7 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
         // SF7 BW500k CR4/5 LDRO off
         &[0x07, 0x06, 0x01, 0x00],
         // SF12 BW125k CR4/5 LDRO on
-       //&[0x0C, 0x04, 0x01, 0x01],
+        //&[0x0C, 0x04, 0x01, 0x01],
     )
     .await;
     lr11xx_write(spi, cs, busy, Opcode::SetLoRaSyncWord, &[0x12]).await;
@@ -262,7 +262,11 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
     clear_irqs(spi, cs, busy, IRQ_MASK).await;
 }
 
-async fn configure_rf_switches(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Input<'static>) {
+async fn configure_rf_switches(
+    spi: &mut RadioSpi,
+    cs: &mut Output<'static>,
+    busy: &Input<'static>,
+) {
     info!("Configuring LR1121 RF switch mapping for Ebyte module");
 
     lr11xx_write(
@@ -342,7 +346,8 @@ async fn send_ping(
     lr11xx_write(spi, cs, busy, Opcode::SetStandby, &[0x00]).await;
     clear_irqs(spi, cs, busy, IRQ_MASK).await;
     // Select the sub-GHz high-power PA path and request the maximum 22 dBm TX setting.
-    let pa_cmd_status = lr11xx_write(spi, cs, busy, Opcode::SetPaConfig, &SUBGHZ_HP_PA_CONFIG).await;
+    let pa_cmd_status =
+        lr11xx_write(spi, cs, busy, Opcode::SetPaConfig, &SUBGHZ_HP_PA_CONFIG).await;
     log_radio_write_diagnostic(
         spi,
         cs,
@@ -352,7 +357,8 @@ async fn send_ping(
         pa_cmd_status,
     )
     .await;
-    let tx_cmd_status = lr11xx_write(spi, cs, busy, Opcode::SetTxParams, &SUBGHZ_MAX_TX_PARAMS).await;
+    let tx_cmd_status =
+        lr11xx_write(spi, cs, busy, Opcode::SetTxParams, &SUBGHZ_MAX_TX_PARAMS).await;
     log_radio_write_diagnostic(
         spi,
         cs,

@@ -157,19 +157,49 @@ async fn run_mic_array_dma_smoke(
     let process_mic6 = unsafe { &mut *core::ptr::addr_of_mut!(PROCESS_MIC6) };
 
     let mut mic2_ring = unsafe {
-        ReadableRingBuffer::new(dma.ch0, MDF_DMA_REQUESTS[0], dfltdr_ptr(MDF_FILTERS[0]), dma_buffer_mic2, TransferOptions::default())
+        ReadableRingBuffer::new(
+            dma.ch0,
+            MDF_DMA_REQUESTS[0],
+            dfltdr_ptr(MDF_FILTERS[0]),
+            dma_buffer_mic2,
+            TransferOptions::default(),
+        )
     };
     let mut mic3_ring = unsafe {
-        ReadableRingBuffer::new(dma.ch1, MDF_DMA_REQUESTS[1], dfltdr_ptr(MDF_FILTERS[1]), dma_buffer_mic3, TransferOptions::default())
+        ReadableRingBuffer::new(
+            dma.ch1,
+            MDF_DMA_REQUESTS[1],
+            dfltdr_ptr(MDF_FILTERS[1]),
+            dma_buffer_mic3,
+            TransferOptions::default(),
+        )
     };
     let mut mic4_ring = unsafe {
-        ReadableRingBuffer::new(dma.ch2, MDF_DMA_REQUESTS[2], dfltdr_ptr(MDF_FILTERS[2]), dma_buffer_mic4, TransferOptions::default())
+        ReadableRingBuffer::new(
+            dma.ch2,
+            MDF_DMA_REQUESTS[2],
+            dfltdr_ptr(MDF_FILTERS[2]),
+            dma_buffer_mic4,
+            TransferOptions::default(),
+        )
     };
     let mut mic5_ring = unsafe {
-        ReadableRingBuffer::new(dma.ch3, MDF_DMA_REQUESTS[3], dfltdr_ptr(MDF_FILTERS[3]), dma_buffer_mic5, TransferOptions::default())
+        ReadableRingBuffer::new(
+            dma.ch3,
+            MDF_DMA_REQUESTS[3],
+            dfltdr_ptr(MDF_FILTERS[3]),
+            dma_buffer_mic5,
+            TransferOptions::default(),
+        )
     };
     let mut mic6_ring = unsafe {
-        ReadableRingBuffer::new(dma.ch4, MDF_DMA_REQUESTS[4], dfltdr_ptr(MDF_FILTERS[4]), dma_buffer_mic6, TransferOptions::default())
+        ReadableRingBuffer::new(
+            dma.ch4,
+            MDF_DMA_REQUESTS[4],
+            dfltdr_ptr(MDF_FILTERS[4]),
+            dma_buffer_mic6,
+            TransferOptions::default(),
+        )
     };
 
     mic2_ring.set_alignment(HALF_BUFFER_LEN);
@@ -246,16 +276,56 @@ async fn run_mic_array_dma_smoke(
 
         update_status_counters(&mut counters);
 
-        log_mic_stats(MIC_NAMES[0], is_ping, half_count, process_mic2, rem2, counters[0]);
-        log_mic_stats(MIC_NAMES[1], is_ping, half_count, process_mic3, rem3, counters[1]);
-        log_mic_stats(MIC_NAMES[2], is_ping, half_count, process_mic4, rem4, counters[2]);
-        log_mic_stats(MIC_NAMES[3], is_ping, half_count, process_mic5, rem5, counters[3]);
-        log_mic_stats(MIC_NAMES[4], is_ping, half_count, process_mic6, rem6, counters[4]);
+        log_mic_stats(
+            MIC_NAMES[0],
+            is_ping,
+            half_count,
+            process_mic2,
+            rem2,
+            counters[0],
+        );
+        log_mic_stats(
+            MIC_NAMES[1],
+            is_ping,
+            half_count,
+            process_mic3,
+            rem3,
+            counters[1],
+        );
+        log_mic_stats(
+            MIC_NAMES[2],
+            is_ping,
+            half_count,
+            process_mic4,
+            rem4,
+            counters[2],
+        );
+        log_mic_stats(
+            MIC_NAMES[3],
+            is_ping,
+            half_count,
+            process_mic5,
+            rem5,
+            counters[3],
+        );
+        log_mic_stats(
+            MIC_NAMES[4],
+            is_ping,
+            half_count,
+            process_mic6,
+            rem6,
+            counters[4],
+        );
     }
 }
 
 fn configure_mdf_pins(pins: PdmMicArrayPins<'static>) {
-    let PdmMicArrayPins { cck1, sd1, sd2, sd3 } = pins;
+    let PdmMicArrayPins {
+        cck1,
+        sd1,
+        sd2,
+        sd3,
+    } = pins;
 
     let mut cck1 = Flex::new(cck1);
     cck1.set_as_af_unchecked(6, AfType::output(OutputType::PushPull, Speed::VeryHigh));

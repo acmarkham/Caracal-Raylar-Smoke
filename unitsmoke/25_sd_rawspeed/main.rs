@@ -29,7 +29,8 @@ const MAX_BURST_BYTES: usize = 262_144;
 const MAX_BURST_BLOCKS: usize = MAX_BURST_BYTES / BLOCK_BYTES;
 const BURST_BYTES: [usize; 9] = [512, 1024, 4096, 8192, 16384, 32768, 65536, 131072, 262144];
 
-static mut WRITE_BLOCKS: [DataBlock; MAX_BURST_BLOCKS] = [const { DataBlock::new() }; MAX_BURST_BLOCKS];
+static mut WRITE_BLOCKS: [DataBlock; MAX_BURST_BLOCKS] =
+    [const { DataBlock::new() }; MAX_BURST_BLOCKS];
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) -> ! {
@@ -57,7 +58,10 @@ async fn main(_spawner: Spawner) -> ! {
     let Board { sd, .. } = Board::new(p);
 
     info!("SDMMC1 raw sustained write speed test started");
-    info!("DESTRUCTIVE: writing {} bytes from raw block {}", TEST_BYTES, START_BLOCK);
+    info!(
+        "DESTRUCTIVE: writing {} bytes from raw block {}",
+        TEST_BYTES, START_BLOCK
+    );
 
     run_sd_rawspeed(sd).await
 }
@@ -90,13 +94,14 @@ async fn run_sd_rawspeed(mut sd: SdCard<'static>) -> ! {
     sd.power.set_low();
     Timer::after_secs(1).await;
 
-    let mut card = match StorageDevice::new_sd_card(&mut sdmmc, &mut cmd_block, SD_TARGET_FREQ).await {
-        Ok(card) => card,
-        Err(e) => {
-            error!("SD card init failed: {}", e);
-            pending_forever().await;
-        }
-    };
+    let mut card =
+        match StorageDevice::new_sd_card(&mut sdmmc, &mut cmd_block, SD_TARGET_FREQ).await {
+            Ok(card) => card,
+            Err(e) => {
+                error!("SD card init failed: {}", e);
+                pending_forever().await;
+            }
+        };
 
     log_card_info(&card);
     ensure_capacity(&card).await;
@@ -104,7 +109,10 @@ async fn run_sd_rawspeed(mut sd: SdCard<'static>) -> ! {
     let write_blocks = unsafe { &mut *core::ptr::addr_of_mut!(WRITE_BLOCKS) };
     fill_dummy_data(write_blocks);
 
-    info!("Starting raw write benchmark: {} blocks, {} bytes", TEST_BLOCKS, TEST_BYTES);
+    info!(
+        "Starting raw write benchmark: {} blocks, {} bytes",
+        TEST_BLOCKS, TEST_BYTES
+    );
     for burst_bytes in BURST_BYTES {
         benchmark_burst(&mut card, burst_bytes, write_blocks).await;
         Timer::after_millis(250).await;
@@ -135,7 +143,10 @@ async fn benchmark_burst(
     let started = Instant::now();
     while remaining_blocks > 0 {
         if let Err(e) = card.write_blocks(block_idx, burst).await {
-            error!("Write failed at block {} burst_bytes={}: {}", block_idx, burst_bytes, e);
+            error!(
+                "Write failed at block {} burst_bytes={}: {}",
+                block_idx, burst_bytes, e
+            );
             pending_forever().await;
         }
 

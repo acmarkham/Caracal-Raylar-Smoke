@@ -238,12 +238,12 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
         cs,
         busy,
         Opcode::SetModulationParams,
-       // SF7 BW500k CR4/5 LDRO off
+        // SF7 BW500k CR4/5 LDRO off
         //&[0x07, 0x06, 0x01, 0x00],
         // SF7 BW125k CR4/5 LDRO off
         &[0x07, 0x04, 0x01, 0x00],
-       // SF12 BW125k CR4/5 LDRO on
-       //&[0x0C, 0x04, 0x01, 0x01],
+        // SF12 BW125k CR4/5 LDRO on
+        //&[0x0C, 0x04, 0x01, 0x01],
     )
     .await;
     lr11xx_write(spi, cs, busy, Opcode::SetLoRaSyncWord, &[0x12]).await;
@@ -260,7 +260,11 @@ async fn configure_radio(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &In
     clear_irqs(spi, cs, busy, IRQ_MASK).await;
 }
 
-async fn configure_rf_switches(spi: &mut RadioSpi, cs: &mut Output<'static>, busy: &Input<'static>) {
+async fn configure_rf_switches(
+    spi: &mut RadioSpi,
+    cs: &mut Output<'static>,
+    busy: &Input<'static>,
+) {
     info!("Configuring LR1121 RF switch mapping for Ebyte module");
 
     // Ebyte routes RFSW0/RFSW1 differently from Semtech reference designs.

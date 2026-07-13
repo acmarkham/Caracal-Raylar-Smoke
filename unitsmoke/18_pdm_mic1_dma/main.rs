@@ -34,7 +34,6 @@ const MDF_DFLTRSFR0: usize = 0x0090;
 const MDF_DFLTISR0: usize = 0x00b0;
 const MDF_DFLTDR0: usize = 0x00f0;
 
-
 const DOVRF: u32 = 1 << 1;
 const SATF: u32 = 1 << 9;
 const CKABF: u32 = 1 << 10;
@@ -203,10 +202,7 @@ fn configure_mdf_pins(pdm_mic1: PdmMic1<'static>) {
     let PdmMic1 { cck0, sdio } = pdm_mic1;
 
     let mut cck0 = Flex::new(cck0);
-    cck0.set_as_af_unchecked(
-        5,
-        AfType::output(OutputType::PushPull, Speed::VeryHigh),
-    );
+    cck0.set_as_af_unchecked(5, AfType::output(OutputType::PushPull, Speed::VeryHigh));
     core::mem::forget(cck0);
 
     let mut sdio = Flex::new(sdio);

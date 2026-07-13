@@ -1,0 +1,36 @@
+[package]
+name = "driver-test-storage"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "driver-test-storage"
+path = "main.rs"
+test = false
+bench = false
+
+[dependencies]
+raylar-board-v1p0 = { path = "../../crates/board/raylar_v1p0" }
+raylar-drivers = { path = "../../crates/drivers", features = ["stm32", "defmt"] }
+embassy-stm32.workspace = true
+embassy-executor.workspace = true
+embassy-time.workspace = true
+defmt.workspace = true
+defmt-rtt.workspace = true
+panic-probe.workspace = true
+cortex-m.workspace = true
+cortex-m-rt.workspace = true
+embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"] }
+
+[features]
+trustzone-secure = [
+    "embassy-stm32/trustzone-secure",
+    "raylar-drivers/trustzone-secure",
+]
+
+[package.metadata.embassy]
+build = [
+    { target = "thumbv8m.main-none-eabihf", artifact-dir = "out/drivertests/storage" },
+]

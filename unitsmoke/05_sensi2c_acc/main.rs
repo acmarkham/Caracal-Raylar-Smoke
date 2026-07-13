@@ -12,19 +12,17 @@ use embassy_executor::Spawner;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::mode::Async;
 use embassy_time::{Duration, Timer};
-use raylar_board_v1p0::{Board, SensI2C, Leds};
+use raylar_board_v1p0::{Board, Leds, SensI2C};
 use {defmt_rtt as _, panic_probe as _};
 // i2c imports
 use embassy_stm32::i2c::{Config, I2c};
-use embassy_stm32::time::Hertz;
 use embassy_stm32::time::mhz;
+use embassy_stm32::time::Hertz;
 
 use embassy_stm32::rcc::*;
 
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
-
     let mut config = embassy_stm32::Config::default();
 
     config.rcc.hse = Some(Hse {
@@ -45,13 +43,13 @@ async fn main(spawner: Spawner) -> ! {
 
     let p = embassy_stm32::init(config);
     //let p = embassy_stm32::init(Default::default());
-    let Board { leds, sens_i2c,..} = Board::new(p);
+    let Board { leds, sens_i2c, .. } = Board::new(p);
     let Leds {
         sys_main_red,
         sys_main_green,
         ..
     } = leds;
-    
+
     info!("SENS I2C smoke test started");
 
     spawner.spawn(unwrap!(heartbeat_task(sys_main_green)));
@@ -71,20 +69,12 @@ async fn heartbeat_task(mut led: Output<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn i2c_task(
-    sens_i2c: SensI2C<'static>,
-    mut led: Output<'static>,
-) -> ! {
-    let SensI2C{ i2c, scl, sda } = sens_i2c;
+async fn i2c_task(sens_i2c: SensI2C<'static>, mut led: Output<'static>) -> ! {
+    let SensI2C { i2c, scl, sda } = sens_i2c;
     let mut config = Config::default();
     config.frequency = Hertz(100_000);
 
-    let mut i2c = I2c::new_blocking(
-        i2c,
-        scl,
-        sda,
-        config,
-    );
+    let mut i2c = I2c::new_blocking(i2c, scl, sda, config);
 
     let mut whoami = [0u8; 1];
 
@@ -107,10 +97,7 @@ async fn i2c_task(
     // 100 Hz, BDU=1, XYZ enabled
     let ctrl1 = 0b0101_0111;
 
-    match i2c.blocking_write(
-        LIS2HH12_ADDR,
-        &[REG_CTRL1, ctrl1],
-    ){
+    match i2c.blocking_write(LIS2HH12_ADDR, &[REG_CTRL1, ctrl1]) {
         Ok(_) => info!("Started"),
         Err(e) => info!("CONFIG:LIS2HH12 error: {:?}", e),
     }
@@ -118,24 +105,16 @@ async fn i2c_task(
     loop {
         led.set_high();
         let mut raw = [0u8; 6];
-        match   i2c.blocking_write_read(
-            LIS2HH12_ADDR,
-            &[REG_OUT_X_L | 0x80],
-            &mut raw,
-        ) {
+        match i2c.blocking_write_read(LIS2HH12_ADDR, &[REG_OUT_X_L | 0x80], &mut raw) {
             Ok(_) => {
                 let x = i16::from_le_bytes([raw[0], raw[1]]);
                 let y = i16::from_le_bytes([raw[2], raw[3]]);
                 let z = i16::from_le_bytes([raw[4], raw[5]]);
-                info!(
-                    "ACC x={} y={} z={}",
-                    x,
-                    y,
-                    z
-                );},
+                info!("ACC x={} y={} z={}", x, y, z);
+            }
             Err(e) => info!("LIS2HH12 error: {:?}", e),
         }
-        
+
         led.set_low();
 
         Timer::after_secs(1).await;

@@ -102,10 +102,7 @@ async fn run_rf_smoke(rf: EbyteRf<'static>) -> ! {
 
     info!(
         "Firmware version decode: hw={} type={} fw={}.{}",
-        response[2],
-        response[3],
-        response[4],
-        response[5],
+        response[2], response[3], response[4], response[5],
     );
 
     pending_forever().await

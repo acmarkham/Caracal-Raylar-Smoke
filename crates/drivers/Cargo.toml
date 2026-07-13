@@ -10,14 +10,16 @@ path = "src/lib.rs"
 
 [features]
 default = []
-defmt = ["dep:defmt", "embassy-sync/defmt"]
+defmt = ["dep:defmt", "embassy-sync/defmt", "exfat-slim/defmt"]
 stm32 = ["dep:embassy-stm32"]
 trustzone-secure = ["stm32", "embassy-stm32/trustzone-secure"]
 
 [dependencies]
+aligned = "0.4.2"
 defmt = { workspace = true, optional = true }
 embassy-stm32 = { workspace = true, optional = true }
 embassy-sync = "0.7.2"
 embassy-time.workspace = true
 embedded-io-async = "0.7.0"
+exfat-slim = { version = "0.5.0", default-features = false }
 heapless = "0.8.0"
