@@ -10,6 +10,7 @@ use super::{
 
 const MIN_CLUSER_ID: u32 = 2;
 const CLUSTER_LEN: u32 = 0xFFFFFFF6;
+pub(crate) const END_OF_CHAIN: u32 = 0xFFFF_FFFF;
 const ENTRY_SIZE: usize = size_of::<u32>();
 
 #[derive(Debug)]

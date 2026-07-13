@@ -755,7 +755,7 @@ impl File {
         }
 
         // find directory or recursively create it if it does not already exist
-        let directory_cluster_id = fs
+        let mut directory = fs
             .get_or_create_directory(&mut self.touched, dir_path)
             .await?;
 
@@ -763,7 +763,7 @@ impl File {
 
         fs.create_file_dir_entry_at(
             file_or_dir_name,
-            directory_cluster_id,
+            &mut directory,
             run.first_cluster,
             self.details.attributes,
             flags,

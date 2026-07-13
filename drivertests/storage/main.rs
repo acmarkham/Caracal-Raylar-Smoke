@@ -145,10 +145,47 @@ where
     D: StorageBlockDevice<BLOCK_BYTES>,
 {
     prepare_buffers();
-    let log = storage.open_for_append("/st_log.txt").await?;
-    let bulk_a = storage.open_for_append("/st_bulka.txt").await?;
-    let bulk_b = storage.open_for_append("/st_bulkb.txt").await?;
-    let bulk_c = storage.open_for_append("/st_bulkc.txt").await?;
+
+    info!("writing and reading files in root");
+    exercise_file_set(
+        storage,
+        "/st_log.txt",
+        "/st_bulka.txt",
+        "/st_bulkb.txt",
+        "/st_bulkc.txt",
+    )
+    .await?;
+
+    info!("creating directory driver_test_storage");
+    storage.create_directory("/driver_test_storage").await?;
+
+    info!("writing and reading files in driver_test_storage");
+    exercise_file_set(
+        storage,
+        "/driver_test_storage/st_log.txt",
+        "/driver_test_storage/st_bulka.txt",
+        "/driver_test_storage/st_bulkb.txt",
+        "/driver_test_storage/st_bulkc.txt",
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn exercise_file_set<D>(
+    storage: &mut StorageDriver<D>,
+    log_path: &str,
+    bulk_a_path: &str,
+    bulk_b_path: &str,
+    bulk_c_path: &str,
+) -> Result<(), StorageError<D::Error>>
+where
+    D: StorageBlockDevice<BLOCK_BYTES>,
+{
+    let log = storage.open_for_append(log_path).await?;
+    let bulk_a = storage.open_for_append(bulk_a_path).await?;
+    let bulk_b = storage.open_for_append(bulk_b_path).await?;
+    let bulk_c = storage.open_for_append(bulk_c_path).await?;
 
     let log_block = unsafe { &*core::ptr::addr_of!(LOG_BLOCK) };
     let log_tail = unsafe { &*core::ptr::addr_of!(LOG_TAIL) };
@@ -171,7 +208,7 @@ where
     storage.close(bulk_b, BLOCK_BYTES).await?;
     storage.close(bulk_c, BULK_FINAL.len()).await?;
 
-    let read = storage.open_for_read("/st_log.txt").await?;
+    let read = storage.open_for_read(log_path).await?;
     let read_buf = unsafe { &mut *core::ptr::addr_of_mut!(READ_BUF) };
     let mut total = 0usize;
     loop {

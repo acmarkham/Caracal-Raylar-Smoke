@@ -14,7 +14,7 @@ use super::{
         update_checksum,
     },
     error::ExFatError,
-    fat::Fat,
+    fat::{END_OF_CHAIN, Fat},
     file::{
         File, FileDetails, FileDirty, NO_CLUSTER_ID, OpenOptions, Touched, TouchedKind,
         TouchedSector,
@@ -103,6 +103,27 @@ pub(crate) struct FileSystemMetadata<const SIZE: usize> {
     details: FileSystemDetails,
     upcase_table: UpcaseTable,
     alloc_bitmap: AllocationBitmap<SIZE>,
+}
+
+pub(crate) struct DirectoryDetails {
+    cluster_id: u32,
+    file_details: Option<FileDetails>,
+}
+
+impl DirectoryDetails {
+    fn root(cluster_id: u32) -> Self {
+        Self {
+            cluster_id,
+            file_details: None,
+        }
+    }
+
+    fn from_file(file_details: FileDetails) -> Self {
+        Self {
+            cluster_id: file_details.first_cluster,
+            file_details: Some(file_details),
+        }
+    }
 }
 
 impl<D, const SIZE: usize, const N: usize> FileSystem<D, SIZE, N>
@@ -337,11 +358,11 @@ where
             .await?;
 
         // find directory or recursively create it if it does not already exist
-        let directory_cluster_id = self.get_or_create_directory(&mut touched, dir_path).await?;
+        let mut directory = self.get_or_create_directory(&mut touched, dir_path).await?;
 
         self.create_file_dir_entry_at(
             file_or_dir_name,
-            directory_cluster_id,
+            &mut directory,
             file_details.first_cluster,
             file_details.attributes,
             file_details.flags,
@@ -507,7 +528,7 @@ where
         let mut touched = FileDirty::new();
 
         // find directory or recursively create it if it does not already exist
-        let directory_cluster_id = self.get_or_create_directory(&mut touched, dir_path).await?;
+        let mut directory = self.get_or_create_directory(&mut touched, dir_path).await?;
         let flags = GeneralSecondaryFlags::AllocationPossible | GeneralSecondaryFlags::NoFatChain;
 
         let attributes = FileAttributes::Archive;
@@ -515,7 +536,7 @@ where
         let file_details = self
             .create_file_dir_entry_at(
                 file_or_dir_name,
-                directory_cluster_id,
+                &mut directory,
                 first_cluster,
                 attributes,
                 flags,
@@ -534,9 +555,9 @@ where
         &mut self,
         touched: &mut impl Touched,
         path: &str,
-    ) -> ExFatResult<u32, D, SIZE> {
+    ) -> ExFatResult<DirectoryDetails, D, SIZE> {
         let mut names = path_to_iter(path).peekable();
-        let mut cluster_id = self.fs.first_cluster_of_root_dir;
+        let mut directory = DirectoryDetails::root(self.fs.first_cluster_of_root_dir);
 
         while let Some(dir_name) = names.next() {
             let is_last = names.peek().is_none();
@@ -546,13 +567,13 @@ where
                 &self.upcase_table,
                 Some(FileAttributes::Directory),
             );
-            let mut entries = DirectoryEntryChain::new(cluster_id, &self.fs);
+            let mut entries = DirectoryEntryChain::new(directory.cluster_id, &self.fs);
             let file_details = entries.next_file_entry(self, &filter).await?;
 
             match file_details {
                 Some(file_details) => {
                     // directory already exists
-                    cluster_id = file_details.first_cluster;
+                    directory = DirectoryDetails::from_file(file_details);
                 }
                 None => {
                     // directory does not exist, create it
@@ -561,29 +582,37 @@ where
                         .mark_allocated(&mut self.dev, touched, &run, true)
                         .await?;
 
-                    self.create_file_dir_entry_at(
-                        dir_name,
-                        cluster_id,
-                        run.first_cluster,
-                        FileAttributes::Directory,
-                        GeneralSecondaryFlags::AllocationPossible
-                            | GeneralSecondaryFlags::NoFatChain,
-                        self.fs.cluster_length as u64,
-                        self.fs.cluster_length as u64,
-                    )
-                    .await?;
+                    // Do not expose stale entries from the cluster's previous use.
+                    // Clearing the FAT entry also makes a later chain extension safe.
+                    self.fat
+                        .set(&mut self.dev, touched, run.first_cluster, NO_CLUSTER_ID)
+                        .await?;
+                    self.zero_cluster(run.first_cluster, touched).await?;
 
-                    cluster_id = run.first_cluster;
+                    let file_details = self
+                        .create_file_dir_entry_at(
+                            dir_name,
+                            &mut directory,
+                            run.first_cluster,
+                            FileAttributes::Directory,
+                            GeneralSecondaryFlags::AllocationPossible
+                                | GeneralSecondaryFlags::NoFatChain,
+                            self.fs.cluster_length as u64,
+                            self.fs.cluster_length as u64,
+                        )
+                        .await?;
+
+                    directory = DirectoryDetails::from_file(file_details);
                 }
             }
 
             if is_last {
-                return Ok(cluster_id);
+                return Ok(directory);
             }
         }
 
         // return the root directory cluster
-        Ok(cluster_id)
+        Ok(directory)
     }
 
     // assume that the file dir entry does NOT already exist
@@ -594,7 +623,7 @@ where
     pub(crate) async fn create_file_dir_entry_at(
         &mut self,
         name: &str,
-        directory_cluster_id: u32,
+        directory: &mut DirectoryDetails,
         first_cluster: u32, // the directory or file that this entry points to
         file_attributes: FileAttributes,
         stream_ext_flags: GeneralSecondaryFlags,
@@ -604,7 +633,7 @@ where
         let (utf16_name, name_hash) = encode_utf16_and_hash(name, &self.upcase_table);
         let dir_entry_set_len = calc_dir_entry_set_len(&utf16_name);
         let location = self
-            .find_empty_dir_entry_set(directory_cluster_id, dir_entry_set_len)
+            .find_empty_dir_entry_set(directory, dir_entry_set_len)
             .await?;
         let mut dir_entries: Vec<RawDirEntry> = Vec::with_capacity(dir_entry_set_len);
 
@@ -795,38 +824,164 @@ where
     #[bisync]
     async fn find_empty_dir_entry_set(
         &mut self,
-        cluster_id: u32,
+        directory: &mut DirectoryDetails,
         dir_entry_set_len: usize,
     ) -> ExFatResult<Location, D, SIZE> {
-        let mut entries = DirectoryEntryChain::new(cluster_id, &self.fs);
+        let mut entries = DirectoryEntryChain::new(directory.cluster_id, &self.fs);
         let mut counter = 0;
         let mut start = None;
         while let Some((entry, location)) = entries.next(self).await? {
-            let entry_type_val = entry[0];
-            match EntryType::from(entry_type_val) {
-                EntryType::UnusedOrEndOfDirectory => {
-                    if start.is_none() {
-                        start = Some(location)
-                    }
-                    counter += 1;
+            // All entry types with the in-use bit clear are available, including
+            // deleted entries such as 0x01 as well as the 0x00 end marker.
+            if entry[0] & 0x80 == 0 {
+                if start.is_none() {
+                    start = Some(location)
+                }
+                counter += 1;
 
-                    if counter == dir_entry_set_len {
-                        break;
+                if counter == dir_entry_set_len {
+                    if let Some(location) = start {
+                        return Ok(location);
                     }
                 }
-
-                _entry_type => {
-                    // slot taken, reset search run
-                    counter = 0;
-                    start = None
-                }
+            } else {
+                // slot taken, reset search run
+                counter = 0;
+                start = None
             }
         }
 
-        match start {
-            Some(location) => Ok(location),
-            None => unimplemented!("growing a directory not yet supported"),
+        self.grow_directory(directory).await
+    }
+
+    #[bisync]
+    async fn grow_directory(
+        &mut self,
+        directory: &mut DirectoryDetails,
+    ) -> ExFatResult<Location, D, SIZE> {
+        let mut touched = FileDirty::new();
+        let first_cluster = directory.cluster_id;
+
+        let last_cluster = match directory.file_details.as_ref() {
+            Some(details)
+                if details
+                    .flags
+                    .contains(GeneralSecondaryFlags::NoFatChain) =>
+            {
+                let cluster_count = details
+                    .data_length
+                    .div_ceil(self.fs.cluster_length as u64)
+                    .max(1) as u32;
+                let last_cluster = first_cluster + cluster_count - 1;
+
+                // Materialize the existing contiguous allocation in the FAT before
+                // appending a cluster that may not be contiguous.
+                for cluster_id in first_cluster..last_cluster {
+                    self.fat
+                        .set(&mut self.dev, &mut touched, cluster_id, cluster_id + 1)
+                        .await?;
+                }
+                last_cluster
+            }
+            _ => self.last_cluster_in_fat_chain(first_cluster).await?,
+        };
+
+        let run = self.allocator.find_free_clusters(&mut self.dev, 1).await?;
+        self.allocator
+            .mark_allocated(&mut self.dev, &mut touched, &run, true)
+            .await?;
+        self.fat
+            .set(
+                &mut self.dev,
+                &mut touched,
+                last_cluster,
+                run.first_cluster,
+            )
+            .await?;
+        self.fat
+            .set(
+                &mut self.dev,
+                &mut touched,
+                run.first_cluster,
+                END_OF_CHAIN,
+            )
+            .await?;
+        self.zero_cluster(run.first_cluster, &mut touched).await?;
+
+        if let Some(details) = directory.file_details.as_mut() {
+            details
+                .flags
+                .set(GeneralSecondaryFlags::NoFatChain, false);
+            details.data_length += self.fs.cluster_length as u64;
+            details.valid_data_length += self.fs.cluster_length as u64;
+            self.write_directory_details(details, &mut touched).await?;
         }
+
+        touched.flush(self).await?;
+        let sector_id = self
+            .fs
+            .get_heap_sector_id::<D, SIZE>(run.first_cluster)?;
+        Ok(Location::new(sector_id, 0))
+    }
+
+    #[bisync]
+    async fn last_cluster_in_fat_chain(
+        &mut self,
+        first_cluster: u32,
+    ) -> ExFatResult<u32, D, SIZE> {
+        let mut cluster_id = first_cluster;
+        while let Some(next_cluster) = self
+            .fat
+            .next_cluster_in_fat_chain(cluster_id, &mut self.dev)
+            .await?
+        {
+            cluster_id = next_cluster;
+        }
+        Ok(cluster_id)
+    }
+
+    #[bisync]
+    async fn zero_cluster(
+        &mut self,
+        cluster_id: u32,
+        touched: &mut impl Touched,
+    ) -> ExFatResult<(), D, SIZE> {
+        let first_sector = self.fs.get_heap_sector_id::<D, SIZE>(cluster_id)?;
+        for offset in 0..self.fs.sectors_per_cluster {
+            let sector_id = first_sector + offset;
+            let slot = self.data_blocks.read_mut(sector_id, &mut self.dev).await?;
+            slot.as_mut_slice().fill(0);
+            touched.insert(TouchedSector::new(TouchedKind::Dir, sector_id));
+        }
+        Ok(())
+    }
+
+    #[bisync]
+    async fn write_directory_details(
+        &mut self,
+        details: &FileDetails,
+        touched: &mut impl Touched,
+    ) -> ExFatResult<(), D, SIZE> {
+        let mut chain = DirectoryEntryChain::new_from_location(&details.location, &self.fs);
+        let mut dir_entries = Vec::with_capacity(details.secondary_count as usize + 1);
+
+        for _ in 0..=details.secondary_count {
+            let Some((entry, _location)) = chain.next(self).await? else {
+                return Err(ExFatError::Unexpected(
+                    "directory entry set ended before its secondary count",
+                ));
+            };
+            dir_entries.push(*entry);
+        }
+
+        let mut stream_ext: StreamExtensionDirEntry = (&dir_entries[1]).into();
+        stream_ext.general_secondary_flags = details.flags;
+        stream_ext.valid_data_length = details.valid_data_length;
+        stream_ext.data_length = details.data_length;
+        dir_entries[1] = stream_ext.serialize();
+        update_checksum(&mut dir_entries);
+        self.write_dir_entries_to_disk(details.location, dir_entries, touched)
+            .await
     }
 
     #[bisync]
@@ -908,7 +1063,6 @@ where
         .map_err(ExFatError::Io)?;
 
     let mut allocation_bitmap_dir_entry: Option<AllocationBitmapDirEntry> = None;
-    let mut volume_label: Option<VolumeLabelDirEntry> = None;
     let mut upcase_table_dir_entry: Option<UpcaseTableDirEntry> = None;
 
     let (chunks, _remainder) = data[0].as_chunks::<RAW_ENTRY_LEN>();
@@ -921,8 +1075,9 @@ where
                 allocation_bitmap_dir_entry = Some(entry);
             }
             EntryType::VolumeLabel => {
-                let entry: VolumeLabelDirEntry = chunk.try_into()?;
-                volume_label = Some(entry);
+                // A label entry is optional, but validate it when present. A
+                // character count of zero is the valid blank-label form.
+                let _entry: VolumeLabelDirEntry = chunk.try_into()?;
             }
             EntryType::UpcaseTable => {
                 let entry: UpcaseTableDirEntry = chunk.into();
@@ -936,10 +1091,7 @@ where
             _entry_type => {} // ignore
         }
 
-        if allocation_bitmap_dir_entry.is_some()
-            && upcase_table_dir_entry.is_some()
-            && volume_label.is_some()
-        {
+        if allocation_bitmap_dir_entry.is_some() && upcase_table_dir_entry.is_some() {
             break;
         }
     }
@@ -952,12 +1104,6 @@ where
             });
         }
     };
-
-    if volume_label.is_none() {
-        return Err(ExFatError::InvalidFileSystem {
-            reason: "no volume label found in root dir",
-        });
-    }
 
     let allocation_bitmap_dir_entry = match allocation_bitmap_dir_entry {
         Some(entry) => entry,
