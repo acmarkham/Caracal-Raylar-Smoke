@@ -33,6 +33,7 @@ members = [
     "unitsmoke/27_USB_CDC",
     "unitsmoke/28_GPS_TIM_CC",
     "unitsmoke/29_exfat_read",
+    "unitsmoke/30_exfat_write",
 ]
 
 [workspace.package]
