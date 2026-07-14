@@ -79,9 +79,11 @@ impl<const WATCHERS: usize, const ANCHOR_DEPTH: usize> TimeService<WATCHERS, ANC
         loop {
             if let Ok(anchor) = with_timeout(self.config.publish_interval, anchors.receive()).await
             {
+                #[cfg(feature = "defmt")]
                 defmt::info!(
                     "received anchor: {:?}, quality: {:?}",
-                    anchor, anchor.quality
+                    anchor,
+                    anchor.quality
                 );
                 self.estimator.ingest(anchor);
             }

@@ -31,14 +31,33 @@ impl TimeEstimator {
             self.reject();
             return false;
         };
+        #[cfg(feature = "defmt")]
         defmt::info!(
             "anchor system: {:?}, utc: {:?}, predicted utc: {}us",
-            anchor.system_time, anchor.utc, predicted_us
+            anchor.system_time,
+            anchor.utc,
+            predicted_us
         );
         let residual_us = anchor.utc.as_micros() as i128 - predicted_us;
+        #[cfg(feature = "defmt")]
+        if anchor.source == crate::TimeSource::GpsPps {
+            let predicted_seconds = predicted_us.div_euclid(1_000_000);
+            let predicted_subsecond_us = predicted_us.rem_euclid(1_000_000);
+            defmt::info!(
+                "PPS UTC comparison: actual={}s+{}us predicted={}s+{}us error_actual_minus_predicted_us={} system_ticks={}",
+                anchor.utc.seconds,
+                anchor.utc.microseconds,
+                predicted_seconds,
+                predicted_subsecond_us,
+                residual_us,
+                anchor.system_time.as_ticks()
+            );
+        }
+        #[cfg(feature = "defmt")]
         defmt::info!(
             "anchor residual: {}us, uncertainty: {}us",
-            residual_us, self.state.uncertainty_us
+            residual_us,
+            self.state.uncertainty_us
         );
         let allowed = self
             .config
@@ -46,11 +65,35 @@ impl TimeEstimator {
             .saturating_add(self.state.uncertainty_us)
             .saturating_add(anchor.quality.uncertainty_us) as i128;
         if residual_us.abs() > allowed {
+            #[cfg(feature = "defmt")]
+            defmt::warn!(
+                "anchor rejected: residual_us={} allowed_us={} source={:?}",
+                residual_us,
+                allowed,
+                anchor.source
+            );
             self.reject();
             return false;
         }
 
-        if let Some(reference) = self.frequency_reference {
+        if self
+            .frequency_reference
+            .is_some_and(|reference| reference.source != anchor.source)
+        {
+            #[cfg(feature = "defmt")]
+            {
+                let previous = self.frequency_reference.unwrap();
+                defmt::info!(
+                    "scale baseline reset: source {:?} -> {:?}, system_ticks={} utc_us={} quality_us={}",
+                    previous.source,
+                    anchor.source,
+                    anchor.system_time.as_ticks(),
+                    anchor.utc.as_micros(),
+                    anchor.quality.uncertainty_us
+                );
+            }
+            self.frequency_reference = Some(anchor);
+        } else if let Some(reference) = self.frequency_reference {
             let system_ticks = anchor
                 .system_time
                 .as_ticks()
@@ -58,19 +101,49 @@ impl TimeEstimator {
             let utc_us = anchor.utc.as_micros() as i128 - reference.utc.as_micros() as i128;
             if system_ticks >= self.config.minimum_frequency_baseline.as_ticks() && utc_us > 0 {
                 let nominal_us = system_ticks as i128 * 1_000_000 / TICK_HZ as i128;
-                defmt::info!(
-                    "anchor frequency: {}ppb, nominal: {}us, observed: {}us",
-                    (utc_us - nominal_us) * 1_000_000_000 / nominal_us,
-                    nominal_us,
-                    utc_us
-                );
                 if nominal_us > 0 {
-                    let observed_ppb = (utc_us - nominal_us) * 1_000_000_000 / nominal_us;
+                    let frequency_residual_us = utc_us - nominal_us;
+                    let observed_ppb = frequency_residual_us * 1_000_000_000 / nominal_us;
+                    let previous_ppb = self.state.estimated_frequency_error_ppb as i128;
+                    #[cfg(feature = "defmt")]
+                    let mapping_scale_ppb = 1_000_000_000i128 + previous_ppb;
+                    #[cfg(feature = "defmt")]
+                    defmt::info!(
+                        "scale sample: ref_ticks={} anchor_ticks={} system_ticks={} nominal_us={} utc_us={} frequency_residual_us={} raw_ppb={} current_ppb={} mapping_scale_ppb={} limit_ppb={}",
+                        reference.system_time.as_ticks(),
+                        anchor.system_time.as_ticks(),
+                        system_ticks,
+                        nominal_us,
+                        utc_us,
+                        frequency_residual_us,
+                        observed_ppb,
+                        previous_ppb,
+                        mapping_scale_ppb,
+                        self.config.max_frequency_error_ppb
+                    );
                     if observed_ppb.abs() <= self.config.max_frequency_error_ppb as i128 {
                         let weight = self.config.frequency_ewma_weight_per_mille.min(1_000) as i128;
-                        let previous = self.state.estimated_frequency_error_ppb as i128;
-                        self.state.estimated_frequency_error_ppb =
-                            ((previous * (1_000 - weight) + observed_ppb * weight) / 1_000) as i64;
+                        let ewma_numerator =
+                            previous_ppb * (1_000 - weight) + observed_ppb * weight;
+                        let updated_ppb = ewma_numerator / 1_000;
+                        self.state.estimated_frequency_error_ppb = updated_ppb as i64;
+                        #[cfg(feature = "defmt")]
+                        defmt::info!(
+                            "scale EWMA applied: previous_ppb={} observed_ppb={} weight_per_mille={} numerator={} updated_ppb={} mapping_scale_ppb={}",
+                            previous_ppb,
+                            observed_ppb,
+                            weight,
+                            ewma_numerator,
+                            updated_ppb,
+                            1_000_000_000i128 + updated_ppb
+                        );
+                    } else {
+                        #[cfg(feature = "defmt")]
+                        defmt::warn!(
+                            "scale sample rejected: raw_ppb={} exceeds limit_ppb={}",
+                            observed_ppb,
+                            self.config.max_frequency_error_ppb
+                        );
                     }
                 }
                 self.frequency_reference = Some(anchor);
@@ -86,6 +159,34 @@ impl TimeEstimator {
         self.state.active_time_source = anchor.source;
         self.state.accepted_anchors = self.state.accepted_anchors.saturating_add(1);
         self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "mapping epoch updated: system_ticks={} utc={}s+{}us source={:?} quality_us={} residual_us={} scale_ppb={} mapping_scale_ppb={} accepted={}",
+            anchor.system_time.as_ticks(),
+            anchor.utc.seconds,
+            anchor.utc.microseconds,
+            anchor.source,
+            anchor.quality.uncertainty_us,
+            residual_us,
+            self.state.estimated_frequency_error_ppb,
+            1_000_000_000i128 + self.state.estimated_frequency_error_ppb as i128,
+            self.state.accepted_anchors
+        );
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "mapping state: reference_system_ticks={} reference_utc={}s+{}us last_anchor_system_ticks={:?} last_anchor_utc={:?} holdover_duration_ms={} uncertainty_us={} utc_valid={} active_time_source={:?} accepted_anchors={} rejected_anchors={}",
+            self.state.reference_system_time.as_ticks(),
+            self.state.reference_utc.seconds,
+            self.state.reference_utc.microseconds,
+            self.state.last_anchor_system_time.map(|t| t.as_ticks()),
+            self.state.last_anchor_utc,
+            self.state.holdover_duration.as_millis(),
+            self.state.uncertainty_us,
+            self.state.utc_valid,
+            self.state.active_time_source,
+            self.state.accepted_anchors,
+            self.state.rejected_anchors
+        );
         true
     }
 
@@ -121,6 +222,15 @@ impl TimeEstimator {
         self.state.accepted_anchors = 1;
         self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
         self.frequency_reference = Some(anchor);
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "mapping epoch initialized: system_ticks={} utc={}s+{}us source={:?} quality_us={} scale_ppb=0 mapping_scale_ppb=1000000000",
+            anchor.system_time.as_ticks(),
+            anchor.utc.seconds,
+            anchor.utc.microseconds,
+            anchor.source,
+            anchor.quality.uncertainty_us
+        );
     }
 
     fn reject(&mut self) {
@@ -203,6 +313,36 @@ mod tests {
         tenth.utc.microseconds = 100;
         assert!(estimator.ingest(tenth));
         assert_eq!(estimator.state().estimated_frequency_error_ppb, 10_000);
+    }
+
+    #[test]
+    fn source_change_restarts_frequency_baseline() {
+        let mut config = TimeConfig::default();
+        config.frequency_ewma_weight_per_mille = 1_000;
+        config.minimum_frequency_baseline = Duration::from_secs(10);
+        let mut estimator = TimeEstimator::new(config);
+        let mut coarse = anchor(0, 1_700_000_000, 1_000_000);
+        coarse.source = TimeSource::GpsNmea;
+        estimator.ingest(coarse);
+        estimator.ingest(anchor(1, 1_700_000_001, 10));
+        let mut fine = anchor(11, 1_700_000_011, 10);
+        fine.utc.microseconds = 100;
+        estimator.ingest(fine);
+        assert_eq!(estimator.state().estimated_frequency_error_ppb, 10_000);
+    }
+
+    #[test]
+    fn default_guardrail_accepts_software_pps_noise() {
+        let mut config = TimeConfig::default();
+        config.minimum_frequency_baseline = Duration::from_secs(10);
+        let mut estimator = TimeEstimator::new(config);
+        estimator.ingest(anchor(0, 1_700_000_000, 10));
+        let noisy = Anchor {
+            system_time: Instant::from_ticks(10 * TICK_HZ + 66),
+            ..anchor(10, 1_700_000_010, 10)
+        };
+        assert!(estimator.ingest(noisy));
+        assert!(estimator.state().estimated_frequency_error_ppb < 0);
     }
 
     #[test]
