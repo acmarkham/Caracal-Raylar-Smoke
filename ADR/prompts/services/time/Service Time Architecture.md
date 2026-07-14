@@ -1,10 +1,4 @@
-# ADR-0002: Time Service Architecture
-
-## Status
-
-Proposed
-
----
+# Time Service Architecture
 
 # Context
 
@@ -141,7 +135,7 @@ Watch<GpsFix>
 
 This provides:
 
-* UTC timestamp
+* UTC timestamp (which is from the GPS serial message, so is itself in human time)
 * Local monotonic timestamp
 
 Accuracy:
@@ -462,6 +456,10 @@ Application Services:
 * Correct uncertainty modelling requires careful validation.
 
 These trade-offs are acceptable because accurate, system-wide timekeeping is fundamental to the application and centralising the estimation logic simplifies all downstream services.
+
+# Implementation
+
+Write the time service under crates\services\time with sensible modularization
 
 # Tests
 

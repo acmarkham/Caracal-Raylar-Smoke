@@ -3,8 +3,10 @@ resolver = "2"
 members = [
     "crates/drivers",
     "crates/board/raylar_v1p0",
+    "crates/services/time",
     "drivertests/gps",
     "drivertests/storage",
+    "servicetests/time",
     "unitsmoke/01_helloworld",
     "unitsmoke/02_userbutton",
     "unitsmoke/03_buzzer",
