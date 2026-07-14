@@ -58,6 +58,7 @@ async fn gps_serial_listener(gps: Gps<'static>, mut serial_led: Output<'static>)
         pps: _pps,
         mut rst,
         mut en,
+        ..
     } = gps;
 
     en.set_high();

@@ -126,8 +126,10 @@ pub trait GpsPowerControl {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PpsCapture {
+    pub timing_source: PpsTimingSource,
     pub timestamp: Instant,
     pub capture_ticks: Option<u64>,
+    pub capture_frequency_hz: Option<u32>,
 }
 
 pub trait PpsSource {
@@ -627,6 +629,11 @@ where
                                         local_timestamp: fix.system_timestamp,
                                         pps_timestamp: pps.map(|p| p.timestamp),
                                         pps_capture_ticks: pps.and_then(|p| p.capture_ticks),
+                                        pps_capture_delta_ticks: pps
+                                            .and_then(|p| p.capture_delta_ticks),
+                                        pps_capture_frequency_hz: pps
+                                            .and_then(|p| p.capture_frequency_hz),
+                                        pps_timing_source: pps.map(|p| p.timing_source),
                                     });
                                 }
                                 Ok(Some(NavigationEvent::Time(utc_time))) => {
@@ -636,6 +643,11 @@ where
                                         local_timestamp: timestamp,
                                         pps_timestamp: pps.map(|p| p.timestamp),
                                         pps_capture_ticks: pps.and_then(|p| p.capture_ticks),
+                                        pps_capture_delta_ticks: pps
+                                            .and_then(|p| p.capture_delta_ticks),
+                                        pps_capture_frequency_hz: pps
+                                            .and_then(|p| p.capture_frequency_hz),
+                                        pps_timing_source: pps.map(|p| p.timing_source),
                                     });
                                 }
                                 Ok(Some(NavigationEvent::FixStatus { .. })) | Ok(None) => {}
@@ -691,6 +703,7 @@ where
     let stats_pub = resources.stats.sender();
     let mut count = 0u64;
     let mut previous: Option<Instant> = None;
+    let mut previous_capture_ticks: Option<u64> = None;
 
     loop {
         match pps.wait_for_pps().await {
@@ -698,12 +711,19 @@ where
                 count = count.saturating_add(1);
                 let info = PpsInfo {
                     pps_count: count,
+                    timing_source: capture.timing_source,
                     timestamp: capture.timestamp,
                     capture_ticks: capture.capture_ticks,
+                    capture_delta_ticks: match (previous_capture_ticks, capture.capture_ticks) {
+                        (Some(previous), Some(current)) => Some(current.saturating_sub(previous)),
+                        _ => None,
+                    },
+                    capture_frequency_hz: capture.capture_frequency_hz,
                     delta_time: previous
                         .map(|last| capture.timestamp.saturating_duration_since(last)),
                 };
                 previous = Some(capture.timestamp);
+                previous_capture_ticks = capture.capture_ticks;
                 pps_pub.send(info);
                 modify_stats(&stats_pub, |stats| stats.num_pps_events = count);
             }

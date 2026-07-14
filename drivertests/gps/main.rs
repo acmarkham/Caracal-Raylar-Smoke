@@ -2,9 +2,8 @@
 //
 // This test owns the Raylar GPS peripherals through raylar-drivers, sends a
 // Start command, and logs updates from the driver's fix, PPS, and stats
-// publication channels. The PPS backend used here is EXTI-based; the driver
-// abstraction can be backed by timer input capture when that board peripheral
-// is exposed.
+// publication channels. This test selects TIM4_CH4 input capture through
+// GpsConfig and logs both the coarse Embassy timestamp and 1 MHz edge timing.
 
 #![no_std]
 #![no_main]
@@ -14,15 +13,24 @@ use embassy_executor::Spawner;
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usart::{BufferedUart, Config, DataBits, Parity, StopBits};
+use embedded_alloc::LlffHeap as Heap;
 use raylar_board_v1p0::{Board, Gps, Irqs};
-use raylar_drivers::gps::stm32::{ExtiPps, Stm32GpsPower};
-use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources};
+use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
+use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources, PpsTimingSource};
 use {defmt_rtt as _, panic_probe as _};
 
 static GPS_RESOURCES: GpsResources = GpsResources::new();
+const HEAP_BYTES: usize = 8 * 1024;
+
+#[global_allocator]
+static HEAP: Heap = Heap::empty();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
+    unsafe {
+        embedded_alloc::init!(HEAP, HEAP_BYTES);
+    }
+
     let mut config = embassy_stm32::Config::default();
 
     config.rcc.hse = Some(Hse {
@@ -54,6 +62,8 @@ async fn start_gps_driver(spawner: Spawner, gps: Gps<'static>) -> ! {
         tx,
         rx,
         pps,
+        pps_capture_pin,
+        pps_capture_timer,
         rst,
         en,
     } = gps;
@@ -75,12 +85,17 @@ async fn start_gps_driver(spawner: Spawner, gps: Gps<'static>) -> ! {
         usart, rx, tx, tx_buffer, rx_buffer, Irqs, config
     ));
 
+    let gps_config = GpsConfig {
+        pps_timing_source: PpsTimingSource::Tim4Capture,
+        ..GpsConfig::default()
+    };
+    let pps = Stm32Pps::from_config(&gps_config, pps, pps_capture_timer, pps_capture_pin, Irqs);
     let driver = GpsDriver::new(
         uart,
-        ExtiPps::new(pps),
+        pps,
         Stm32GpsPower::new(en, rst),
         &GPS_RESOURCES,
-        GpsConfig::default(),
+        gps_config,
     );
 
     spawner.spawn(unwrap!(gps_driver_task(driver)));
@@ -92,7 +107,7 @@ async fn start_gps_driver(spawner: Spawner, gps: Gps<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn gps_driver_task(driver: GpsDriver<BufferedUart<'static>, ExtiPps, Stm32GpsPower>) -> ! {
+async fn gps_driver_task(driver: GpsDriver<BufferedUart<'static>, Stm32Pps, Stm32GpsPower>) -> ! {
     driver.run().await
 }
 
@@ -125,10 +140,13 @@ async fn gps_observer_task() -> ! {
 
         while let Some(info) = pps.try_changed() {
             info!(
-                "GPS PPS: count={} timestamp = {} capture_ticks = {} delta_us={}",
+                "GPS PPS: count={} source={} timestamp={} capture_ticks={} capture_delta_ticks={} capture_hz={} system_delta_us={}",
                 info.pps_count,
+                info.timing_source,
                 info.timestamp,
                 info.capture_ticks.unwrap_or(0),
+                info.capture_delta_ticks.unwrap_or(0),
+                info.capture_frequency_hz.unwrap_or(0),
                 info.delta_time.map(|d| d.as_micros()).unwrap_or(0)
             );
         }

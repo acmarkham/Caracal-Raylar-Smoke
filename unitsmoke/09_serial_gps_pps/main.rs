@@ -57,6 +57,7 @@ async fn main(spawner: Spawner) -> ! {
         pps,
         mut rst,
         mut en,
+        ..
     } = gps;
 
     info!("GPS serial PPS smoke test started");

@@ -23,6 +23,7 @@ panic-probe.workspace = true
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
 embedded-io-async = "0.7.0"
+embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"] }
 
 [features]
 trustzone-secure = [

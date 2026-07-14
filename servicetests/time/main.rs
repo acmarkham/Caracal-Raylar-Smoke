@@ -56,6 +56,7 @@ async fn start_services(spawner: Spawner, gps: Gps<'static>) -> ! {
         pps,
         rst,
         en,
+        ..
     } = gps;
     let mut uart_config = Config::default();
     uart_config.baudrate = 9_600;

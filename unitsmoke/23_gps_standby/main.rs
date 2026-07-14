@@ -66,6 +66,7 @@ async fn gps_standby_test(spawner: Spawner, gps: Gps<'static>, serial_led: Outpu
         pps: _pps,
         mut rst,
         mut en,
+        ..
     } = gps;
 
     en.set_high();

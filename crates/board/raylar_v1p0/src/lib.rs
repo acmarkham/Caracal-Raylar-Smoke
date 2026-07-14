@@ -14,14 +14,14 @@ use embassy_stm32::peripherals::{PA11, PA12, USB_OTG_HS};
 // i2c imports
 use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
 // gps imports
-use embassy_stm32::peripherals::{PA2, PA3, USART2};
+use embassy_stm32::peripherals::{PA2, PA3, PB9, TIM4, USART2};
 // pdm microphone imports
 use embassy_stm32::peripherals::{PB8, PD3};
 // microSD imports
 use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
-use embassy_stm32::{bind_interrupts, interrupt, sdmmc, usart, usb};
+use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
 
 // Full STM32U595VJT6Q pin map for Raylar v1.00, extracted from the KiCad U1
 // footprint/net assignments. This crate currently models only the subset needed
@@ -124,6 +124,7 @@ bind_interrupts!(pub struct Irqs {
     SDMMC1 => sdmmc::InterruptHandler<SDMMC1>;
     OTG_HS => usb::InterruptHandler<USB_OTG_HS>;
     USART2 => usart::BufferedInterruptHandler<USART2>;
+    TIM4 => timer::CaptureCompareInterruptHandler<TIM4>;
 });
 
 pub struct Board<'d> {
@@ -188,6 +189,8 @@ pub struct Gps<'d> {
     pub tx: Peri<'d, PA2>,
     pub rx: Peri<'d, PA3>,
     pub pps: ExtiInput<'d, Async>,
+    pub pps_capture_pin: Peri<'d, PB9>,
+    pub pps_capture_timer: Peri<'d, TIM4>,
     pub rst: Output<'d>,
     pub en: Output<'d>,
 }
@@ -273,6 +276,7 @@ impl Board<'static> {
             PA2,
             PA3,
             USART2,
+            TIM4,
             // pdm_mic1
             PB8,
             PD3,
@@ -298,6 +302,11 @@ impl Board<'static> {
             PE15,
             ..
         } = p;
+
+        // PB9 feeds both EXTI9 and TIM4_CH4. The duplicate peripheral token is
+        // safe here because the two drivers use distinct hardware functions;
+        // applications select one timing source through GpsConfig.
+        let pps_capture_pin = unsafe { PB9.clone_unchecked() };
 
         Self {
             leds: Leds {
@@ -336,6 +345,8 @@ impl Board<'static> {
                 tx: PA2,
                 rx: PA3,
                 pps: ExtiInput::new(PB9, EXTI9, Pull::None, Irqs),
+                pps_capture_pin,
+                pps_capture_timer: TIM4,
                 rst: Output::new(PE3, Level::Low, Speed::Medium),
                 en: Output::new(PC13, Level::Low, Speed::Medium),
             },

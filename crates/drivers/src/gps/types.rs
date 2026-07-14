@@ -26,6 +26,16 @@ pub enum OperatingState {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum PpsTimingSource {
+    /// Edge timing uses the Embassy monotonic clock sampled after EXTI wake-up.
+    #[default]
+    EmbassyInstant,
+    /// Edge timing uses the hardware TIM4_CH4 capture register at 1 MHz.
+    Tim4Capture,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GpsCommand {
@@ -68,6 +78,8 @@ pub struct GpsConfig {
     pub initial_start_mode: StartMode,
     pub power_settle_time: Duration,
     pub serial_poll_interval: Duration,
+    /// Selects the STM32 PPS timing backend used by `Stm32Pps::from_config`.
+    pub pps_timing_source: PpsTimingSource,
     pub module_commands: GpsModuleCommands,
 }
 
@@ -82,6 +94,7 @@ impl Default for GpsConfig {
             initial_start_mode: StartMode::Hot,
             power_settle_time: Duration::from_millis(250),
             serial_poll_interval: Duration::from_millis(100),
+            pps_timing_source: PpsTimingSource::EmbassyInstant,
             module_commands: GpsModuleCommands::default(),
         }
     }
@@ -131,8 +144,16 @@ pub struct GpsFix {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PpsInfo {
     pub pps_count: u64,
+    pub timing_source: PpsTimingSource,
+    /// Coarse monotonic timestamp retained for UTC correlation.
     pub timestamp: Instant,
+    /// Wrap-extended hardware capture count, when timer capture is enabled.
     pub capture_ticks: Option<u64>,
+    /// Hardware capture ticks elapsed since the preceding PPS edge.
+    pub capture_delta_ticks: Option<u64>,
+    /// Frequency required to interpret capture tick fields.
+    pub capture_frequency_hz: Option<u32>,
+    /// Coarse Embassy-clock interval retained for comparison and fallback.
     pub delta_time: Option<Duration>,
 }
 
@@ -142,7 +163,12 @@ pub struct TimeCorrelation {
     pub utc_time: UtcDateTime,
     pub local_timestamp: Instant,
     pub pps_timestamp: Option<Instant>,
+    /// Fine PPS fields are forwarded unchanged for a future Time Service
+    /// frequency estimator; the GPS driver does not interpret their drift.
     pub pps_capture_ticks: Option<u64>,
+    pub pps_capture_delta_ticks: Option<u64>,
+    pub pps_capture_frequency_hz: Option<u32>,
+    pub pps_timing_source: Option<PpsTimingSource>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
