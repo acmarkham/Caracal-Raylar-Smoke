@@ -59,8 +59,8 @@ pub struct GpsModuleCommands {
 impl Default for GpsModuleCommands {
     fn default() -> Self {
         Self {
-            standby: None,
-            wake: None,
+            standby: Some(&b"$PMTK161,0*28\r\n"[..]),
+            wake: Some(&b"\r\n"[..]),
             hot_start: None,
             warm_start: None,
             cold_start: None,
@@ -87,7 +87,7 @@ impl Default for GpsConfig {
     fn default() -> Self {
         Self {
             gps_on_time: Duration::from_secs(30),
-            gps_off_time: Duration::from_secs(5 * 60),
+            gps_off_time: Duration::from_secs(30),
             first_search_time: Duration::from_secs(15 * 60),
             search_time: Duration::from_secs(30),
             search_failure_threshold: 10,

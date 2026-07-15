@@ -96,7 +96,7 @@ impl Default for TimeConfig {
         Self {
             max_uncertainty_us: 5_000_000,
             holdover_stability_ppb: 10_000,
-            frequency_ewma_weight_per_mille: 125,
+            frequency_ewma_weight_per_mille: 10, // was 125
             // EXTI PPS timestamps are taken in software after wake-up, so their
             // short-baseline measurements can be noisier than the oscillator's
             // physical tolerance. Hardware capture can use a tighter limit.

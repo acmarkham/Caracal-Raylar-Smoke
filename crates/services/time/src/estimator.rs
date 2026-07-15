@@ -123,6 +123,7 @@ impl TimeEstimator {
                     );
                     if observed_ppb.abs() <= self.config.max_frequency_error_ppb as i128 {
                         let weight = self.config.frequency_ewma_weight_per_mille.min(1_000) as i128;
+
                         let ewma_numerator =
                             previous_ppb * (1_000 - weight) + observed_ppb * weight;
                         let updated_ppb = ewma_numerator / 1_000;

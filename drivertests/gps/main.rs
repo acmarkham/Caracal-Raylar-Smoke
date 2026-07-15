@@ -13,6 +13,7 @@ use embassy_executor::Spawner;
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usart::{BufferedUart, Config, DataBits, Parity, StopBits};
+use embassy_time::Timer;
 use embedded_alloc::LlffHeap as Heap;
 use raylar_board_v1p0::{Board, Gps, Irqs};
 use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
@@ -118,25 +119,28 @@ async fn gps_observer_task() -> ! {
     let mut pps = unwrap!(GPS_RESOURCES.pps_receiver());
 
     loop {
-        let next_stats = stats.changed().await;
-        info!(
-            "GPS stats: powered={} fixes={} pps={} checksum_errors={} uart_errors={}",
+        while let Some(next_stats) = stats.try_changed() {
+            info!(
+            "GPS stats: powered={} operating state={} fixes={} pps={} checksum_errors={} uart_errors={}",
             next_stats.powered,
+            next_stats.operating_state,
             next_stats.num_fixes,
             next_stats.num_pps_events,
             next_stats.num_checksum_errors,
             next_stats.num_uart_errors
         );
+        }
 
-        let fix = fixes.changed().await;
-        info!(
-            "GPS fix: lat_e7={} lon_e7={} sats={} utc_time={} systime={}",
-            fix.latitude.degrees_e7,
-            fix.longitude.degrees_e7,
-            fix.satellites,
-            fix.utc_time,
-            fix.system_timestamp
-        );
+        while let Some(fix) = fixes.try_changed() {
+            info!(
+                "GPS fix: lat_e7={} lon_e7={} sats={} utc_time={} systime={}",
+                fix.latitude.degrees_e7,
+                fix.longitude.degrees_e7,
+                fix.satellites,
+                fix.utc_time,
+                fix.system_timestamp
+            );
+        }
 
         while let Some(info) = pps.try_changed() {
             info!(
@@ -150,5 +154,7 @@ async fn gps_observer_task() -> ! {
                 info.delta_time.map(|d| d.as_micros()).unwrap_or(0)
             );
         }
+        // short pause
+        Timer::after_millis(50).await;
     }
 }

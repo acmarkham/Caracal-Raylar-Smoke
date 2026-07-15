@@ -317,7 +317,7 @@ where
                 .await;
             }
             GpsCommand::Stop => {
-                power_off(&mut power, &serial, &stats_pub, &config).await;
+                enter_low_power(&mut power, &serial, &stats_pub, &config).await;
             }
         }
     }
@@ -335,63 +335,68 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
 ) where
     POWER: GpsPowerControl,
 {
-    let search_time = if *first_search {
-        config.first_search_time
-    } else {
-        config.search_time
-    };
+    let mut cycle_start_mode = start_mode;
 
-    *first_search = false;
-    let on_started = Instant::now();
-    modify_stats(stats_pub, |stats| {
-        stats.last_fix_attempt_time = Some(on_started);
-        stats.num_search_attempts = stats.num_search_attempts.saturating_add(1);
-        stats.operating_state = OperatingState::PoweringOn;
-    });
+    loop {
+        let search_time = if *first_search {
+            config.first_search_time
+        } else {
+            config.search_time
+        };
 
-    let _ = power.set_enabled(true);
-    let _ = power.set_reset_asserted(false);
-    modify_stats(stats_pub, |stats| stats.powered = true);
-    Timer::after(config.power_settle_time).await;
+        *first_search = false;
+        let on_started = Instant::now();
+        modify_stats(stats_pub, |stats| {
+            stats.last_fix_attempt_time = Some(on_started);
+            stats.num_search_attempts = stats.num_search_attempts.saturating_add(1);
+            stats.operating_state = OperatingState::PoweringOn;
+        });
 
-    send_start_mode(serial, config, start_mode).await;
-    modify_stats(stats_pub, |stats| {
-        stats.operating_state = OperatingState::Searching
-    });
+        let _ = power.set_enabled(true);
+        let _ = power.set_reset_asserted(false);
+        modify_stats(stats_pub, |stats| stats.powered = true);
+        Timer::after(config.power_settle_time).await;
 
-    match wait_for_search_outcome(commands, manager_events, serial, config, search_time).await {
-        SearchOutcome::Fix => {
-            let now = Instant::now();
-            modify_stats(stats_pub, |stats| {
-                stats.got_first_fix = true;
-                stats.last_successful_fix_time = Some(now);
-                stats.total_on_time += now.saturating_duration_since(on_started);
-                stats.operating_state = OperatingState::Acquired;
-            });
-            if sleep_or_stop(commands, serial, config, config.gps_on_time).await {
-                power_off(power, serial, stats_pub, config).await;
+        send_start_mode(serial, config, cycle_start_mode).await;
+        modify_stats(stats_pub, |stats| {
+            stats.operating_state = OperatingState::Searching
+        });
+
+        match wait_for_search_outcome(commands, manager_events, serial, config, search_time).await {
+            SearchOutcome::Fix => {
+                let now = Instant::now();
+                modify_stats(stats_pub, |stats| {
+                    stats.got_first_fix = true;
+                    stats.last_successful_fix_time = Some(now);
+                    stats.total_on_time += now.saturating_duration_since(on_started);
+                    stats.operating_state = OperatingState::Acquired;
+                });
+                if sleep_or_stop(commands, serial, config, config.gps_on_time).await {
+                    enter_low_power(power, serial, stats_pub, config).await;
+                    return;
+                }
+                enter_low_power(power, serial, stats_pub, config).await;
+                if sleep_or_stop(commands, serial, config, config.gps_off_time).await {
+                    return;
+                }
+                cycle_start_mode = StartMode::Hot;
+            }
+            SearchOutcome::Stop => {
+                enter_low_power(power, serial, stats_pub, config).await;
                 return;
             }
-            modify_stats(stats_pub, |stats| {
-                stats.operating_state = OperatingState::Standby
-            });
-            let _ = sleep_or_stop(commands, serial, config, config.gps_off_time).await;
-        }
-        SearchOutcome::Stop => {
-            power_off(power, serial, stats_pub, config).await;
-            return;
-        }
-        SearchOutcome::Timeout => {
-            modify_stats(stats_pub, |stats| {
-                stats.num_search_failures = stats.num_search_failures.saturating_add(1);
-                stats.num_search_timeouts = stats.num_search_timeouts.saturating_add(1);
-                stats.operating_state = OperatingState::Error;
-            });
+            SearchOutcome::Timeout => {
+                modify_stats(stats_pub, |stats| {
+                    stats.num_search_failures = stats.num_search_failures.saturating_add(1);
+                    stats.num_search_timeouts = stats.num_search_timeouts.saturating_add(1);
+                    stats.operating_state = OperatingState::Error;
+                });
+                drain_stop_command(commands);
+                enter_low_power(power, serial, stats_pub, config).await;
+                return;
+            }
         }
     }
-
-    drain_stop_command(commands);
-    power_off(power, serial, stats_pub, config).await;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -439,10 +444,12 @@ async fn sleep_or_stop<const COMMAND_DEPTH: usize>(
     duration: Duration,
 ) -> bool {
     let deadline = Instant::now() + duration;
-
+    defmt::info!("GPS sleep_or_stop for {} seconds", duration.as_secs());
     loop {
         while let Ok(command) = commands.try_receive() {
+            defmt::info!("GPS sleep_or_stop command: {}", command);
             if handle_runtime_command(serial, config, command).await {
+                defmt::info!("GPS sleep_or_stop command done");
                 return true;
             }
         }
@@ -451,7 +458,10 @@ async fn sleep_or_stop<const COMMAND_DEPTH: usize>(
         if now >= deadline {
             return false;
         }
-
+        defmt::info!(
+            "GPS sleep_or_stop waiting for {} seconds",
+            deadline.saturating_duration_since(now).as_secs()
+        );
         Timer::after(min_duration(
             deadline.saturating_duration_since(now),
             MANAGER_COMMAND_POLL,
@@ -490,7 +500,7 @@ fn min_duration(a: Duration, b: Duration) -> Duration {
     }
 }
 
-async fn power_off<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usize>(
+async fn enter_low_power<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usize>(
     power: &mut POWER,
     serial: &embassy_sync::channel::Sender<'_, GpsMutex, SerialRequest, COMMAND_DEPTH>,
     stats_pub: &embassy_sync::watch::Sender<'_, GpsMutex, GpsStats, WATCHERS>,
@@ -504,7 +514,14 @@ async fn power_off<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usize>(
     });
 
     if let Some(standby) = config.module_commands.standby {
+        defmt::info!("GPS enter_low_power: sending standby command");
         serial.send(SerialRequest::Write(standby)).await;
+        modify_stats(stats_pub, |stats| {
+            stats.powered = true;
+            stats.total_off_time += Instant::now().saturating_duration_since(off_started);
+            stats.operating_state = OperatingState::Standby;
+        });
+        return;
     }
 
     let _ = power.set_reset_asserted(true);

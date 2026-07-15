@@ -6,7 +6,7 @@ use embassy_executor::Spawner;
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usart::{BufferedUart, Config, DataBits, Parity, StopBits};
-use embassy_time::{Instant, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_board_v1p0::{Board, Gps, Irqs};
 use raylar_drivers::gps::stm32::{ExtiPps, Stm32GpsPower};
