@@ -8,11 +8,12 @@
 
 use defmt::{info, unwrap, warn};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Input, Output};
-use embassy_stm32::peripherals::USB_OTG_HS;
+use embassy_stm32::gpio::{Input, Output, Pull};
+use embassy_stm32::peripherals::{PA9, USB_OTG_HS};
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usb::{Config as UsbDriverConfig, Driver as UsbDriver};
+use embassy_stm32::Peri;
 use embassy_time::Timer;
 use embassy_usb::class::cdc_acm::{CdcAcmClass, State, USB_CLASS_CDC};
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
@@ -116,7 +117,8 @@ async fn usb_cdc_hello(
     }
 }
 
-fn log_vbus(vbus: Input<'static>) {
+fn log_vbus(vbus: Peri<'static, PA9>) {
+    let vbus = Input::new(vbus, Pull::None);
     info!("USB_VBUS divider input high={}", vbus.is_high());
 }
 

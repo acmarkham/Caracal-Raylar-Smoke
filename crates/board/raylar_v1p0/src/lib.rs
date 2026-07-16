@@ -10,7 +10,7 @@ use embassy_stm32::peripherals::{ADC1, ADC4, PA0, PA1, PB1};
 // buzzer imports
 use embassy_stm32::peripherals::{PA5, TIM8};
 // USB-C CDC imports
-use embassy_stm32::peripherals::{PA11, PA12, USB_OTG_HS};
+use embassy_stm32::peripherals::{PA11, PA12, PA9, USB_OTG_HS};
 // i2c imports
 use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
 // gps imports
@@ -231,7 +231,7 @@ pub struct UsbCdc<'d> {
     pub usb: Peri<'d, USB_OTG_HS>,
     pub dm: Peri<'d, PA11>,
     pub dp: Peri<'d, PA12>,
-    pub vbus: Input<'d>,
+    pub vbus: Peri<'d, PA9>,
 }
 
 impl Board<'static> {
@@ -379,7 +379,7 @@ impl Board<'static> {
                 usb: USB_OTG_HS,
                 dm: PA11,
                 dp: PA12,
-                vbus: Input::new(PA9, Pull::None),
+                vbus: PA9,
             },
         }
     }

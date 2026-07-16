@@ -5,3 +5,4 @@ extern crate std;
 
 pub mod gps;
 pub mod storage;
+pub mod voltagemonitor;
