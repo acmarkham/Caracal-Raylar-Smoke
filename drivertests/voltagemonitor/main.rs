@@ -8,12 +8,12 @@
 
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::Output;
+use embassy_stm32::gpio::{Input, Output, Pull};
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_time::Timer;
 use embedded_alloc::LlffHeap as Heap;
-use raylar_board_v1p0::{AdcVoltages, Board, Leds};
+use raylar_board_v1p0::{AdcVoltages, Board, Leds, UsbCdc};
 use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use {defmt_rtt as _, panic_probe as _};
@@ -48,7 +48,10 @@ async fn main(spawner: Spawner) -> ! {
 
     let p = embassy_stm32::init(config);
     let Board {
-        leds, adc_voltages, ..
+        leds,
+        adc_voltages,
+        usb_cdc,
+        ..
     } = Board::new(p);
     let Leds {
         sys_main_red,
@@ -60,11 +63,12 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(unwrap!(heartbeat_task(sys_main_green)));
     spawner.spawn(unwrap!(voltage_observer_task()));
 
-    run_voltage_driver(adc_voltages, sys_main_red).await
+    run_voltage_driver(adc_voltages, usb_cdc, sys_main_red).await
 }
 
 async fn run_voltage_driver(
     adc_voltages: AdcVoltages<'static>,
+    usb_cdc: UsbCdc<'static>,
     mut activity_led: Output<'static>,
 ) -> ! {
     let AdcVoltages {
@@ -74,8 +78,10 @@ async fn run_voltage_driver(
         v_batt,
         v_solar,
     } = adc_voltages;
+    let UsbCdc { vbus, .. } = usb_cdc;
+    let usb_present = Input::new(vbus, Pull::None);
 
-    let sampler = Stm32VoltageMonitor::new_without_usb(adc, adc4, v_dc, v_batt, v_solar);
+    let sampler = Stm32VoltageMonitor::new(adc, adc4, v_dc, v_batt, v_solar, usb_present);
     info!("VREFBUF ready={}", sampler.status().vrefbuf_ready);
 
     activity_led.set_high();
@@ -90,8 +96,8 @@ async fn voltage_observer_task() -> ! {
     loop {
         if let Some(state) = rx.try_changed() {
             info!(
-                "Voltage state: batt={}mV solar={}mV ext_dc={}mV usb={}mV vref={}mV",
-                state.battery_mv, state.solar_mv, state.ext_dc_mv, state.usb_mv, state.vref_mv
+                "Voltage state: batt={}mV solar={}mV ext_dc={}mV usb_present={} vref={}mV",
+                state.battery_mv, state.solar_mv, state.ext_dc_mv, state.usb_present, state.vref_mv
             );
         }
         Timer::after_millis(100).await;

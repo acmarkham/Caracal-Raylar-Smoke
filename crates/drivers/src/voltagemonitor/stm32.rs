@@ -2,6 +2,7 @@ use embassy_stm32::adc::adc4::{
     Averaging as Adc4Averaging, Resolution as Adc4Resolution, SampleTime as Adc4SampleTime,
 };
 use embassy_stm32::adc::{Adc, AdcChannel, AdcConfig, Averaging, Resolution, SampleTime, VrefInt};
+use embassy_stm32::gpio::Input;
 use embassy_stm32::peripherals::{ADC1, ADC4};
 use embassy_stm32::Peri;
 
@@ -16,7 +17,6 @@ const VREFINT_MIN_PLAUSIBLE_RAW: u32 = 1_000;
 
 const DIVIDER_180K_33K: Divider = Divider::new(180 + 33, 33);
 const DIVIDER_33K_33K: Divider = Divider::new(33 + 33, 33);
-const DIVIDER_USB_10K_5K1: Divider = Divider::new(151, 51);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -28,49 +28,25 @@ pub struct Stm32VoltageStatus {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NoUsbVoltage;
+pub struct NoUsbPresence;
 
-pub trait UsbVoltageChannel {
-    fn read_usb_mv(
-        &mut self,
-        adc: &mut Adc<'static, ADC1>,
-        sample_time: SampleTime,
-        adc_reference_mv: u32,
-    ) -> u32;
+pub trait UsbPresence {
+    fn is_usb_present(&self) -> bool;
 }
 
-impl UsbVoltageChannel for NoUsbVoltage {
-    fn read_usb_mv(
-        &mut self,
-        _adc: &mut Adc<'static, ADC1>,
-        _sample_time: SampleTime,
-        _adc_reference_mv: u32,
-    ) -> u32 {
-        0
+impl UsbPresence for NoUsbPresence {
+    fn is_usb_present(&self) -> bool {
+        false
     }
 }
 
-impl<T> UsbVoltageChannel for T
-where
-    T: AdcChannel<ADC1>,
-{
-    fn read_usb_mv(
-        &mut self,
-        adc: &mut Adc<'static, ADC1>,
-        sample_time: SampleTime,
-        adc_reference_mv: u32,
-    ) -> u32 {
-        read_voltage(
-            adc,
-            self,
-            sample_time,
-            adc_reference_mv,
-            DIVIDER_USB_10K_5K1,
-        )
+impl UsbPresence for Input<'static> {
+    fn is_usb_present(&self) -> bool {
+        self.is_high()
     }
 }
 
-pub struct Stm32VoltageMonitor<DC, BATT, SOLAR, USB = NoUsbVoltage> {
+pub struct Stm32VoltageMonitor<DC, BATT, SOLAR, USB = NoUsbPresence> {
     adc: Adc<'static, ADC1>,
     adc4: Adc<'static, ADC4>,
     vrefint: VrefInt,
@@ -84,7 +60,7 @@ pub struct Stm32VoltageMonitor<DC, BATT, SOLAR, USB = NoUsbVoltage> {
     status: Stm32VoltageStatus,
 }
 
-impl<DC, BATT, SOLAR> Stm32VoltageMonitor<DC, BATT, SOLAR, NoUsbVoltage>
+impl<DC, BATT, SOLAR> Stm32VoltageMonitor<DC, BATT, SOLAR, NoUsbPresence>
 where
     DC: AdcChannel<ADC1>,
     BATT: AdcChannel<ADC1>,
@@ -97,7 +73,7 @@ where
         v_batt: BATT,
         v_solar: SOLAR,
     ) -> Self {
-        Self::new(adc, adc4, v_dc, v_batt, v_solar, NoUsbVoltage)
+        Self::new(adc, adc4, v_dc, v_batt, v_solar, NoUsbPresence)
     }
 }
 
@@ -106,7 +82,7 @@ where
     DC: AdcChannel<ADC1>,
     BATT: AdcChannel<ADC1>,
     SOLAR: AdcChannel<ADC1>,
-    USB: UsbVoltageChannel,
+    USB: UsbPresence,
 {
     pub fn new(
         adc: Peri<'static, ADC1>,
@@ -159,7 +135,7 @@ where
     DC: AdcChannel<ADC1>,
     BATT: AdcChannel<ADC1>,
     SOLAR: AdcChannel<ADC1>,
-    USB: UsbVoltageChannel,
+    USB: UsbPresence,
 {
     fn sample(&mut self) -> VoltageState {
         let vref_raw = self
@@ -192,9 +168,7 @@ where
                 adc_reference_mv,
                 DIVIDER_180K_33K,
             ),
-            usb_mv: self
-                .usb
-                .read_usb_mv(&mut self.adc, self.sample_time, adc_reference_mv),
+            usb_present: self.usb.is_usb_present(),
             vref_mv: raw_to_mv(vref_raw, adc_reference_mv, ADC4_MAX_COUNTS),
         }
     }

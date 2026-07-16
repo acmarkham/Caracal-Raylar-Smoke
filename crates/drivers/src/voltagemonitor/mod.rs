@@ -19,7 +19,7 @@ pub struct VoltageState {
     pub battery_mv: u32,
     pub solar_mv: u32,
     pub ext_dc_mv: u32,
-    pub usb_mv: u32,
+    pub usb_present: bool,
     pub vref_mv: u32,
 }
 
@@ -47,7 +47,7 @@ impl<const WATCHERS: usize> VoltageResources<WATCHERS> {
                 battery_mv: 0,
                 solar_mv: 0,
                 ext_dc_mv: 0,
-                usb_mv: 0,
+                usb_present: false,
                 vref_mv: 0,
             }),
         }
@@ -143,9 +143,7 @@ mod tests {
     #[test]
     fn divider_scales_source_voltage_with_rounding() {
         let divider_180k_33k = Divider::new(180 + 33, 33);
-        let divider_usb_10k_5k1 = Divider::new(151, 51);
 
         assert_eq!(divider_180k_33k.scale_mv(1_000), 6_455);
-        assert_eq!(divider_usb_10k_5k1.scale_mv(1_690), 5_003);
     }
 }
