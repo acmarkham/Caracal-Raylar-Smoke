@@ -1,0 +1,20 @@
+[package]
+name = "raylar-storage-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raylar_storage_service"
+path = "src/lib.rs"
+
+[features]
+default = []
+defmt = ["dep:defmt", "raylar-drivers/defmt", "raylar-time-service/defmt"]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+heapless = "0.8.0"
+raylar-drivers = { path = "../../drivers" }
+raylar-time-service = { path = "../time", default-features = false }
+

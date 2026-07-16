@@ -1,10 +1,4 @@
-# ADR-0001: Storage Service and Stream-Based Storage Model
-
-## Status
-
-Proposed
-
----
+# Storage Service and Stream-Based Storage Model
 
 # Context
 
@@ -42,6 +36,8 @@ The Storage Service is responsible for:
 * Mapping logical streams onto physical files
 
 Clients never manipulate filenames directly.
+
+UTC timestamps are in unix time (i.e. integer seconds), not in human calendar time. UTC timestamps are obviously in Zulu time (timezone: zero) so there is no confusion about local timezones or daylight savings.
 
 ---
 
@@ -127,7 +123,7 @@ Typical usage:
 System Logger
       │
       ▼
-system.log
+syslog.txt
 ```
 
 ---
@@ -145,17 +141,18 @@ Characteristics:
 * Files organised into daily folders
 * File names derived from UTC timestamps
 * Folder names derived from UTC midnight epoch
+* If the system starts, it will commence a file from the top of the minute (e.g. aud_1784016480.wav->Tue Jul 14 2026 08:08:00 GMT+0000) and fill it until it reaches the normal top of the hour mark (e.g. aud_1784019600.wav -> Tue Jul 14 2026 09:00:00 GMT+0000).
+* It should be easy to change the folder interval (e.g. from daily to hourly) and the file rollover interval (e.g. from hourly to minutely) for maximum flexibility
 
 Example:
 
 ```text
-20260713/
-
-    20260713T140000.wav
-
-    20260713T150000.wav
-
-    20260713T160000.wav
+1783987200/
+            aud_1783987200.wav
+            aud_1783990800.wav
+            aud_1783994400.wav
+            aud_1784016480.wav
+            aud_1784019600.wav
 ```
 
 The recording service simply appends audio blocks.
@@ -168,28 +165,21 @@ The Storage Service performs rollover automatically.
 
 Purpose:
 
-Persistent PPS timing information.
+Persistent PPS timing information and optional NMEA sentence storage
 
 Characteristics:
 
 * One file per UTC day
 * Stored within a daily directory
 * Append-only
+* It should be easy to change the folder interval (e.g. from daily to hourly)
 
 Example:
 
 ```text
-20260713/
+1784019600/
 
-    pps.bin
-```
-
-or
-
-```text
-20260713/
-
-    pps.csv
+    gps_1784019600.pps
 ```
 
 The precise filename is determined by the storage policy.
@@ -280,7 +270,7 @@ Current policy:
 | Stream     | Naming                              |
 | ---------- | ----------------------------------- |
 | Log        | Single append-only logfile          |
-| Audio      | UTC timestamped hourly WAV          |
+| Audio      | UTC timestamped hourly WAV with UTC day directory |
 | GPS Timing | Daily file within UTC day directory |
 
 ---
@@ -293,14 +283,15 @@ Current convention:
 
 ```text
 /
-
-logs/
-
-audio/
-
-gps/
-
-20260713/
+syslog.txt
+/1783987200/
+            aud_1783987200.wav
+            gps_1783987200.pps
+            aud_1783990800.wav
+            aud_1783994400.wav
+            aud_1784016480.wav
+            aud_1784019600.wav
+            
 ```
 
 The exact hierarchy remains an implementation detail.
@@ -327,7 +318,7 @@ Continue writing.
 
 ## Audio Stream
 
-Determine whether the previous recording should continue or whether a new hourly file should be created.
+Audio files on startup will commence on the top of the minute, so there is no need to open/append new files on startup.
 
 ---
 
@@ -369,7 +360,7 @@ Open new WAV
 Continue recording
 ```
 
-The recording service is unaware this occurred.
+The recording service is unaware this occurred. Audio data will be timestamped with local system time (e.g. the start time of the buffer) so that the precise file ending time (with sample level precision, not buffer level precision) can be determined. The recording service will also be responsible for creating wave file headers or any other metadata that is required. Do not implement this yet but expose a thin stub like "make_wavfile_header()" that will later be populated.
 
 ---
 
@@ -385,7 +376,7 @@ UTC is required for:
 
 Time is expected to come from the system time service, which is disciplined by GPS.
 
-If UTC is unavailable during startup, the Storage Service should define a deterministic fallback behaviour (to be decided during implementation).
+If UTC is unavailable during startup, the Storage Service should define a deterministic fallback behaviour. It should use the system time as an alternative. This will allow low level components that are not time sensitive like logging to initialize and work whilst waiting for UTC to become available. Services like audio which are highly dependent on UTC time will by default just drop streamed data until UTC is valid.
 
 ---
 
@@ -403,7 +394,24 @@ The Storage Driver remains unaware of:
 
 It only provides filesystem primitives.
 
-This separation keeps the driver reusable and simplifies testing.
+This separation keeps the driver reusable and simplifies testing. 
+
+UTC timing is provided by the time service which has already been implemented and provides bidirectional mappings between system time and UTC time using GPS informed scaling.
+
+
+--
+# Implementation
+
+Implement as a service in 'crates/services/storage' to sit alongside the existing 'time' service. 
+
+
+# Testing
+
+Provide two small test suites in servicetests/storage that will:
+- Start the GPS driver ('crates/drivers/gps') and time service ('crates/services/time') to provide UTC time
+- Write fake data to logfile every second
+- Write GPS data (which can be listened to from the gps driver) to the PPS file 
+- Write fake audio data at nominal 16kHz 16 bit depth to test rollover. Use hourly folder names and minute long files. Wait until UTC time is valid before starting the audio streaming.
 
 ---
 
