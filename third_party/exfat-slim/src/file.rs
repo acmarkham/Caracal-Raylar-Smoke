@@ -286,7 +286,7 @@ impl File {
 
         let remaining_bytes_in_cluster = match &chain {
             StoredChain::Empty => 0,
-            _ => cluster_length - (cursor % cluster_length as u64) as u32,
+            _ => remaining_bytes_at_cursor(cursor, cluster_length),
         };
 
         Self {
@@ -668,8 +668,13 @@ impl File {
                 self.move_file_cursor::<D, SIZE>(block.len()).await?;
             }
 
-            // write the last sector (could be partially full)
-            let _len = self.write_partial_sector(fs, remainder).await?;
+            // A preceding partial or full-sector write may have ended exactly
+            // at a cluster boundary. Move into the newly allocated cluster
+            // before writing the final partial sector.
+            if !remainder.is_empty() {
+                self.next_cluster_if_required(fs).await?;
+                self.write_partial_sector(fs, remainder).await?;
+            }
         }
 
         Ok(())
@@ -955,8 +960,20 @@ impl File {
     where
         D: BlockDevice<SIZE>,
     {
-        self.cursor += num_bytes as u64;
-        self.remaining_bytes_in_cluster -= num_bytes as u32;
+        let num_bytes = u32::try_from(num_bytes)
+            .map_err(|_| ExFatError::Unexpected("cursor movement exceeds u32"))?;
+        let remaining = self
+            .remaining_bytes_in_cluster
+            .checked_sub(num_bytes)
+            .ok_or(ExFatError::Unexpected(
+                "cursor movement crossed a cluster boundary",
+            ))?;
+        let cursor = self
+            .cursor
+            .checked_add(num_bytes as u64)
+            .ok_or(ExFatError::Unexpected("file cursor overflow"))?;
+        self.cursor = cursor;
+        self.remaining_bytes_in_cluster = remaining;
         Ok(())
     }
 
@@ -996,5 +1013,36 @@ impl File {
                 }
             }
         }
+    }
+}
+
+fn remaining_bytes_at_cursor(cursor: u64, cluster_length: u32) -> u32 {
+    let used = (cursor % cluster_length as u64) as u32;
+    if cursor != 0 && used == 0 {
+        0
+    } else {
+        cluster_length - used
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remaining_bytes_at_cursor;
+
+    #[test]
+    fn cursor_at_start_has_a_full_cluster_remaining() {
+        assert_eq!(remaining_bytes_at_cursor(0, 32_768), 32_768);
+    }
+
+    #[test]
+    fn cursor_inside_cluster_reports_bytes_to_boundary() {
+        assert_eq!(remaining_bytes_at_cursor(100, 32_768), 32_668);
+        assert_eq!(remaining_bytes_at_cursor(32_868, 32_768), 32_668);
+    }
+
+    #[test]
+    fn positive_exact_cluster_boundary_requires_advancing() {
+        assert_eq!(remaining_bytes_at_cursor(32_768, 32_768), 0);
+        assert_eq!(remaining_bytes_at_cursor(65_536, 32_768), 0);
     }
 }
