@@ -528,6 +528,10 @@ impl File {
 
         match old_chain {
             StoredChain::Empty => {
+                // Keep the in-memory details coherent before the directory
+                // entry is flushed. A later non-contiguous extension may need
+                // to convert this allocation to a FAT chain first.
+                self.details.first_cluster = run.first_cluster;
                 self.chain = StoredChain::Contiguous {
                     first: run.first_cluster,
                     cluster_count: run.cluster_count,
@@ -843,7 +847,21 @@ impl File {
                 .set(GeneralSecondaryFlags::NoFatChain, false);
             self.touched.is_dir_entry_dirty = true;
 
-            for cluster_id in self.details.first_cluster..self.current_cluster {
+            // `self.chain` is authoritative while a file is open. In
+            // particular, a newly-created file may not have flushed its first
+            // cluster into the directory entry yet, leaving the old details
+            // value at NO_CLUSTER_ID (0). Using that stale value here causes a
+            // FAT write for cluster 0 and trips Fat::set's validity assertion.
+            let first_cluster = match self.chain {
+                StoredChain::Contiguous { first, .. } | StoredChain::Fat { first, .. } => first,
+                StoredChain::Empty => {
+                    return Err(ExFatError::Unexpected(
+                        "cannot convert an empty file to a FAT chain",
+                    ));
+                }
+            };
+
+            for cluster_id in first_cluster..self.current_cluster {
                 fs.fat
                     .set(&mut fs.dev, &mut self.touched, cluster_id, cluster_id + 1)
                     .await?;

@@ -27,6 +27,10 @@ use super::{
 
 const FIRST_CLUSTER_ID: u32 = 2;
 
+const fn clusters_per_bitmap_sector<const SIZE: usize>() -> u32 {
+    SIZE as u32 * u8::BITS
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 pub(crate) struct AllocationBitmap<const SIZE: usize> {
@@ -226,7 +230,8 @@ where
         let first_sector = self.bitmap.first_sector;
         let num_sectors = self.bitmap.num_sectors;
 
-        let sector_index = (run.first_cluster - FIRST_CLUSTER_ID) / SIZE as u32;
+        let clusters_per_sector = clusters_per_bitmap_sector::<SIZE>();
+        let sector_index = (run.first_cluster - FIRST_CLUSTER_ID) / clusters_per_sector;
         let mut remaining = run.cluster_count;
         let mut cluster_id = run.first_cluster;
 
@@ -234,9 +239,10 @@ where
             let sector_id = first_sector + sector_offset;
             let slot = self.cache.read_mut(sector_id, io).await?;
 
-            let first_cluster_of_slot = sector_index * SIZE as u32 + FIRST_CLUSTER_ID;
+            let first_cluster_of_slot =
+                sector_offset * clusters_per_sector + FIRST_CLUSTER_ID;
             let start = cluster_id - first_cluster_of_slot;
-            let end = (SIZE as u32).min(start + remaining);
+            let end = clusters_per_sector.min(start + remaining);
             Self::set_bit_range(slot.as_mut_slice(), start..end, allocated);
             touched.insert(TouchedSector::new(TouchedKind::Bitmap, sector_id));
             let num_clusters_in_slot = end - start;
@@ -263,8 +269,9 @@ where
         let first_sector = self.bitmap.first_sector;
         let num_sectors = self.bitmap.num_sectors;
 
-        let sector_index = (from_cluster - FIRST_CLUSTER_ID) / SIZE as u32;
-        let mut cluster_id = sector_index * SIZE as u32 + FIRST_CLUSTER_ID;
+        let clusters_per_sector = clusters_per_bitmap_sector::<SIZE>();
+        let sector_index = (from_cluster - FIRST_CLUSTER_ID) / clusters_per_sector;
+        let mut cluster_id = sector_index * clusters_per_sector + FIRST_CLUSTER_ID;
         let mut first_cluster = None;
         let mut count = 0;
 
@@ -291,7 +298,7 @@ where
 
                                 if count == num_clusters {
                                     return Ok(AllocatedRun {
-                                        first_cluster: cluster_id,
+                                        first_cluster: first_cluster.unwrap(),
                                         cluster_count: num_clusters,
                                     });
                                 }
@@ -362,7 +369,7 @@ where
                                     if let Some(cluster_id) = first_cluster {
                                         fallback = Some(AllocatedRun {
                                             first_cluster: cluster_id,
-                                            cluster_count: num_clusters,
+                                            cluster_count: count,
                                         })
                                     }
                                 }
