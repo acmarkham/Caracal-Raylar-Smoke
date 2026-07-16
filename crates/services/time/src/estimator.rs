@@ -151,8 +151,9 @@ impl TimeEstimator {
             }
         }
 
-        self.state.reference_system_time = anchor.system_time;
-        self.state.reference_utc = anchor.utc;
+        // Do not update the reference system time or UTC, as that would cause a discontinuity in the mapping. Instead, we only update the uncertainty and last anchor information.
+        //self.state.reference_system_time = anchor.system_time;
+        //self.state.reference_utc = anchor.utc;
         self.state.uncertainty_us = anchor.quality.uncertainty_us;
         self.state.last_anchor_system_time = Some(anchor.system_time);
         self.state.last_anchor_utc = Some(anchor.utc);
@@ -225,7 +226,7 @@ impl TimeEstimator {
         self.frequency_reference = Some(anchor);
         #[cfg(feature = "defmt")]
         defmt::info!(
-            "mapping epoch initialized: system_ticks={} utc={}s+{}us source={:?} quality_us={} scale_ppb=0 mapping_scale_ppb=1000000000",
+            "mapping epoch initialized with first fix: system_ticks={} utc={}s+{}us source={:?} quality_us={} scale_ppb=0 mapping_scale_ppb=1000000000",
             anchor.system_time.as_ticks(),
             anchor.utc.seconds,
             anchor.utc.microseconds,
