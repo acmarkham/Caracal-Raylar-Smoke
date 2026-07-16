@@ -7,6 +7,7 @@ members = [
     "crates/services/storage",
     "crates/services/logging",
     "drivertests/gps",
+    "drivertests/batterycharger",
     "drivertests/voltagemonitor",
     "drivertests/storage",
     "servicetests/time",
