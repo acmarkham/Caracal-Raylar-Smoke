@@ -1,0 +1,25 @@
+[package]
+name = "raylar-logging-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raylar_logging_service"
+path = "src/lib.rs"
+
+[features]
+default = []
+defmt = ["dep:defmt", "raylar-storage-service/defmt"]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+embassy-sync = "0.7.2"
+embassy-time.workspace = true
+heapless = "0.8.0"
+raylar-storage-service = { path = "../storage" }
+
+[dev-dependencies]
+critical-section = { version = "1.1", features = ["std"] }
+defmt = { workspace = true, features = ["unstable-test"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }

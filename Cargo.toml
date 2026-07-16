@@ -5,6 +5,7 @@ members = [
     "crates/board/raylar_v1p0",
     "crates/services/time",
     "crates/services/storage",
+    "crates/services/logging",
     "drivertests/gps",
     "drivertests/storage",
     "servicetests/time",
