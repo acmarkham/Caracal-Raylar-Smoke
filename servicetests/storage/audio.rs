@@ -31,7 +31,7 @@ async fn main(spawner: Spawner) -> ! {
     let driver = common::storage_driver(sd).await;
     let config = StorageConfig {
         audio: RollingPolicy {
-            folder_interval_seconds: 3_600,
+            folder_interval_seconds: 600,
             file_interval_seconds: 60,
             startup_alignment_seconds: 60,
         },
@@ -66,7 +66,7 @@ async fn main(spawner: Spawner) -> ! {
         *byte = (index as u8).wrapping_mul(17);
     }
 
-    info!("storage audio test running: 16 kHz, 16-bit, minute files, hourly folders");
+    info!("storage audio test running: 16 kHz, 16-bit, minute files, ten minute folders");
     loop {
         if storage.append(audio, data).await.is_err() {
             error!("audio append failed");
