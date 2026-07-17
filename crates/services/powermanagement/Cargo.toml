@@ -1,0 +1,19 @@
+[package]
+name = "raylar-power-management-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raylar_power_management_service"
+path = "src/lib.rs"
+
+[features]
+default = []
+defmt = ["dep:defmt", "embassy-sync/defmt", "raylar-drivers/defmt"]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+embassy-sync = "0.7.2"
+embassy-time.workspace = true
+raylar-drivers = { path = "../../drivers" }
