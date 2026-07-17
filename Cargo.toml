@@ -15,6 +15,7 @@ members = [
     "servicetests/storage",
     "servicetests/logging",
     "servicetests/powermanagement",
+    "integrationtests/integration001_powermonitorlog",
     "unitsmoke/01_helloworld",
     "unitsmoke/02_userbutton",
     "unitsmoke/03_buzzer",
