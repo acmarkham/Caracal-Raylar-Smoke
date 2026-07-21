@@ -16,7 +16,10 @@ use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
 // gps imports
 use embassy_stm32::peripherals::{PA2, PA3, PB9, TIM4, USART2};
 // pdm microphone imports
-use embassy_stm32::peripherals::{PB8, PD3};
+use embassy_stm32::peripherals::{
+    GPDMA1_CH0, GPDMA1_CH1, GPDMA1_CH2, GPDMA1_CH3, GPDMA1_CH4, GPDMA1_CH5, PB8, PC2, PD3, PD6,
+    PE4, PE7,
+};
 // microSD imports
 use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
@@ -136,6 +139,7 @@ pub struct Board<'d> {
     pub qwiic_i2c: QwiicI2C<'d>,
     pub gps: Gps<'d>,
     pub pdm_mic1: PdmMic1<'d>,
+    pub pdm_mic_array: PdmMicArray<'d>,
     pub sd: SdCard<'d>,
     pub ebyte_rf: EbyteRf<'d>,
     pub usb_cdc: UsbCdc<'d>,
@@ -199,6 +203,26 @@ pub struct Gps<'d> {
 pub struct PdmMic1<'d> {
     pub cck0: Peri<'d, PB8>,
     pub sdio: Peri<'d, PD3>,
+}
+
+/// Complete six-microphone MDF1 pin and DMA mapping.
+pub struct PdmMicArray<'d> {
+    pub cck0: Peri<'d, PB8>,
+    pub sd0: Peri<'d, PD3>,
+    pub cck1: Peri<'d, PC2>,
+    pub sd1: Peri<'d, PD6>,
+    pub sd2: Peri<'d, PE7>,
+    pub sd3: Peri<'d, PE4>,
+    pub dma: PdmMicDma<'d>,
+}
+
+pub struct PdmMicDma<'d> {
+    pub ch0: Peri<'d, GPDMA1_CH0>,
+    pub ch1: Peri<'d, GPDMA1_CH1>,
+    pub ch2: Peri<'d, GPDMA1_CH2>,
+    pub ch3: Peri<'d, GPDMA1_CH3>,
+    pub ch4: Peri<'d, GPDMA1_CH4>,
+    pub ch5: Peri<'d, GPDMA1_CH5>,
 }
 
 // microSD on SDMMC1 4-bit default pins. SD_SW is low when a card is inserted.
@@ -280,6 +304,16 @@ impl Board<'static> {
             // pdm_mic1
             PB8,
             PD3,
+            PC2,
+            PD6,
+            PE7,
+            PE4,
+            GPDMA1_CH0,
+            GPDMA1_CH1,
+            GPDMA1_CH2,
+            GPDMA1_CH3,
+            GPDMA1_CH4,
+            GPDMA1_CH5,
             // microSD
             SDMMC1,
             PC12,
@@ -307,6 +341,12 @@ impl Board<'static> {
         // safe here because the two drivers use distinct hardware functions;
         // applications select one timing source through GpsConfig.
         let pps_capture_pin = unsafe { PB9.clone_unchecked() };
+
+        // Preserve the original mono-only board field for the legacy smoke
+        // test. Applications must consume either it or `pdm_mic_array`, never
+        // both; both tokens address the same two pins.
+        let mono_cck0 = unsafe { PB8.clone_unchecked() };
+        let mono_sd0 = unsafe { PD3.clone_unchecked() };
 
         Self {
             leds: Leds {
@@ -351,8 +391,24 @@ impl Board<'static> {
                 en: Output::new(PC13, Level::Low, Speed::Medium),
             },
             pdm_mic1: PdmMic1 {
+                cck0: mono_cck0,
+                sdio: mono_sd0,
+            },
+            pdm_mic_array: PdmMicArray {
                 cck0: PB8,
-                sdio: PD3,
+                sd0: PD3,
+                cck1: PC2,
+                sd1: PD6,
+                sd2: PE7,
+                sd3: PE4,
+                dma: PdmMicDma {
+                    ch0: GPDMA1_CH0,
+                    ch1: GPDMA1_CH1,
+                    ch2: GPDMA1_CH2,
+                    ch3: GPDMA1_CH3,
+                    ch4: GPDMA1_CH4,
+                    ch5: GPDMA1_CH5,
+                },
             },
             sd: SdCard {
                 sdmmc: SDMMC1,

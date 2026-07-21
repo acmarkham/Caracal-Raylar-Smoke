@@ -11,6 +11,7 @@ members = [
     "drivertests/batterycharger",
     "drivertests/voltagemonitor",
     "drivertests/storage",
+    "drivertests/mic_array",
     "servicetests/time",
     "servicetests/storage",
     "servicetests/logging",
