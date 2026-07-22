@@ -80,11 +80,166 @@ pub enum SincFilter {
     Sinc5,
 }
 
+impl SincFilter {
+    /// Maximum CIC decimation for the one-bit SITF PDM input (RM0456 table 376).
+    pub const fn max_pdm_decimation(self) -> u16 {
+        match self {
+            Self::Sinc4 => 76,
+            Self::Sinc5 => 32,
+        }
+    }
+
+    pub const fn order(self) -> u8 {
+        match self {
+            Self::Sinc4 => 4,
+            Self::Sinc5 => 5,
+        }
+    }
+}
+
+/// CIC scale encodings and gains from RM0456 table 377.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CicScale {
+    DbMinus48_2 = 0x20,
+    DbMinus44_6 = 0x21,
+    DbMinus42_1 = 0x22,
+    DbMinus38_6 = 0x23,
+    DbMinus36_1 = 0x24,
+    DbMinus32_6 = 0x25,
+    DbMinus30_1 = 0x26,
+    DbMinus26_6 = 0x27,
+    DbMinus24_1 = 0x28,
+    DbMinus20_6 = 0x29,
+    DbMinus18_1 = 0x2a,
+    DbMinus14_5 = 0x2b,
+    DbMinus12_0 = 0x2c,
+    DbMinus8_5 = 0x2d,
+    DbMinus6_0 = 0x2e,
+    DbMinus2_5 = 0x2f,
+    Db0_0 = 0x00,
+    DbPlus3_5 = 0x01,
+    DbPlus6_0 = 0x02,
+    DbPlus9_5 = 0x03,
+    DbPlus12_0 = 0x04,
+    DbPlus15_6 = 0x05,
+    DbPlus18_1 = 0x06,
+    DbPlus21_6 = 0x07,
+    DbPlus24_1 = 0x08,
+    DbPlus27_6 = 0x09,
+    DbPlus30_1 = 0x0a,
+    DbPlus33_6 = 0x0b,
+    DbPlus36_1 = 0x0c,
+    DbPlus39_6 = 0x0d,
+    DbPlus42_1 = 0x0e,
+    DbPlus45_7 = 0x0f,
+    DbPlus48_2 = 0x10,
+    DbPlus51_7 = 0x11,
+    DbPlus54_2 = 0x12,
+    DbPlus57_7 = 0x13,
+    DbPlus60_2 = 0x14,
+    DbPlus63_7 = 0x15,
+    DbPlus66_2 = 0x16,
+    DbPlus69_7 = 0x17,
+    DbPlus72_2 = 0x18,
+}
+
+impl CicScale {
+    pub const fn bits(self) -> u8 {
+        self as u8
+    }
+
+    /// Gain in tenths of a decibel, avoiding floating point in firmware.
+    pub const fn gain_tenths_db(self) -> i16 {
+        match self {
+            Self::DbMinus48_2 => -482,
+            Self::DbMinus44_6 => -446,
+            Self::DbMinus42_1 => -421,
+            Self::DbMinus38_6 => -386,
+            Self::DbMinus36_1 => -361,
+            Self::DbMinus32_6 => -326,
+            Self::DbMinus30_1 => -301,
+            Self::DbMinus26_6 => -266,
+            Self::DbMinus24_1 => -241,
+            Self::DbMinus20_6 => -206,
+            Self::DbMinus18_1 => -181,
+            Self::DbMinus14_5 => -145,
+            Self::DbMinus12_0 => -120,
+            Self::DbMinus8_5 => -85,
+            Self::DbMinus6_0 => -60,
+            Self::DbMinus2_5 => -25,
+            Self::Db0_0 => 0,
+            Self::DbPlus3_5 => 35,
+            Self::DbPlus6_0 => 60,
+            Self::DbPlus9_5 => 95,
+            Self::DbPlus12_0 => 120,
+            Self::DbPlus15_6 => 156,
+            Self::DbPlus18_1 => 181,
+            Self::DbPlus21_6 => 216,
+            Self::DbPlus24_1 => 241,
+            Self::DbPlus27_6 => 276,
+            Self::DbPlus30_1 => 301,
+            Self::DbPlus33_6 => 336,
+            Self::DbPlus36_1 => 361,
+            Self::DbPlus39_6 => 396,
+            Self::DbPlus42_1 => 421,
+            Self::DbPlus45_7 => 457,
+            Self::DbPlus48_2 => 482,
+            Self::DbPlus51_7 => 517,
+            Self::DbPlus54_2 => 542,
+            Self::DbPlus57_7 => 577,
+            Self::DbPlus60_2 => 602,
+            Self::DbPlus63_7 => 637,
+            Self::DbPlus66_2 => 662,
+            Self::DbPlus69_7 => 697,
+            Self::DbPlus72_2 => 722,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ReshapeFilter {
+    Bypass,
+    /// RSFLTD=0: decimation by four.
+    DecimateBy4,
+}
+
+impl ReshapeFilter {
+    pub const fn decimation(self) -> u16 {
+        match self {
+            Self::Bypass => 1,
+            Self::DecimateBy4 => 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Decimation {
     Auto,
     Ratio(u16),
+}
+
+/// CIC output width for a one-bit PDM input, rounded up to whole bits.
+/// Implements `ceil(N * log2(D)) + DS_IN` from RM0456 with `DS_IN = 1`.
+pub const fn cic_output_bits(filter: SincFilter, decimation: u16) -> u8 {
+    if decimation == 0 {
+        return 0;
+    }
+    let mut gain = 1u64;
+    let mut order = 0;
+    while order < filter.order() {
+        gain *= decimation as u64;
+        order += 1;
+    }
+    let ceil_log2 = if gain <= 1 {
+        0
+    } else {
+        (u64::BITS - (gain - 1).leading_zeros()) as u8
+    };
+    ceil_log2 + 1
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,19 +252,79 @@ pub struct MicrophoneConfig {
     pub high_pass_filter: bool,
     pub sinc_filter: SincFilter,
     pub decimation: Decimation,
+    pub cic_scale: CicScale,
+    pub reshape_filter: ReshapeFilter,
+}
+
+/// Selectable, internally consistent examples derived from RM0456 table 384.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MicrophonePreset {
+    Table384Config1_8Khz,
+    Table384Config2_16Khz,
+    Table384Config3_8Khz,
+    Table384Config7_16Khz,
+    Table384Config8_16Khz,
+}
+
+impl MicrophoneConfig {
+    pub const fn from_preset(preset: MicrophonePreset) -> Self {
+        let (sample_rate, sinc_filter, decimation, cic_scale, reshape_filter) = match preset {
+            MicrophonePreset::Table384Config1_8Khz => (
+                SampleRate::Hz8000,
+                SincFilter::Sinc4,
+                Decimation::Ratio(64),
+                CicScale::DbMinus8_5,
+                ReshapeFilter::Bypass,
+            ),
+            MicrophonePreset::Table384Config2_16Khz => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(32),
+                CicScale::DbMinus14_5,
+                ReshapeFilter::Bypass,
+            ),
+            MicrophonePreset::Table384Config3_8Khz => (
+                SampleRate::Hz8000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(16),
+                CicScale::DbPlus3_5,
+                ReshapeFilter::DecimateBy4,
+            ),
+            MicrophonePreset::Table384Config7_16Khz => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(24),
+                CicScale::DbMinus12_0,
+                ReshapeFilter::DecimateBy4,
+            ),
+            MicrophonePreset::Table384Config8_16Khz => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(32),
+                CicScale::DbMinus26_6,
+                ReshapeFilter::DecimateBy4,
+            ),
+        };
+        Self {
+            mode: MicrophoneMode::Hexaphonic,
+            sample_rate,
+            bit_depth: BitDepth::Bits24,
+            sample_packing: SamplePacking::Bits32,
+            high_pass_filter: true,
+            sinc_filter,
+            decimation,
+            cic_scale,
+            reshape_filter,
+        }
+    }
 }
 
 impl Default for MicrophoneConfig {
     fn default() -> Self {
-        Self {
-            mode: MicrophoneMode::Hexaphonic,
-            sample_rate: SampleRate::Hz16000,
-            bit_depth: BitDepth::Bits24,
-            sample_packing: SamplePacking::Bits32,
-            high_pass_filter: true,
-            sinc_filter: SincFilter::Sinc5,
-            decimation: Decimation::Auto,
-        }
+        // Config #7 is the closest Table 384 16 kHz setting obtainable from
+        // the board's 80 MHz MDF kernel clock (about 0.16% clock error).
+        Self::from_preset(MicrophonePreset::Table384Config7_16Khz)
     }
 }
 
@@ -118,6 +333,7 @@ impl Default for MicrophoneConfig {
 pub enum Error {
     InvalidBufferSize,
     InvalidDecimation,
+    CicOutputTooWide,
     InvalidSamplePacking,
     MicrophoneClockOutOfRange,
     Dma,
@@ -217,6 +433,24 @@ mod tests {
         assert_eq!(config.bit_depth, BitDepth::Bits24);
         assert_eq!(config.sample_packing, SamplePacking::Bits32);
         assert_eq!(config.sinc_filter, SincFilter::Sinc5);
+        assert_eq!(config.cic_scale, CicScale::DbMinus12_0);
+        assert_eq!(config.reshape_filter, ReshapeFilter::DecimateBy4);
         assert!(config.high_pass_filter);
+    }
+
+    #[test]
+    fn scale_table_has_expected_reference_entries() {
+        assert_eq!(CicScale::DbMinus26_6.bits(), 0x27);
+        assert_eq!(CicScale::DbMinus26_6.gain_tenths_db(), -266);
+        assert_eq!(CicScale::Db0_0.bits(), 0x00);
+        assert_eq!(CicScale::DbPlus72_2.bits(), 0x18);
+    }
+
+    #[test]
+    fn cic_width_matches_table_376_boundaries() {
+        assert_eq!(cic_output_bits(SincFilter::Sinc4, 76), 26);
+        assert_eq!(cic_output_bits(SincFilter::Sinc4, 77), 27);
+        assert_eq!(cic_output_bits(SincFilter::Sinc5, 32), 26);
+        assert_eq!(cic_output_bits(SincFilter::Sinc5, 33), 27);
     }
 }

@@ -12,8 +12,8 @@ use embassy_time::Instant;
 
 use super::stm32_config::*;
 use super::{
-    BitDepth, CaptureState, Decimation, Error, MicrophoneConfig, MicrophoneMode,
-    MicrophoneResources, SamplePacking, SampleRate, SincFilter,
+    cic_output_bits, BitDepth, CaptureState, Decimation, Error, MicrophoneConfig, MicrophoneMode,
+    MicrophoneResources, ReshapeFilter, SamplePacking, SincFilter,
 };
 
 struct InterruptTimestamp {
@@ -105,8 +105,12 @@ pub struct DmaChannels<'d> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ResolvedConfig {
     pub requested: MicrophoneConfig,
+    /// CIC decimation (MCICD + 1), before optional reshape filtering.
     pub decimation: u16,
+    pub total_decimation: u16,
+    pub cic_output_bits: u8,
     pub microphone_clock_hz: u32,
+    pub actual_sample_rate_hz: u32,
     pub clock_divider: u16,
 }
 
@@ -262,18 +266,17 @@ pub fn resolve_config(config: MicrophoneConfig) -> Result<ResolvedConfig, Error>
     }
 
     let decimation = match config.decimation {
-        Decimation::Auto => match config.sample_rate {
-            SampleRate::Hz8000 => 384,
-            SampleRate::Hz16000 => 192,
-            SampleRate::Hz32000 => 96,
-            SampleRate::Hz44100 => 64,
-            SampleRate::Hz96000 => 32,
-        },
+        Decimation::Auto => auto_decimation(config)?,
         Decimation::Ratio(value) if (2..=512).contains(&value) => value,
         Decimation::Ratio(_) => return Err(Error::InvalidDecimation),
     };
+    let output_bits = cic_output_bits(config.sinc_filter, decimation);
+    if decimation > config.sinc_filter.max_pdm_decimation() || output_bits > 26 {
+        return Err(Error::CicOutputTooWide);
+    }
 
-    let wanted_clock = config.sample_rate.hz() * u32::from(decimation);
+    let total_decimation = decimation * config.reshape_filter.decimation();
+    let wanted_clock = config.sample_rate.hz() * u32::from(total_decimation);
     let divider = ((MDF_KERNEL_HZ + wanted_clock) / (wanted_clock * 2)).clamp(1, 256);
     let microphone_clock_hz = MDF_KERNEL_HZ / (2 * divider);
     if !valid_operating_clock(microphone_clock_hz) {
@@ -283,9 +286,27 @@ pub fn resolve_config(config: MicrophoneConfig) -> Result<ResolvedConfig, Error>
     Ok(ResolvedConfig {
         requested: config,
         decimation,
+        total_decimation,
+        cic_output_bits: output_bits,
         microphone_clock_hz,
+        actual_sample_rate_hz: microphone_clock_hz / u32::from(total_decimation),
         clock_divider: divider as u16,
     })
+}
+
+fn auto_decimation(config: MicrophoneConfig) -> Result<u16, Error> {
+    let reshape = u32::from(config.reshape_filter.decimation());
+    let mut decimation = config.sinc_filter.max_pdm_decimation();
+    while decimation >= 2 {
+        let wanted = config.sample_rate.hz() * u32::from(decimation) * reshape;
+        let divider = ((MDF_KERNEL_HZ + wanted) / (wanted * 2)).clamp(1, 256);
+        let clock = MDF_KERNEL_HZ / (2 * divider);
+        if valid_operating_clock(clock) {
+            return Ok(decimation);
+        }
+        decimation -= 1;
+    }
+    Err(Error::MicrophoneClockOutOfRange)
 }
 
 fn valid_operating_clock(hz: u32) -> bool {
@@ -346,10 +367,19 @@ fn configure_mdf(config: ResolvedConfig) {
     };
     for index in 0..config.requested.mode.channel_count() {
         write(register(MDF_BSMXCR0, index), BITSTREAM_SELECTS[index]);
-        let cic = mode << 4 | (u32::from(config.decimation) - 1) << 8 | 0x27 << 20;
+        let scale = u32::from(config.requested.cic_scale.bits());
+        let cic = mode << 4 | (u32::from(config.decimation) - 1) << 8 | scale << 20;
         write(register(MDF_DFLTCICR0, index), cic);
         let hpf_bypass = u32::from(!config.requested.high_pass_filter);
-        write(register(MDF_DFLTRSFR0, index), (1 << 0) | (hpf_bypass << 7));
+        let reshape_bypass = u32::from(matches!(
+            config.requested.reshape_filter,
+            ReshapeFilter::Bypass
+        ));
+        // RSFLTD=0 selects /4 when the reshape filter is enabled.
+        write(
+            register(MDF_DFLTRSFR0, index),
+            reshape_bypass | (hpf_bypass << 7),
+        );
     }
 }
 
@@ -370,6 +400,7 @@ fn write(offset: usize, value: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mic_array::{MicrophonePreset, SampleRate};
 
     #[test]
     fn all_preset_rates_resolve_to_valid_microphone_clocks() {
@@ -382,10 +413,46 @@ mod tests {
         ] {
             let resolved = resolve_config(MicrophoneConfig {
                 sample_rate: rate,
+                decimation: Decimation::Auto,
                 ..MicrophoneConfig::default()
             })
             .unwrap();
             assert!(valid_operating_clock(resolved.microphone_clock_hz));
+        }
+    }
+
+    #[test]
+    fn table_376_limits_are_enforced() {
+        for (filter, maximum) in [(SincFilter::Sinc4, 76), (SincFilter::Sinc5, 32)] {
+            let valid = resolve_config(MicrophoneConfig {
+                sinc_filter: filter,
+                decimation: Decimation::Ratio(maximum),
+                reshape_filter: ReshapeFilter::Bypass,
+                sample_rate: SampleRate::Hz16000,
+                ..MicrophoneConfig::default()
+            });
+            assert!(valid.is_ok());
+            assert_eq!(cic_output_bits(filter, maximum), 26);
+
+            let invalid = resolve_config(MicrophoneConfig {
+                sinc_filter: filter,
+                decimation: Decimation::Ratio(maximum + 1),
+                ..MicrophoneConfig::default()
+            });
+            assert_eq!(invalid, Err(Error::CicOutputTooWide));
+        }
+    }
+
+    #[test]
+    fn selected_table_384_presets_resolve() {
+        for preset in [
+            MicrophonePreset::Table384Config1_8Khz,
+            MicrophonePreset::Table384Config2_16Khz,
+            MicrophonePreset::Table384Config3_8Khz,
+            MicrophonePreset::Table384Config7_16Khz,
+            MicrophonePreset::Table384Config8_16Khz,
+        ] {
+            assert!(resolve_config(MicrophoneConfig::from_preset(preset)).is_ok());
         }
     }
 }

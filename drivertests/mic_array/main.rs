@@ -14,10 +14,13 @@ use raylar_board_v1p0::{Board, PdmMicArray, PdmMicDma};
 use raylar_drivers::mic_array::stm32::{
     Dma0TimestampHandler, Dma5TimestampHandler, DmaChannels, Pins, Stm32MicrophoneDriver,
 };
-use raylar_drivers::mic_array::{MicrophoneConfig, MicrophoneResources};
+use raylar_drivers::mic_array::{MicrophoneConfig, MicrophonePreset, MicrophoneResources};
 use {defmt_rtt as _, panic_probe as _};
 
-const SAMPLE_RATE: usize = 16_000;
+// Change this one constant to exercise another RM0456 table 384 configuration.
+const TEST_PRESET: MicrophonePreset = MicrophonePreset::Table384Config7_16Khz;
+const TEST_CONFIG: MicrophoneConfig = MicrophoneConfig::from_preset(TEST_PRESET);
+const SAMPLE_RATE: usize = TEST_CONFIG.sample_rate.hz() as usize;
 const HALF_MS: usize = 100;
 const HALF_SAMPLES: usize = SAMPLE_RATE * HALF_MS / 1_000;
 const DMA_BUFFER_SAMPLES: usize = HALF_SAMPLES * 2;
@@ -96,12 +99,20 @@ async fn main(spawner: Spawner) -> ! {
             ch5: Channel::new(ch5, MicIrqs),
         },
         &MICROPHONES,
-        MicrophoneConfig::default(),
+        TEST_CONFIG,
     ));
     let resolved = driver.resolved_config();
     info!(
-        "Microphone driver test: clock={}Hz decimation={} buffer={} samples",
-        resolved.microphone_clock_hz, resolved.decimation, DMA_BUFFER_SAMPLES
+        "Microphone driver test: preset={} clock={}Hz actual_rate={}Hz cic_decimation={} total_decimation={} cic_bits={} scale=0x{:x} gain_tenths_db={} buffer={} samples",
+        TEST_PRESET,
+        resolved.microphone_clock_hz,
+        resolved.actual_sample_rate_hz,
+        resolved.decimation,
+        resolved.total_decimation,
+        resolved.cic_output_bits,
+        resolved.requested.cic_scale.bits(),
+        resolved.requested.cic_scale.gain_tenths_db(),
+        DMA_BUFFER_SAMPLES
     );
 
     spawner.spawn(unwrap!(capture_task(driver)));
