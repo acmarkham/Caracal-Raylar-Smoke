@@ -1,5 +1,5 @@
 use aligned::Aligned;
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{string::String, vec::Vec};
 
 use super::{
     BlockDevice, bisync, boot_sector::VolumeFlags, error::ExFatError, file_system::ExFatResult,
@@ -64,12 +64,44 @@ pub(crate) fn calc_hash_u16(utf16_file_name: &[u16]) -> u16 {
 
     for byte in utf16_file_name
         .iter()
-        .flat_map(|x| vec![(x & 0xFF) as u8, (x >> 8) as u8])
+        .flat_map(|x| [(x & 0xFF) as u8, (x >> 8) as u8])
     {
-        hash = if hash & 1 > 0 { 0x8000 } else { 0 } + hash.wrapping_shr(1) + byte as u16;
+        // exFAT specifies a 16-bit rotate followed by modulo-2^16 addition.
+        hash = hash.rotate_right(1).wrapping_add(u16::from(byte));
     }
 
     hash
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec::Vec;
+
+    use super::calc_hash_u16;
+
+    fn reference_name_hash(name: &[u16]) -> u16 {
+        name.iter()
+            .flat_map(|code_unit| code_unit.to_le_bytes())
+            .fold(0u16, |hash, byte| {
+                hash.rotate_right(1).wrapping_add(u16::from(byte))
+            })
+    }
+
+    #[test]
+    fn name_hash_wraps_instead_of_overflowing() {
+        // Repeated high bytes force the 16-bit addition to wrap. The old
+        // implementation panicked here in debug builds.
+        let name = [u16::MAX; 255];
+
+        assert_eq!(calc_hash_u16(&name), reference_name_hash(&name));
+    }
+
+    #[test]
+    fn name_hash_matches_known_exfat_value() {
+        let name: Vec<u16> = "20260727_154000.WAV".encode_utf16().collect();
+
+        assert_eq!(calc_hash_u16(&name), 0x0c2f);
+    }
 }
 
 pub(crate) fn _decode_utf16<D, const SIZE: usize>(buf: Vec<u16>) -> ExFatResult<String, D, SIZE>
