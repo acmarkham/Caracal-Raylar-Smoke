@@ -268,6 +268,9 @@ pub enum MicrophonePreset {
     /// Exact 16 kHz from the board's 80 MHz MDF kernel clock:
     /// 80 MHz / (2 * CCKDIV 25) / (CIC 25 * reshape 4).
     Hse16MhzHclk80Exact16Khz,
+    /// Hardware-validated reference from `unitsmoke/20_pdm_mic_all_dma`:
+    /// 80 MHz / (2 * CCKDIV 13) / CIC 192 = approximately 16.026 kHz.
+    ReferenceSinc4_16Khz,
 }
 
 impl MicrophoneConfig {
@@ -314,6 +317,13 @@ impl MicrophoneConfig {
                 Decimation::Ratio(25),
                 CicScale::DbMinus12_0,
                 ReshapeFilter::DecimateBy4,
+            ),
+            MicrophonePreset::ReferenceSinc4_16Khz => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc4,
+                Decimation::Ratio(192),
+                CicScale::DbMinus26_6,
+                ReshapeFilter::Bypass,
             ),
         };
         Self {

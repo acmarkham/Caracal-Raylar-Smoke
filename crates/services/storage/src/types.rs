@@ -38,6 +38,15 @@ impl StreamHandle {
 pub enum AppendOutcome {
     Written,
     DroppedUtcUnavailable,
+    /// The client-managed stream must be finalised and explicitly rotated
+    /// before these bytes can be appended.
+    RotationRequired,
+}
+
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamLifecycleEvent {
+    RotateRequested,
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -109,10 +118,11 @@ pub(crate) struct StreamSlot<const BLOCK_SIZE: usize> {
     pub path: heapless::String<PATH_CAPACITY>,
     pub pending: [u8; BLOCK_SIZE],
     pub pending_len: usize,
+    pub client_managed_rotation: bool,
 }
 
 impl<const BLOCK_SIZE: usize> StreamSlot<BLOCK_SIZE> {
-    pub fn new(kind: StreamType, generation: u8) -> Self {
+    pub fn new(kind: StreamType, generation: u8, client_managed_rotation: bool) -> Self {
         Self {
             kind,
             generation,
@@ -122,6 +132,7 @@ impl<const BLOCK_SIZE: usize> StreamSlot<BLOCK_SIZE> {
             path: heapless::String::new(),
             pending: [0; BLOCK_SIZE],
             pending_len: 0,
+            client_managed_rotation,
         }
     }
 }

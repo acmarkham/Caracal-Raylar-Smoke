@@ -312,6 +312,23 @@ impl<const CAPACITY: usize, const READERS: usize> Reader<'_, CAPACITY, READERS> 
         })
     }
 
+    /// Move this reader to the producer's current position.
+    ///
+    /// Samples produced while a consumer performs asynchronous session setup
+    /// are intentionally skipped and are not reported as an overrun.
+    pub fn seek_to_latest(&mut self) {
+        self.source.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            let write_position = state.write_position;
+            let reader = &mut state.readers[self.slot];
+            reader.cursor = write_position;
+            reader.overrun_count = 0;
+            reader.dropped_samples = 0;
+            reader.pending_overruns = 0;
+            reader.pending_dropped = 0;
+        });
+    }
+
     /// Inspect and consume samples without copying.
     ///
     /// The callback returns how many samples it consumed. The value is clamped
@@ -459,5 +476,21 @@ mod tests {
     fn invalid_alignment_is_rejected() {
         let source = AudioSource::<8, 1>::new(FORMAT);
         assert_eq!(source.write(&[1], 0), Err(Error::UnalignedSamples));
+    }
+
+    #[test]
+    fn seeking_to_latest_starts_a_clean_session() {
+        let source = AudioSource::<8, 1>::new(FORMAT);
+        let mut reader = source.register(ReaderStart::Latest).unwrap();
+        source.write(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0).unwrap();
+
+        reader.seek_to_latest();
+        assert_eq!(reader.stats().available_samples, 0);
+        assert_eq!(reader.stats().overrun_count, 0);
+        assert_eq!(reader.stats().dropped_samples, 0);
+        source.write(&[11, 12], 625).unwrap();
+        let status = reader.read(2, |_| 2).unwrap();
+        assert_eq!(status.dropped_since_last_read, 0);
+        assert_eq!(status.overruns_since_last_read, 0);
     }
 }

@@ -22,7 +22,7 @@ use {defmt_rtt as _, panic_probe as _};
 
 const CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: MicrophoneMode::Mono,
-    ..MicrophoneConfig::from_preset(MicrophonePreset::Hse16MhzHclk80Exact16Khz)
+    ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc4_16Khz)
 };
 // Prevent the source format from diverging from the microphone mode.
 const CHANNELS: usize = CONFIG.mode.channel_count();

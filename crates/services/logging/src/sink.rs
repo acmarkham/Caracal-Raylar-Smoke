@@ -60,7 +60,9 @@ where
             .map_err(StorageLogSinkError::Storage)?
         {
             AppendOutcome::Written => Ok(()),
-            AppendOutcome::DroppedUtcUnavailable => Err(StorageLogSinkError::NotWritten),
+            AppendOutcome::DroppedUtcUnavailable | AppendOutcome::RotationRequired => {
+                Err(StorageLogSinkError::NotWritten)
+            }
         }
     }
 

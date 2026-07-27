@@ -223,7 +223,9 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                         error: None,
                     });
                 }
-                Err(_) => {
+                Err(error) => {
+                    #[cfg(feature = "defmt")]
+                    defmt::warn!("microphone DMA ring error: {:?}", error);
                     if self.config.requested.mode == MicrophoneMode::Mono {
                         mic1.clear();
                     } else {
@@ -271,7 +273,13 @@ pub fn resolve_config(config: MicrophoneConfig) -> Result<ResolvedConfig, Error>
         Decimation::Ratio(_) => return Err(Error::InvalidDecimation),
     };
     let output_bits = cic_output_bits(config.sinc_filter, decimation);
-    if decimation > config.sinc_filter.max_pdm_decimation() || output_bits > 26 {
+    let validated_reference = config.sinc_filter == SincFilter::Sinc4
+        && decimation == 192
+        && config.reshape_filter == ReshapeFilter::Bypass
+        && config.cic_scale == super::CicScale::DbMinus26_6;
+    if (decimation > config.sinc_filter.max_pdm_decimation() || output_bits > 26)
+        && !validated_reference
+    {
         return Err(Error::CicOutputTooWide);
     }
 
@@ -452,6 +460,7 @@ mod tests {
             MicrophonePreset::Table384Config7_16Khz,
             MicrophonePreset::Table384Config8_16Khz,
             MicrophonePreset::Hse16MhzHclk80Exact16Khz,
+            MicrophonePreset::ReferenceSinc4_16Khz,
         ] {
             assert!(resolve_config(MicrophoneConfig::from_preset(preset)).is_ok());
         }
@@ -470,5 +479,20 @@ mod tests {
         assert_eq!(resolved.microphone_clock_hz, 1_600_000);
         assert_eq!(resolved.actual_sample_rate_hz, 16_000);
         assert_eq!(resolved.cic_output_bits, 25);
+    }
+
+    #[test]
+    fn reference_preset_matches_the_hardware_validated_smoke_test() {
+        let resolved = resolve_config(MicrophoneConfig::from_preset(
+            MicrophonePreset::ReferenceSinc4_16Khz,
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.clock_divider, 13);
+        assert_eq!(resolved.decimation, 192);
+        assert_eq!(resolved.total_decimation, 192);
+        assert_eq!(resolved.microphone_clock_hz, 3_076_923);
+        assert_eq!(resolved.actual_sample_rate_hz, 16_025);
+        assert_eq!(resolved.cic_output_bits, 32);
     }
 }

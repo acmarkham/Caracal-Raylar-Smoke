@@ -4,7 +4,8 @@ use raylar_time_service::{TimeResources, UtcTimestamp};
 use crate::backend::StorageBackend;
 use crate::policy::{file_policy, folder_path};
 use crate::types::{
-    AppendOutcome, StorageConfig, StorageServiceError, StreamHandle, StreamSlot, StreamType,
+    AppendOutcome, StorageConfig, StorageServiceError, StreamHandle, StreamLifecycleEvent,
+    StreamSlot, StreamType,
 };
 
 pub const DEFAULT_MAX_STREAMS: usize = 4;
@@ -68,6 +69,22 @@ where
         &mut self,
         kind: StreamType,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.create_stream_with_rotation(kind, false).await
+    }
+
+    /// Create a stream whose client finalises content before file rotation.
+    pub async fn create_client_managed_stream(
+        &mut self,
+        kind: StreamType,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.create_stream_with_rotation(kind, true).await
+    }
+
+    async fn create_stream_with_rotation(
+        &mut self,
+        kind: StreamType,
+        client_managed_rotation: bool,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         if self.slots.iter().flatten().any(|slot| slot.kind == kind) {
             return Err(StorageServiceError::StreamAlreadyOpen);
         }
@@ -78,7 +95,7 @@ where
             .ok_or(StorageServiceError::TooManyStreams)?;
         let generation = self.generations[index].wrapping_add(1);
         self.generations[index] = generation;
-        let mut slot = StreamSlot::new(kind, generation);
+        let mut slot = StreamSlot::new(kind, generation, client_managed_rotation);
 
         match kind {
             StreamType::Log => {
@@ -104,6 +121,46 @@ where
         Ok(StreamHandle::new(index, generation))
     }
 
+    /// Return the latest lifecycle instruction for a client-managed stream.
+    pub fn lifecycle_event(
+        &self,
+        stream: StreamHandle,
+    ) -> Result<Option<StreamLifecycleEvent>, StorageServiceError<B::Error>> {
+        let index = self.validate(stream)?;
+        let slot = self.slots[index]
+            .as_ref()
+            .ok_or(StorageServiceError::InvalidStream)?;
+        if !slot.client_managed_rotation {
+            return Ok(None);
+        }
+        let Some(now) = self.clock.current_utc() else {
+            return Ok(None);
+        };
+        Ok(needs_rollover(slot, now.seconds).then_some(StreamLifecycleEvent::RotateRequested))
+    }
+
+    /// Perform a previously requested client-managed rotation.
+    pub async fn rotate(
+        &mut self,
+        stream: StreamHandle,
+    ) -> Result<bool, StorageServiceError<B::Error>> {
+        let index = self.validate(stream)?;
+        let timestamp = self
+            .clock
+            .current_utc()
+            .ok_or(StorageServiceError::InvalidTimestamp)?
+            .seconds;
+        let slot = self.slots[index]
+            .as_mut()
+            .ok_or(StorageServiceError::InvalidStream)?;
+        if !slot.client_managed_rotation || !needs_rollover(slot, timestamp) {
+            return Ok(false);
+        }
+        close_slot_file(&mut self.backend, slot).await?;
+        open_rolling_file(&mut self.backend, self.config, slot, timestamp, false).await?;
+        Ok(true)
+    }
+
     pub async fn append(
         &mut self,
         stream: StreamHandle,
@@ -127,12 +184,14 @@ where
             .ok_or(StorageServiceError::InvalidStream)?;
         if let Some(timestamp) = now {
             let needs_open = slot.file.is_none();
-            let needs_rollover = slot.rollover_at.is_some_and(|at| timestamp >= at)
-                || slot.file_start.is_some_and(|start| timestamp < start);
-            if needs_rollover {
+            let rotate = needs_rollover(slot, timestamp);
+            if rotate && slot.client_managed_rotation {
+                return Ok(AppendOutcome::RotationRequired);
+            }
+            if rotate {
                 close_slot_file(&mut self.backend, slot).await?;
             }
-            if needs_open || needs_rollover {
+            if needs_open || rotate {
                 open_rolling_file(&mut self.backend, self.config, slot, timestamp, needs_open)
                     .await?;
             }
@@ -202,6 +261,11 @@ where
         }
         Ok(index)
     }
+}
+
+fn needs_rollover<const BLOCK_SIZE: usize>(slot: &StreamSlot<BLOCK_SIZE>, timestamp: i64) -> bool {
+    slot.rollover_at.is_some_and(|at| timestamp >= at)
+        || slot.file_start.is_some_and(|start| timestamp < start)
 }
 
 async fn open_rolling_file<B, const BLOCK_SIZE: usize>(
