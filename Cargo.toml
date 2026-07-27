@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/drivers",
+    "crates/metadrivers/audiosource",
     "crates/board/raylar_v1p0",
     "crates/services/time",
     "crates/services/storage",
@@ -12,6 +13,7 @@ members = [
     "drivertests/voltagemonitor",
     "drivertests/storage",
     "drivertests/mic_array",
+    "metadrivertests/audiosource",
     "servicetests/time",
     "servicetests/storage",
     "servicetests/logging",
