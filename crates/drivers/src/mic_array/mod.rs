@@ -265,6 +265,9 @@ pub enum MicrophonePreset {
     Table384Config3_8Khz,
     Table384Config7_16Khz,
     Table384Config8_16Khz,
+    /// Exact 16 kHz from the board's 80 MHz MDF kernel clock:
+    /// 80 MHz / (2 * CCKDIV 25) / (CIC 25 * reshape 4).
+    Hse16MhzHclk80Exact16Khz,
 }
 
 impl MicrophoneConfig {
@@ -303,6 +306,13 @@ impl MicrophoneConfig {
                 SincFilter::Sinc5,
                 Decimation::Ratio(32),
                 CicScale::DbMinus26_6,
+                ReshapeFilter::DecimateBy4,
+            ),
+            MicrophonePreset::Hse16MhzHclk80Exact16Khz => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(25),
+                CicScale::DbMinus12_0,
                 ReshapeFilter::DecimateBy4,
             ),
         };

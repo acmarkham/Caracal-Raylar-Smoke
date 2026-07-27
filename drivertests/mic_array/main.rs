@@ -18,7 +18,7 @@ use raylar_drivers::mic_array::{MicrophoneConfig, MicrophonePreset, MicrophoneRe
 use {defmt_rtt as _, panic_probe as _};
 
 // Change this one constant to exercise another RM0456 table 384 configuration.
-const TEST_PRESET: MicrophonePreset = MicrophonePreset::Table384Config7_16Khz;
+const TEST_PRESET: MicrophonePreset = MicrophonePreset::Hse16MhzHclk80Exact16Khz;
 const TEST_CONFIG: MicrophoneConfig = MicrophoneConfig::from_preset(TEST_PRESET);
 const SAMPLE_RATE: usize = TEST_CONFIG.sample_rate.hz() as usize;
 const HALF_MS: usize = 100;

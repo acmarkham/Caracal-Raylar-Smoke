@@ -451,8 +451,24 @@ mod tests {
             MicrophonePreset::Table384Config3_8Khz,
             MicrophonePreset::Table384Config7_16Khz,
             MicrophonePreset::Table384Config8_16Khz,
+            MicrophonePreset::Hse16MhzHclk80Exact16Khz,
         ] {
             assert!(resolve_config(MicrophoneConfig::from_preset(preset)).is_ok());
         }
+    }
+
+    #[test]
+    fn hse_derived_80mhz_preset_is_exactly_16khz() {
+        let resolved = resolve_config(MicrophoneConfig::from_preset(
+            MicrophonePreset::Hse16MhzHclk80Exact16Khz,
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.clock_divider, 25);
+        assert_eq!(resolved.decimation, 25);
+        assert_eq!(resolved.total_decimation, 100);
+        assert_eq!(resolved.microphone_clock_hz, 1_600_000);
+        assert_eq!(resolved.actual_sample_rate_hz, 16_000);
+        assert_eq!(resolved.cic_output_bits, 25);
     }
 }
