@@ -11,15 +11,18 @@ mod common;
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::dma::Channel;
+use embassy_stm32::gpio::Output;
 use embassy_stm32::rcc::mux::Sdmmcsel;
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::{bind_interrupts, peripherals};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::channel::Channel as SyncChannel;
 use embassy_time::{Timer, TICK_HZ};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_audio_recorder_service::{AudioRecorder, AudioRecorderConfig, TimeMetadataSource};
 use raylar_audiosource::{AudioFormat, AudioSource};
-use raylar_board_v1p0::{Board, PdmMicArray, PdmMicDma};
+use raylar_board_v1p0::{Board, Leds, PdmMicArray, PdmMicDma};
 use raylar_drivers::mic_array::stm32::{
     Dma0TimestampHandler, Dma5TimestampHandler, DmaChannels, Pins, Stm32MicrophoneDriver,
 };
@@ -47,6 +50,7 @@ static HEAP: Heap = Heap::empty();
 static MICROPHONES: MicrophoneResources<DMA_SAMPLES> = MicrophoneResources::new();
 static AUDIO: AudioSource<AUDIO_CAPACITY, 2> =
     AudioSource::new(AudioFormat::new(16_000, CHANNELS as u8, 1_000_000));
+static SD_WRITE_FLASHES: SyncChannel<CriticalSectionRawMutex, (), 4> = SyncChannel::new();
 
 type Driver = Stm32MicrophoneDriver<'static, DMA_SAMPLES>;
 
@@ -69,8 +73,15 @@ async fn main(spawner: Spawner) -> ! {
         gps,
         sd,
         pdm_mic_array,
+        leds,
         ..
     } = board;
+    let Leds {
+        sys_main_green,
+        sys_sd_blue,
+        mut sys_main_red,
+        ..
+    } = leds;
     let storage_driver = common::storage_driver(sd).await;
     let storage_config = StorageConfig {
         audio: RollingPolicy {
@@ -102,7 +113,8 @@ async fn main(spawner: Spawner) -> ! {
         resolved.microphone_clock_hz,
         resolved.total_decimation,
     );
-    spawner.spawn(unwrap!(audio_forwarder()));
+    spawner.spawn(unwrap!(sd_write_led(sys_sd_blue)));
+    spawner.spawn(unwrap!(audio_forwarder(sys_main_green)));
     spawner.spawn(unwrap!(capture(driver)));
 
     let metadata = TimeMetadataSource::new(&common::TIME_RESOURCES);
@@ -117,7 +129,9 @@ async fn main(spawner: Spawner) -> ! {
     loop {
         match recorder.record_next().await {
             Ok(progress) => {
+                SD_WRITE_FLASHES.send(()).await;
                 if progress.rotated {
+                    sys_main_red.toggle();
                     info!("audio file rotated");
                 }
                 if progress.dropped_samples != 0 {
@@ -198,7 +212,7 @@ async fn capture(driver: Driver) -> ! {
 }
 
 #[embassy_executor::task]
-async fn audio_forwarder() -> ! {
+async fn audio_forwarder(mut dma_led: Output<'static>) -> ! {
     let mut frames = unwrap!(MICROPHONES.frame_receiver());
     let mut last_sequence = 0;
     let mut rate_sequence = 0;
@@ -213,6 +227,7 @@ async fn audio_forwarder() -> ! {
             continue;
         }
         last_sequence = state.sequence;
+        dma_led.toggle();
         if rate_sequence == 0 {
             rate_sequence = state.sequence;
             rate_ticks = state.completed_at_ticks;
@@ -238,5 +253,15 @@ async fn audio_forwarder() -> ! {
             state.completed_at_ticks,
             |index| (channel[index] as i32) >> 8,
         ));
+    }
+}
+
+#[embassy_executor::task]
+async fn sd_write_led(mut led: Output<'static>) -> ! {
+    loop {
+        SD_WRITE_FLASHES.receive().await;
+        led.set_high();
+        Timer::after_millis(25).await;
+        led.set_low();
     }
 }
