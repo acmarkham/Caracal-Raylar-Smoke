@@ -12,8 +12,8 @@ use embassy_time::Instant;
 
 use super::stm32_config::*;
 use super::{
-    cic_output_bits, BitDepth, CaptureState, Decimation, Error, MicrophoneConfig, MicrophoneMode,
-    MicrophoneResources, ReshapeFilter, SamplePacking, SincFilter,
+    cic_output_bits, BitDepth, CaptureState, Decimation, Error, MdfKernelClock, MicrophoneConfig,
+    MicrophoneMode, MicrophoneResources, ReshapeFilter, SamplePacking, SincFilter,
 };
 
 struct InterruptTimestamp {
@@ -273,20 +273,30 @@ pub fn resolve_config(config: MicrophoneConfig) -> Result<ResolvedConfig, Error>
         Decimation::Ratio(_) => return Err(Error::InvalidDecimation),
     };
     let output_bits = cic_output_bits(config.sinc_filter, decimation);
+    // These scaled reference configurations deliberately exceed the
+    // conservative unscaled 26-bit CIC-width limit. Their -26.6 dB CIC scale
+    // brings the value presented to the remaining filter stages back in range.
     let validated_reference = config.sinc_filter == SincFilter::Sinc4
         && decimation == 192
         && config.reshape_filter == ReshapeFilter::Bypass
         && config.cic_scale == super::CicScale::DbMinus26_6;
+    let validated_hiperf_reference = config.kernel_clock == MdfKernelClock::Pll3Q96Mhz
+        && config.sinc_filter == SincFilter::Sinc5
+        && decimation == 50
+        && config.reshape_filter == ReshapeFilter::DecimateBy4
+        && config.cic_scale == super::CicScale::DbMinus26_6;
     if (decimation > config.sinc_filter.max_pdm_decimation() || output_bits > 26)
         && !validated_reference
+        && !validated_hiperf_reference
     {
         return Err(Error::CicOutputTooWide);
     }
 
     let total_decimation = decimation * config.reshape_filter.decimation();
     let wanted_clock = config.sample_rate.hz() * u32::from(total_decimation);
-    let divider = ((MDF_KERNEL_HZ + wanted_clock) / (wanted_clock * 2)).clamp(1, 256);
-    let microphone_clock_hz = MDF_KERNEL_HZ / (2 * divider);
+    let kernel_clock_hz = config.kernel_clock.hz();
+    let divider = ((kernel_clock_hz + wanted_clock) / (wanted_clock * 2)).clamp(1, 256);
+    let microphone_clock_hz = kernel_clock_hz / (2 * divider);
     if !valid_operating_clock(microphone_clock_hz) {
         return Err(Error::MicrophoneClockOutOfRange);
     }
@@ -304,11 +314,12 @@ pub fn resolve_config(config: MicrophoneConfig) -> Result<ResolvedConfig, Error>
 
 fn auto_decimation(config: MicrophoneConfig) -> Result<u16, Error> {
     let reshape = u32::from(config.reshape_filter.decimation());
+    let kernel_clock_hz = config.kernel_clock.hz();
     let mut decimation = config.sinc_filter.max_pdm_decimation();
     while decimation >= 2 {
         let wanted = config.sample_rate.hz() * u32::from(decimation) * reshape;
-        let divider = ((MDF_KERNEL_HZ + wanted) / (wanted * 2)).clamp(1, 256);
-        let clock = MDF_KERNEL_HZ / (2 * divider);
+        let divider = ((kernel_clock_hz + wanted) / (wanted * 2)).clamp(1, 256);
+        let clock = kernel_clock_hz / (2 * divider);
         if valid_operating_clock(clock) {
             return Ok(decimation);
         }
@@ -344,7 +355,11 @@ fn configure_pins(pins: Pins<'_>) {
 
 fn configure_mdf(config: ResolvedConfig) {
     let rcc = pac::RCC;
-    rcc.ccipr2().modify(|w| w.set_mdf1sel(Mdfsel::HCLK1));
+    let kernel_clock = match config.requested.kernel_clock {
+        MdfKernelClock::Hclk80Mhz => Mdfsel::HCLK1,
+        MdfKernelClock::Pll3Q96Mhz => Mdfsel::PLL3_Q,
+    };
+    rcc.ccipr2().modify(|w| w.set_mdf1sel(kernel_clock));
     rcc.ahb1enr().modify(|w| w.set_mdf1en(true));
     rcc.ahb1rstr().modify(|w| w.set_mdf1rst(true));
     rcc.ahb1rstr().modify(|w| w.set_mdf1rst(false));
@@ -461,6 +476,8 @@ mod tests {
             MicrophonePreset::Table384Config8_16Khz,
             MicrophonePreset::Hse16MhzHclk80Exact16Khz,
             MicrophonePreset::ReferenceSinc4_16Khz,
+            MicrophonePreset::ReferenceSinc5_16Khz,
+            MicrophonePreset::ReferenceSinc5_16KhzHiperf,
         ] {
             assert!(resolve_config(MicrophoneConfig::from_preset(preset)).is_ok());
         }
@@ -494,5 +511,48 @@ mod tests {
         assert_eq!(resolved.microphone_clock_hz, 3_076_923);
         assert_eq!(resolved.actual_sample_rate_hz, 16_025);
         assert_eq!(resolved.cic_output_bits, 32);
+    }
+
+    #[test]
+    fn sinc5_reference_preset_uses_reshape_hpf_and_exact_16khz() {
+        let resolved = resolve_config(MicrophoneConfig::from_preset(
+            MicrophonePreset::ReferenceSinc5_16Khz,
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.requested.sinc_filter, SincFilter::Sinc5);
+        assert_eq!(
+            resolved.requested.reshape_filter,
+            ReshapeFilter::DecimateBy4
+        );
+        assert!(resolved.requested.high_pass_filter);
+        assert_eq!(resolved.clock_divider, 25);
+        assert_eq!(resolved.decimation, 25);
+        assert_eq!(resolved.total_decimation, 100);
+        assert_eq!(resolved.microphone_clock_hz, 1_600_000);
+        assert_eq!(resolved.actual_sample_rate_hz, 16_000);
+        assert_eq!(resolved.cic_output_bits, 25);
+    }
+
+    #[test]
+    fn sinc5_hiperf_preset_uses_3p2mhz_clock_and_exact_16khz() {
+        let resolved = resolve_config(MicrophoneConfig::from_preset(
+            MicrophonePreset::ReferenceSinc5_16KhzHiperf,
+        ))
+        .unwrap();
+
+        assert_eq!(resolved.requested.kernel_clock, MdfKernelClock::Pll3Q96Mhz);
+        assert_eq!(resolved.requested.sinc_filter, SincFilter::Sinc5);
+        assert_eq!(
+            resolved.requested.reshape_filter,
+            ReshapeFilter::DecimateBy4
+        );
+        assert!(resolved.requested.high_pass_filter);
+        assert_eq!(resolved.clock_divider, 15);
+        assert_eq!(resolved.decimation, 50);
+        assert_eq!(resolved.total_decimation, 200);
+        assert_eq!(resolved.microphone_clock_hz, 3_200_000);
+        assert_eq!(resolved.actual_sample_rate_hz, 16_000);
+        assert_eq!(resolved.cic_output_bits, 30);
     }
 }

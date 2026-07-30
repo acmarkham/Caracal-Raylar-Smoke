@@ -217,6 +217,22 @@ impl ReshapeFilter {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MdfKernelClock {
+    Hclk80Mhz,
+    Pll3Q96Mhz,
+}
+
+impl MdfKernelClock {
+    pub const fn hz(self) -> u32 {
+        match self {
+            Self::Hclk80Mhz => 80_000_000,
+            Self::Pll3Q96Mhz => 96_000_000,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Decimation {
     Auto,
     Ratio(u16),
@@ -254,6 +270,7 @@ pub struct MicrophoneConfig {
     pub decimation: Decimation,
     pub cic_scale: CicScale,
     pub reshape_filter: ReshapeFilter,
+    pub kernel_clock: MdfKernelClock,
 }
 
 /// Selectable, internally consistent examples derived from RM0456 table 384.
@@ -271,10 +288,20 @@ pub enum MicrophonePreset {
     /// Hardware-validated reference from `unitsmoke/20_pdm_mic_all_dma`:
     /// 80 MHz / (2 * CCKDIV 13) / CIC 192 = approximately 16.026 kHz.
     ReferenceSinc4_16Khz,
+    /// Exact 16 kHz SINC5 reference with the reshape filter and HPF enabled:
+    /// 80 MHz / (2 * CCKDIV 25) / (CIC 25 * reshape 4).
+    ReferenceSinc5_16Khz,
+    /// Exact 16 kHz high-performance SINC5 reference. Requires PLL3-Q at
+    /// 96 MHz: 96 MHz / (2 * CCKDIV 15) / (CIC 50 * reshape 4) = 16 kHz.
+    ReferenceSinc5_16KhzHiperf,
 }
 
 impl MicrophoneConfig {
     pub const fn from_preset(preset: MicrophonePreset) -> Self {
+        let kernel_clock = match preset {
+            MicrophonePreset::ReferenceSinc5_16KhzHiperf => MdfKernelClock::Pll3Q96Mhz,
+            _ => MdfKernelClock::Hclk80Mhz,
+        };
         let (sample_rate, sinc_filter, decimation, cic_scale, reshape_filter) = match preset {
             MicrophonePreset::Table384Config1_8Khz => (
                 SampleRate::Hz8000,
@@ -325,6 +352,20 @@ impl MicrophoneConfig {
                 CicScale::DbMinus26_6,
                 ReshapeFilter::Bypass,
             ),
+            MicrophonePreset::ReferenceSinc5_16Khz => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(25),
+                CicScale::DbMinus12_0,
+                ReshapeFilter::DecimateBy4,
+            ),
+            MicrophonePreset::ReferenceSinc5_16KhzHiperf => (
+                SampleRate::Hz16000,
+                SincFilter::Sinc5,
+                Decimation::Ratio(50),
+                CicScale::DbMinus26_6,
+                ReshapeFilter::DecimateBy4,
+            ),
         };
         Self {
             mode: MicrophoneMode::Hexaphonic,
@@ -336,6 +377,7 @@ impl MicrophoneConfig {
             decimation,
             cic_scale,
             reshape_filter,
+            kernel_clock,
         }
     }
 }
@@ -472,5 +514,30 @@ mod tests {
         assert_eq!(cic_output_bits(SincFilter::Sinc4, 77), 27);
         assert_eq!(cic_output_bits(SincFilter::Sinc5, 32), 26);
         assert_eq!(cic_output_bits(SincFilter::Sinc5, 33), 27);
+    }
+
+    #[test]
+    fn sinc5_reference_preset_is_exactly_16khz() {
+        let config = MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16Khz);
+
+        assert_eq!(config.sample_rate, SampleRate::Hz16000);
+        assert_eq!(config.sinc_filter, SincFilter::Sinc5);
+        assert_eq!(config.decimation, Decimation::Ratio(25));
+        assert_eq!(config.reshape_filter, ReshapeFilter::DecimateBy4);
+        assert!(config.high_pass_filter);
+        assert_eq!(80_000_000 / (2 * 25) / (25 * 4), config.sample_rate.hz());
+    }
+
+    #[test]
+    fn sinc5_hiperf_reference_preset_is_exactly_16khz() {
+        let config = MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf);
+
+        assert_eq!(config.sample_rate, SampleRate::Hz16000);
+        assert_eq!(config.sinc_filter, SincFilter::Sinc5);
+        assert_eq!(config.decimation, Decimation::Ratio(50));
+        assert_eq!(config.reshape_filter, ReshapeFilter::DecimateBy4);
+        assert!(config.high_pass_filter);
+        assert_eq!(config.kernel_clock, MdfKernelClock::Pll3Q96Mhz);
+        assert_eq!(96_000_000 / (2 * 15) / (50 * 4), config.sample_rate.hz());
     }
 }

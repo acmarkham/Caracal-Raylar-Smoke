@@ -15,8 +15,6 @@ pub(super) const FILTERS: [usize; 6] = [0, 1, 2, 3, 4, 5];
 pub(super) const DMA_REQUESTS: [u8; 6] = [92, 93, 94, 95, 96, 97];
 // BS0_R, BS1_R, BS1_F, BS2_R, BS2_F, BS3_R.
 pub(super) const BITSTREAM_SELECTS: [u32; 6] = [0, 2, 3, 4, 5, 6];
-pub(super) const MDF_KERNEL_HZ: u32 = 80_000_000;
-
 pub(super) const fn register(base: usize, filter: usize) -> usize {
     base + filter * MDF_FILTER_STRIDE
 }

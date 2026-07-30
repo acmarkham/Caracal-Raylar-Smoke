@@ -35,7 +35,7 @@ use {defmt_rtt as _, panic_probe as _};
 const HEAP_BYTES: usize = 64 * 1024;
 const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: MicrophoneMode::Mono,
-    ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc4_16Khz)
+    ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf)
 };
 const CHANNELS: usize = MIC_CONFIG.mode.channel_count();
 const SAMPLE_RATE_HZ: usize = 16_000;
@@ -98,11 +98,15 @@ async fn main(spawner: Spawner) -> ! {
     let driver = microphone_driver(pdm_mic_array);
     let resolved = driver.resolved_config();
     info!(
-        "microphone configured: requested={}Hz calculated={}Hz clock={}Hz decimation={}",
+        "microphone configured: requested={}Hz calculated={}Hz clock={}Hz kernel={:?} decimation={} sinc={:?} reshape={:?} hpf={}",
         resolved.requested.sample_rate.hz(),
         resolved.actual_sample_rate_hz,
         resolved.microphone_clock_hz,
+        resolved.requested.kernel_clock,
         resolved.total_decimation,
+        resolved.requested.sinc_filter,
+        resolved.requested.reshape_filter,
+        resolved.requested.high_pass_filter,
     );
     spawner.spawn(unwrap!(sd_write_led(sys_sd_blue)));
     spawner.spawn(unwrap!(audio_forwarder(sys_main_green)));
@@ -195,6 +199,14 @@ fn mcu_config() -> embassy_stm32::Config {
         divp: Some(PllDiv::DIV4),
         divq: Some(PllDiv::DIV2),
         divr: Some(PllDiv::DIV2),
+    });
+    config.rcc.pll3 = Some(Pll {
+        source: PllSource::HSE,
+        prediv: PllPreDiv::DIV1,
+        mul: PllMul::MUL12,
+        divp: None,
+        divq: Some(PllDiv::DIV2),
+        divr: None,
     });
     config.rcc.sys = Sysclk::PLL1_R;
     config.rcc.hsi48 = Some(Hsi48Config::new());
