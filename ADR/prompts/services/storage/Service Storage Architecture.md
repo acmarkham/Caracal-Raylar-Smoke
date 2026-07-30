@@ -13,7 +13,7 @@ Several independent application services require persistent storage:
 * Environmental sensors
 * Future sensor types
 
-These services should not manage filenames, directory structures, file rollover, or recovery after reboot. Those concerns are common across multiple services and belong in a higher-level abstraction.
+These services should not manage filenames, directory structures, filesystem interaction, or recovery after reboot. Producers do own the domain-specific policy that determines when each logical stream begins and ends.
 
 The application exhibits only a small number of storage patterns, and these patterns are stable. The system does not require a highly configurable storage framework.
 
@@ -23,17 +23,29 @@ The application exhibits only a small number of storage patterns, and these patt
 
 Introduce a **Storage Service** that owns the Storage Driver and exposes lightweight append-oriented **streams**.
 
-A stream represents a logical destination for sequential data. The Storage Service manages the lifecycle of the underlying files while clients simply append data.
+A stream represents one complete logical destination for sequential data. Its producer owns its lifetime, while the Storage Service materializes it as a filesystem object.
 
 The Storage Service is responsible for:
 
-* Opening files
-* Closing files
-* File rollover
-* Directory creation
-* Naming files
-* Recovery after reboot
-* Mapping logical streams onto physical files
+* Creating streams
+* Materializing streams as filesystem objects
+* Filename generation
+* Directory hierarchy
+* Filesystem interaction
+* Buffering
+* Flushing
+* Retries
+* Closing streams
+
+The Storage Service is not responsible for:
+
+* Recording duration
+* Stream segmentation
+* Recording policies
+* Media formats
+* Metadata
+
+Storage persists complete logical streams but does not determine their boundaries.
 
 Clients never manipulate filenames directly.
 
@@ -77,23 +89,37 @@ Clients create streams rather than files.
 Conceptually:
 
 ```rust
-let stream = storage.create_stream(StreamType::Audio);
+let stream = storage.begin_stream(
+    StreamKind::Audio,
+    StorageLayout::HourlyFolders,
+);
 ```
 
 The client subsequently performs:
 
 ```rust
-stream.append(...)
+stream.write(...)
 stream.flush()
-stream.close()
+stream.finish()
 ```
 
 The client does **not** know:
 
 * current filename
 * directory structure
-* rollover policy
 * whether a file has been reopened after restart
+
+The producer does know when its logical stream begins and ends.
+
+---
+
+# Storage Layout
+
+Although producers own stream lifetime, Storage owns how streams are represented within the filesystem.
+
+Each `begin_stream` request includes a layout such as `Flat`, `DailyFolders`, `HourlyFolders`, or `MissionFolders`. The selected layout controls directory hierarchy, filename generation, filename uniqueness, and filesystem-specific conventions.
+
+The producer never receives or constructs the resulting path. Filesystem organization can therefore evolve independently of producer lifecycle policy.
 
 ---
 
@@ -115,7 +141,7 @@ Characteristics:
 * Append-only
 * Flush periodically
 * On startup, locate the existing log and continue appending
-* Create a new log only if none exists or rollover policy requires it
+* Continue appending to the restart-safe log for the lifetime selected by the Logging Service
 
 Typical usage:
 
@@ -136,13 +162,13 @@ Continuous audio recording.
 
 Characteristics:
 
-* One WAV file per hour
-* Automatic rollover
+* One logical WAV stream per producer-selected recording interval
+* Producer-owned segmentation
 * Files organised into daily folders
 * File names derived from UTC timestamps
 * Folder names derived from UTC midnight epoch
 * If the system starts, it will commence a file from the top of the minute (e.g. aud_1784016480.wav->Tue Jul 14 2026 08:08:00 GMT+0000) and fill it until it reaches the normal top of the hour mark (e.g. aud_1784019600.wav -> Tue Jul 14 2026 09:00:00 GMT+0000).
-* It should be easy to change the folder interval (e.g. from daily to hourly) and the file rollover interval (e.g. from hourly to minutely) for maximum flexibility
+* The producer can change its recording interval independently of the selected folder layout
 
 Example:
 
@@ -155,9 +181,7 @@ Example:
             aud_1784019600.wav
 ```
 
-The recording service simply appends audio blocks.
-
-The Storage Service performs rollover automatically.
+The recording service appends audio blocks and finishes the stream at an exact sample boundary. It then begins a new stream using the desired storage layout.
 
 ---
 
@@ -242,18 +266,18 @@ Flush (optional)
 
 ↓
 
-Automatic rollover (if required)
+Producer reaches its logical boundary
 
 ↓
 
-Continue appending
+Finish stream
 
 ↓
 
-Close
+Begin the next stream when required
 ```
 
-Clients are unaware of rollover events.
+Storage never sends rollover events. Producers explicitly finish completed streams.
 
 ---
 
@@ -332,35 +356,13 @@ Create if necessary.
 
 ---
 
-# Rollover
+# Stream Lifecycle
 
-The Storage Service owns rollover policy.
+Logical stream boundaries are owned by the producer.
 
-Examples:
+For audio, the Audio Recorder Service determines boundaries using sample count, sample rate and recording policy. At a boundary it finalises the current container, finishes the Storage stream, requests a new stream, and starts the next recording.
 
-Audio:
-
-```text
-14:59:59
-
-↓
-
-15:00:00
-
-↓
-
-Close previous WAV
-
-↓
-
-Open new WAV
-
-↓
-
-Continue recording
-```
-
-The recording service is unaware this occurred. Audio data will be timestamped with local system time (e.g. the start time of the buffer) so that the precise file ending time (with sample level precision, not buffer level precision) can be determined. The recording service will also be responsible for creating wave file headers or any other metadata that is required. Do not implement this yet but expose a thin stub like "make_wavfile_header()" that will later be populated.
+Storage does not request or perform stream rotation. It creates, buffers, flushes and closes the filesystem object corresponding to each producer-owned logical stream.
 
 ---
 
@@ -372,11 +374,11 @@ UTC is required for:
 
 * folder naming
 * filename generation
-* rollover decisions
+* selecting timestamp-derived directory and filename components when a stream begins
 
 Time is expected to come from the system time service, which is disciplined by GPS.
 
-If UTC is unavailable during startup, the Storage Service should define a deterministic fallback behaviour. It should use the system time as an alternative. This will allow low level components that are not time sensitive like logging to initialize and work whilst waiting for UTC to become available. Services like audio which are highly dependent on UTC time will by default just drop streamed data until UTC is valid.
+Flat, restart-safe streams such as the system log do not require UTC and may start immediately. A timestamped stream cannot begin until UTC is available; its producer decides whether to wait, retry, or omit that logical stream.
 
 ---
 
@@ -385,7 +387,7 @@ If UTC is unavailable during startup, the Storage Service should define a determ
 The Storage Driver remains unaware of:
 
 * UTC
-* rollover
+* stream lifecycle
 * folders
 * file naming
 * log semantics
@@ -411,7 +413,7 @@ Provide two small test suites in servicetests/storage that will:
 - Start the GPS driver ('crates/drivers/gps') and time service ('crates/services/time') to provide UTC time
 - Write fake data to logfile every second
 - Write GPS data (which can be listened to from the gps driver) to the PPS file 
-- Write fake audio data at nominal 16kHz 16 bit depth to test rollover. Use hourly folder names and minute long files. Wait until UTC time is valid before starting the audio streaming.
+- Write fake audio data at nominal 16kHz 16 bit depth while the test producer explicitly finishes minute-long streams. Use hourly folder names and wait until UTC time is valid before beginning audio streams.
 
 ---
 
@@ -419,17 +421,20 @@ Provide two small test suites in servicetests/storage that will:
 
 ## Advantages
 
-* Application services become extremely simple.
-* Storage policy is centralised.
+* Sample-accurate recording boundaries are possible.
+* Producers determine stream boundaries using domain-specific knowledge.
+* Storage no longer requires lifecycle callbacks.
+* Filesystem organization remains centralized.
 * Naming conventions remain consistent.
 * Recovery logic exists in one location.
 * Filesystem code remains independent of application semantics.
-* New sensor types require minimal code.
+* Stream lifecycle and filesystem representation are cleanly separated.
+* The Storage API is simpler and more generic.
 
 ## Disadvantages
 
-* The Storage Service becomes responsible for all storage policy.
+* Stream segmentation logic moves into each producer.
+* Producers requiring automatic segmentation must implement their own lifecycle policy.
 * Changes to naming conventions require modifications to the Storage Service.
-* Additional stream archetypes require explicit implementation rather than configuration.
 
-These trade-offs are acceptable because the application has a small number of well-defined storage patterns, and simplicity is preferred over a highly generic storage framework.
+These trade-offs preserve centralized filesystem policy while keeping stream semantics in the producing domain.

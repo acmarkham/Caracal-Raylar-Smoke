@@ -2,11 +2,8 @@ use raylar_drivers::storage::BLOCK_BYTES;
 use raylar_time_service::{TimeResources, UtcTimestamp};
 
 use crate::backend::StorageBackend;
-use crate::policy::{file_policy, folder_path};
-use crate::types::{
-    AppendOutcome, StorageConfig, StorageServiceError, StreamHandle, StreamLifecycleEvent,
-    StreamSlot, StreamType,
-};
+use crate::policy::{folder_path, stream_path};
+use crate::types::{StorageLayout, StorageServiceError, StreamHandle, StreamKind, StreamSlot};
 
 pub const DEFAULT_MAX_STREAMS: usize = 4;
 
@@ -30,9 +27,9 @@ pub struct StorageService<
 > {
     backend: B,
     clock: C,
-    config: StorageConfig,
     slots: [Option<StreamSlot<BLOCK_SIZE>>; MAX_STREAMS],
     generations: [u8; MAX_STREAMS],
+    stream_sequence: u32,
 }
 
 impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize>
@@ -41,20 +38,16 @@ where
     B: StorageBackend<BLOCK_SIZE>,
     C: UtcClock,
 {
-    pub fn new(
-        backend: B,
-        clock: C,
-        config: StorageConfig,
-    ) -> Result<Self, StorageServiceError<B::Error>> {
-        if BLOCK_SIZE == 0 || !config.audio.is_valid() || !config.gps_timing.is_valid() {
+    pub fn new(backend: B, clock: C) -> Result<Self, StorageServiceError<B::Error>> {
+        if BLOCK_SIZE == 0 || MAX_STREAMS == 0 || MAX_STREAMS > usize::from(u8::MAX) + 1 {
             return Err(StorageServiceError::InvalidConfig);
         }
         Ok(Self {
             backend,
             clock,
-            config,
             slots: core::array::from_fn(|_| None),
             generations: [0; MAX_STREAMS],
+            stream_sequence: 0,
         })
     }
 
@@ -65,140 +58,51 @@ where
             .map_err(StorageServiceError::Backend)
     }
 
-    pub async fn create_stream(
+    pub async fn begin_stream(
         &mut self,
-        kind: StreamType,
+        kind: StreamKind,
+        layout: StorageLayout,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.create_stream_with_rotation(kind, false).await
-    }
-
-    /// Create a stream whose client finalises content before file rotation.
-    pub async fn create_client_managed_stream(
-        &mut self,
-        kind: StreamType,
-    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.create_stream_with_rotation(kind, true).await
-    }
-
-    async fn create_stream_with_rotation(
-        &mut self,
-        kind: StreamType,
-        client_managed_rotation: bool,
-    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        if self.slots.iter().flatten().any(|slot| slot.kind == kind) {
-            return Err(StorageServiceError::StreamAlreadyOpen);
-        }
         let index = self
             .slots
             .iter()
             .position(Option::is_none)
             .ok_or(StorageServiceError::TooManyStreams)?;
         let generation = self.generations[index].wrapping_add(1);
-        self.generations[index] = generation;
-        let mut slot = StreamSlot::new(kind, generation, client_managed_rotation);
-
-        match kind {
-            StreamType::Log => {
-                slot.path
-                    .push_str("/syslog.txt")
-                    .map_err(|_| StorageServiceError::InvalidPath)?;
-                slot.file = Some(
-                    self.backend
-                        .open_for_append(slot.path.as_str())
-                        .await
-                        .map_err(StorageServiceError::Backend)?,
-                );
-            }
-            StreamType::Audio | StreamType::GpsTiming => {
-                if let Some(now) = self.clock.current_utc() {
-                    open_rolling_file(&mut self.backend, self.config, &mut slot, now.seconds, true)
-                        .await?;
-                }
-            }
+        let sequence = self.stream_sequence.wrapping_add(1);
+        let timestamp = self.clock.current_utc().map(|now| now.seconds);
+        let path = stream_path(kind, layout, timestamp, sequence)?;
+        if let Some(folder) = folder_path::<B::Error>(path.as_str())? {
+            self.backend
+                .create_directory(folder.as_str())
+                .await
+                .map_err(StorageServiceError::Backend)?;
         }
+        let file = self
+            .backend
+            .open_for_append(path.as_str())
+            .await
+            .map_err(StorageServiceError::Backend)?;
 
+        self.generations[index] = generation;
+        self.stream_sequence = sequence;
+        let mut slot = StreamSlot::new(generation);
+        slot.path = path;
+        slot.file = Some(file);
         self.slots[index] = Some(slot);
         Ok(StreamHandle::new(index, generation))
     }
 
-    /// Return the latest lifecycle instruction for a client-managed stream.
-    pub fn lifecycle_event(
-        &self,
-        stream: StreamHandle,
-    ) -> Result<Option<StreamLifecycleEvent>, StorageServiceError<B::Error>> {
-        let index = self.validate(stream)?;
-        let slot = self.slots[index]
-            .as_ref()
-            .ok_or(StorageServiceError::InvalidStream)?;
-        if !slot.client_managed_rotation {
-            return Ok(None);
-        }
-        let Some(now) = self.clock.current_utc() else {
-            return Ok(None);
-        };
-        Ok(needs_rollover(slot, now.seconds).then_some(StreamLifecycleEvent::RotateRequested))
-    }
-
-    /// Perform a previously requested client-managed rotation.
-    pub async fn rotate(
-        &mut self,
-        stream: StreamHandle,
-    ) -> Result<bool, StorageServiceError<B::Error>> {
-        let index = self.validate(stream)?;
-        let timestamp = self
-            .clock
-            .current_utc()
-            .ok_or(StorageServiceError::InvalidTimestamp)?
-            .seconds;
-        let slot = self.slots[index]
-            .as_mut()
-            .ok_or(StorageServiceError::InvalidStream)?;
-        if !slot.client_managed_rotation || !needs_rollover(slot, timestamp) {
-            return Ok(false);
-        }
-        close_slot_file(&mut self.backend, slot).await?;
-        open_rolling_file(&mut self.backend, self.config, slot, timestamp, false).await?;
-        Ok(true)
-    }
-
-    pub async fn append(
+    pub async fn write(
         &mut self,
         stream: StreamHandle,
         data: &[u8],
-    ) -> Result<AppendOutcome, StorageServiceError<B::Error>> {
+    ) -> Result<(), StorageServiceError<B::Error>> {
         let index = self.validate(stream)?;
-        let kind = self.slots[index]
-            .as_ref()
-            .ok_or(StorageServiceError::InvalidStream)?
-            .kind;
-        let now = match kind {
-            StreamType::Log => None,
-            StreamType::Audio | StreamType::GpsTiming => match self.clock.current_utc() {
-                Some(now) => Some(now.seconds),
-                None => return Ok(AppendOutcome::DroppedUtcUnavailable),
-            },
-        };
-
         let slot = self.slots[index]
             .as_mut()
             .ok_or(StorageServiceError::InvalidStream)?;
-        if let Some(timestamp) = now {
-            let needs_open = slot.file.is_none();
-            let rotate = needs_rollover(slot, timestamp);
-            if rotate && slot.client_managed_rotation {
-                return Ok(AppendOutcome::RotationRequired);
-            }
-            if rotate {
-                close_slot_file(&mut self.backend, slot).await?;
-            }
-            if needs_open || rotate {
-                open_rolling_file(&mut self.backend, self.config, slot, timestamp, needs_open)
-                    .await?;
-            }
-        }
-
-        append_bytes(&mut self.backend, slot, data).await?;
-        Ok(AppendOutcome::Written)
+        append_bytes(&mut self.backend, slot, data).await
     }
 
     pub async fn flush(
@@ -238,7 +142,7 @@ where
         Ok(())
     }
 
-    pub async fn close(
+    pub async fn finish(
         &mut self,
         stream: StreamHandle,
     ) -> Result<(), StorageServiceError<B::Error>> {
@@ -261,43 +165,6 @@ where
         }
         Ok(index)
     }
-}
-
-fn needs_rollover<const BLOCK_SIZE: usize>(slot: &StreamSlot<BLOCK_SIZE>, timestamp: i64) -> bool {
-    slot.rollover_at.is_some_and(|at| timestamp >= at)
-        || slot.file_start.is_some_and(|start| timestamp < start)
-}
-
-async fn open_rolling_file<B, const BLOCK_SIZE: usize>(
-    backend: &mut B,
-    config: StorageConfig,
-    slot: &mut StreamSlot<BLOCK_SIZE>,
-    timestamp: i64,
-    initial_open: bool,
-) -> Result<(), StorageServiceError<B::Error>>
-where
-    B: StorageBackend<BLOCK_SIZE>,
-{
-    let rolling = match slot.kind {
-        StreamType::Audio => config.audio,
-        StreamType::GpsTiming => config.gps_timing,
-        StreamType::Log => return Err(StorageServiceError::InvalidStream),
-    };
-    let policy = file_policy(slot.kind, timestamp, rolling, initial_open)?;
-    let folder = folder_path::<B::Error>(policy.path.as_str())?;
-    backend
-        .create_directory(folder.as_str())
-        .await
-        .map_err(StorageServiceError::Backend)?;
-    let handle = backend
-        .open_for_append(policy.path.as_str())
-        .await
-        .map_err(StorageServiceError::Backend)?;
-    slot.path = policy.path;
-    slot.file = Some(handle);
-    slot.file_start = Some(policy.file_start);
-    slot.rollover_at = Some(policy.rollover_at);
-    Ok(())
 }
 
 async fn append_bytes<B, const BLOCK_SIZE: usize>(

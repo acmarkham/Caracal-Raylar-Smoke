@@ -17,7 +17,7 @@ One such consumer is the Audio Recorder Service, whose responsibility is to pers
 
 The firmware also contains:
 
-* **Storage Service** – manages files, directories, buffering and stream lifecycle.
+* **Storage Service** – manages files, directories, buffering and stream materialisation.
 * **Time Service** – provides UTC time.
 * **Location Service** – provides the latest location estimate.
 * **Logging Service** – system diagnostics.
@@ -70,9 +70,12 @@ The Audio Recorder Service is responsible for:
 * constructing recording headers
 * streaming encoded bytes to Storage
 * finalising recordings
-* responding to Storage lifecycle events
+* determining recording boundaries
+* implementing recording policies
+* starting new streams
+* finalising completed streams
 
-The recorder owns all knowledge relating to audio recording.
+The recorder owns all knowledge relating to audio recording and the logical recording lifecycle.
 
 ---
 
@@ -156,28 +159,72 @@ Storage never interprets this metadata.
 
 # Storage Interface
 
-The recorder interacts with Storage through a generic stream interface.
+Storage exposes a generic stream interface.
 
 Conceptually:
 
-```
-stream = storage.begin_stream(StreamKind::Audio)
+```text
+stream = storage.begin_stream(
+    StreamKind::Audio,
+    StorageLayout::HourlyFolders,
+)
 
 stream.write(bytes)
 
 stream.finish()
 ```
 
-The recorder produces a byte stream.
+The Storage Service does not own stream lifetime.
 
-Storage simply persists it.
+Instead, it materializes logical streams into persistent filesystem objects.
 
-Storage does not distinguish between:
+Storage is responsible for:
 
-* WAV
-* FLAC
-* raw PCM
-* arbitrary binary data
+* creating files
+* generating filenames
+* selecting directory hierarchy
+* filesystem interaction
+* buffering
+* flushing
+* retries
+* closing completed streams
+
+Storage does not determine when a stream begins or ends.
+
+---
+
+# Storage Layout
+
+Although producers own stream lifetime, Storage continues to own how streams are represented within the filesystem.
+
+When a producer creates a stream, it specifies a storage layout describing how that stream should be materialized.
+
+For example:
+
+```rust
+storage.begin_stream(
+    StreamKind::Audio,
+    StorageLayout::HourlyFolders,
+)
+```
+
+Possible layouts might include:
+
+* Flat
+* DailyFolders
+* HourlyFolders
+* MissionFolders
+
+The selected layout determines:
+
+* directory hierarchy
+* filename generation
+* filename uniqueness
+* filesystem-specific conventions
+
+The producer remains unaware of the resulting filenames and directory structure.
+
+This allows filesystem organization to evolve independently of producer logic.
 
 ---
 
@@ -225,55 +272,33 @@ The recorder maintains all recording state associated with this lifecycle.
 
 ---
 
-# Storage Rotation
+# Stream Lifecycle
 
-Storage determines when a recording should rotate.
+Logical stream boundaries are owned by the producer.
 
-Typical reasons include:
+For audio recordings, the producer is the Audio Recorder Service.
 
-* hour boundaries
-* maximum file size
-* removable media policies
+The recorder determines when a recording should begin or end based on its own recording policy.
 
-Storage communicates lifecycle events to the recorder.
+Typical policies include:
 
-For example:
+* rotate every hour
+* rotate every ten minutes
+* continuous recording
+* event-driven recording
 
-```
-Storage
+Because the recorder owns the relationship between sample count, sample rate and absolute time, it can terminate recordings on an exact sample boundary.
 
-↓
+When a recording boundary is reached, the recorder:
 
-RotateRequested
+1. finalises the current container;
+2. finishes the current Storage stream;
+3. requests a new Storage stream;
+4. begins a new recording.
 
-↓
+Storage does not request stream rotation.
 
-Audio Recorder
-
-↓
-
-Finalise container
-
-↓
-
-Patch headers
-
-↓
-
-Finish stream
-
-↓
-
-Storage opens new stream
-
-↓
-
-Recorder begins new recording
-```
-
-Storage owns the decision of **when** a recording rotates.
-
-The recorder owns the process of **how** a recording is finalised.
+This removes the need for lifecycle callbacks from Storage to producers.
 
 ---
 
@@ -350,12 +375,20 @@ This decouples recording from DMA implementation details and allows multiple ind
 * Recording metadata has a single owner.
 * Recording lifecycle is encapsulated within one service.
 * The recorder can coexist with other `AudioSource` consumers such as neural detectors or streaming services.
+* Sample-accurate recording boundaries.
+* Producers determine stream boundaries using domain-specific knowledge.
+* Storage no longer requires lifecycle callbacks.
+* Filesystem organization remains centralized.
+* Stream lifecycle and filesystem representation are cleanly separated.
+* Storage API is simpler and more generic.
 
 ## Disadvantages
 
 * The recorder owns container lifecycle management.
 * Header finalisation requires coordination with Storage.
 * Recording state is more complex than a simple byte forwarding task.
+* Stream segmentation logic moves into each producer.
+* Producers requiring automatic segmentation must implement their own lifecycle policy.
 
 ---
 
@@ -363,13 +396,17 @@ This decouples recording from DMA implementation details and allows multiple ind
 
 1. **The recorder owns recording semantics.** Audio formats, metadata and container generation belong exclusively to the Audio Recorder Service.
 
-2. **Storage owns persistence.** Filesystem operations, file lifecycle and persistence remain the responsibility of the Storage Service.
+2. **Storage owns persistence.** Filesystem operations, filesystem representation and persistence remain the responsibility of the Storage Service.
 
-3. **AudioSource owns audio distribution.** The recorder consumes timestamped PCM from `AudioSource` rather than interacting with microphone hardware.
+3. **Producers own logical streams.** Producers determine when streams begin and end according to their own domain-specific semantics. Storage materializes those streams into filesystem objects but does not determine their boundaries.
 
-4. **Containers are replaceable.** Recording formats are internal implementation details of the recorder and may evolve independently of Storage.
+4. **Separate logical streams from filesystem representation.** Producers own the semantics and lifecycle of streams. Storage owns how those streams are represented on persistent media, including filenames, directory layout and filesystem conventions.
 
-5. **Services own domain knowledge.** Each service is responsible only for concepts within its own domain, minimising coupling between the recording and storage subsystems.
+5. **AudioSource owns audio distribution.** The recorder consumes timestamped PCM from `AudioSource` rather than interacting with microphone hardware.
+
+6. **Containers are replaceable.** Recording formats are internal implementation details of the recorder and may evolve independently of Storage.
+
+7. **Services own domain knowledge.** Each service is responsible only for concepts within its own domain, minimising coupling between the recording and storage subsystems.
 
 
 # Implementation Specifics
@@ -383,7 +420,7 @@ Implementation should be:
 * Cohesive and coherent, with small blocks preferred over extensive abstractions
 * Respect low-power embedded async patterns
 
-The storage service will need to be modified to add functionality for instructing the audioservice when a file rotation is going to occur.
+The audio recorder determines file boundaries from its recording policy and exact sample count. It finalises the current stream and explicitly begins the next one.
 
 The storage service currently also has a stub which should be removed in lib.rs:
 ```

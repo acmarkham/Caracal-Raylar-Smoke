@@ -399,19 +399,22 @@ The Logging Service owns a single log stream created by the Storage Service.
 Conceptually:
 
 ```rust
-let stream = storage.create_stream(StreamType::Log);
+let stream = storage.begin_stream(
+    StreamKind::Log,
+    StorageLayout::Flat,
+);
 ```
 
-The Logging Service performs only append operations.
+The Logging Service writes to the stream and owns its logical lifetime.
 
 It has no knowledge of:
 
 * filenames
 * directory layout
-* rollover policy
+* filesystem representation
 * filesystem implementation
 
-These remain entirely within the Storage Service.
+These remain entirely within the Storage Service. If log segmentation is introduced, the Logging Service will own that lifecycle policy and will explicitly finish and begin streams.
 
 ---
 

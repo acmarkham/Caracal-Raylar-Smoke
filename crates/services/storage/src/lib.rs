@@ -10,7 +10,4 @@ mod types;
 
 pub use backend::StorageBackend;
 pub use service::{StorageService, UtcClock, DEFAULT_MAX_STREAMS};
-pub use types::{
-    AppendOutcome, RollingPolicy, StorageConfig, StorageServiceError, StreamHandle,
-    StreamLifecycleEvent, StreamType,
-};
+pub use types::{StorageLayout, StorageServiceError, StreamHandle, StreamKind};

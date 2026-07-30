@@ -31,7 +31,7 @@ use raylar_logging_service::{
     StorageLogSink,
 };
 use raylar_power_management_service::{PowerConfig, PowerManagementService, PowerResources};
-use raylar_storage_service::{StorageConfig, StorageService};
+use raylar_storage_service::StorageService;
 use raylar_time_service::gps::run_gps_time_source;
 use raylar_time_service::{TimeConfig, TimeResources, TimeService};
 use {defmt_rtt as _, panic_probe as _};
@@ -163,11 +163,10 @@ async fn run_integration(
         Err(error) => fail_forever("exFAT volume detection failed", error).await,
     };
     let driver = StorageDriver::<_>::new(PartitionedBlockDevice::new(device, volume));
-    let mut storage =
-        match StorageService::<_, _>::new(driver, &TIME_RESOURCES, StorageConfig::default()) {
-            Ok(storage) => storage,
-            Err(error) => fail_forever("storage service construction failed", error).await,
-        };
+    let mut storage = match StorageService::<_, _>::new(driver, &TIME_RESOURCES) {
+        Ok(storage) => storage,
+        Err(error) => fail_forever("storage service construction failed", error).await,
+    };
     if let Err(error) = storage.mount().await {
         fail_forever("storage mount failed", error).await;
     }

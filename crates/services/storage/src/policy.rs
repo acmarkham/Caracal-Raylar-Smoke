@@ -1,61 +1,75 @@
-use crate::types::{RollingPolicy, StorageServiceError, StreamType, PATH_CAPACITY};
+use crate::types::{StorageLayout, StorageServiceError, StreamKind, PATH_CAPACITY};
 use core::fmt::Write;
 use heapless::String;
 
-pub(crate) struct FilePolicy {
-    pub path: String<PATH_CAPACITY>,
-    pub file_start: i64,
-    pub rollover_at: i64,
-}
+pub(crate) fn stream_path<E>(
+    kind: StreamKind,
+    layout: StorageLayout,
+    timestamp: Option<i64>,
+    sequence: u32,
+) -> Result<String<PATH_CAPACITY>, StorageServiceError<E>> {
+    if !layout.is_valid() {
+        return Err(StorageServiceError::InvalidConfig);
+    }
 
-pub(crate) fn file_policy<E>(
-    kind: StreamType,
-    timestamp: i64,
-    policy: RollingPolicy,
-    initial_open: bool,
-) -> Result<FilePolicy, StorageServiceError<E>> {
-    if timestamp < 0 || !policy.is_valid() {
+    if kind == StreamKind::Log && layout == StorageLayout::Flat {
+        let mut path = String::new();
+        path.push_str("/syslog.txt")
+            .map_err(|_| StorageServiceError::InvalidPath)?;
+        return Ok(path);
+    }
+
+    let timestamp = timestamp.ok_or(StorageServiceError::InvalidTimestamp)?;
+    if timestamp < 0 {
         return Err(StorageServiceError::InvalidTimestamp);
     }
-    let natural_start = align_down(timestamp, policy.file_interval_seconds);
-    let file_start = if initial_open && timestamp != natural_start {
-        align_down(timestamp, policy.startup_alignment_seconds)
-    } else {
-        natural_start
-    };
-    let folder_start = align_down(file_start, policy.folder_interval_seconds);
-    let rollover_at = next_boundary(timestamp, policy.file_interval_seconds);
+
     let mut path = String::new();
+    match layout {
+        StorageLayout::Flat => {}
+        StorageLayout::DailyFolders => {
+            write!(&mut path, "/{}", align_down(timestamp, 86_400))
+                .map_err(|_| StorageServiceError::InvalidPath)?;
+        }
+        StorageLayout::HourlyFolders => {
+            write!(&mut path, "/{}", align_down(timestamp, 3_600))
+                .map_err(|_| StorageServiceError::InvalidPath)?;
+        }
+        StorageLayout::MissionFolders => {
+            path.push_str("/mission")
+                .map_err(|_| StorageServiceError::InvalidPath)?;
+        }
+        StorageLayout::IntervalFolders { interval_seconds } => {
+            write!(&mut path, "/{}", align_down(timestamp, interval_seconds))
+                .map_err(|_| StorageServiceError::InvalidPath)?;
+        }
+    }
+
     match kind {
-        StreamType::Audio => write!(&mut path, "/{folder_start}/aud_{file_start}.wav"),
-        StreamType::GpsTiming => write!(&mut path, "/{folder_start}/gps_{file_start}.pps"),
-        StreamType::Log => return Err(StorageServiceError::InvalidStream),
+        StreamKind::Log => write!(&mut path, "/log_{timestamp}_{sequence}.txt"),
+        StreamKind::Audio => write!(&mut path, "/aud_{timestamp}_{sequence}.wav"),
+        StreamKind::GpsTiming => write!(&mut path, "/gps_{timestamp}_{sequence}.pps"),
     }
     .map_err(|_| StorageServiceError::InvalidPath)?;
-    Ok(FilePolicy {
-        path,
-        file_start,
-        rollover_at,
-    })
+    Ok(path)
 }
 
-pub(crate) fn folder_path<E>(path: &str) -> Result<String<PATH_CAPACITY>, StorageServiceError<E>> {
+pub(crate) fn folder_path<E>(
+    path: &str,
+) -> Result<Option<String<PATH_CAPACITY>>, StorageServiceError<E>> {
     let end = path.rfind('/').ok_or(StorageServiceError::InvalidPath)?;
     if end == 0 {
-        return Err(StorageServiceError::InvalidPath);
+        return Ok(None);
     }
     let mut folder = String::new();
     folder
         .push_str(&path[..end])
         .map_err(|_| StorageServiceError::InvalidPath)?;
-    Ok(folder)
+    Ok(Some(folder))
 }
 
 const fn align_down(timestamp: i64, interval: i64) -> i64 {
     timestamp.div_euclid(interval) * interval
-}
-const fn next_boundary(timestamp: i64, interval: i64) -> i64 {
-    align_down(timestamp, interval).saturating_add(interval)
 }
 
 #[cfg(test)]
@@ -63,29 +77,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn audio_startup_is_minute_aligned_then_rolls_on_the_hour() {
-        let result = file_policy::<()>(
-            StreamType::Audio,
-            1_784_016_510,
-            RollingPolicy::audio_default(),
-            true,
+    fn daily_audio_layout_keeps_naming_inside_storage() {
+        let path = stream_path::<()>(
+            StreamKind::Audio,
+            StorageLayout::DailyFolders,
+            Some(1_784_016_510),
+            7,
         )
         .unwrap();
-        assert_eq!(result.path.as_str(), "/1783987200/aud_1784016480.wav");
-        assert_eq!(result.file_start, 1_784_016_480);
-        assert_eq!(result.rollover_at, 1_784_019_600);
+        assert_eq!(path.as_str(), "/1783987200/aud_1784016510_7.wav");
     }
 
     #[test]
-    fn rollover_open_uses_the_natural_file_boundary() {
-        let result = file_policy::<()>(
-            StreamType::Audio,
-            1_784_019_600,
-            RollingPolicy::audio_default(),
-            false,
+    fn flat_log_preserves_the_restart_safe_system_log() {
+        let path = stream_path::<()>(StreamKind::Log, StorageLayout::Flat, None, 1).unwrap();
+        assert_eq!(path.as_str(), "/syslog.txt");
+    }
+
+    #[test]
+    fn interval_layout_is_configurable_without_owning_stream_duration() {
+        let path = stream_path::<()>(
+            StreamKind::GpsTiming,
+            StorageLayout::IntervalFolders {
+                interval_seconds: 600,
+            },
+            Some(1_784_016_510),
+            2,
         )
         .unwrap();
-        assert_eq!(result.path.as_str(), "/1783987200/aud_1784019600.wav");
-        assert_eq!(result.rollover_at, 1_784_023_200);
+        assert_eq!(path.as_str(), "/1784016000/gps_1784016510_2.pps");
     }
 }

@@ -13,7 +13,7 @@ use embassy_time::Timer;
 use embedded_alloc::LlffHeap as Heap;
 use heapless::String;
 use raylar_board_v1p0::Board;
-use raylar_storage_service::{StorageConfig, StorageService, StreamType};
+use raylar_storage_service::{StorageLayout, StorageService, StreamKind};
 use {defmt_rtt as _, panic_probe as _};
 
 const HEAP_BYTES: usize = 64 * 1024;
@@ -30,11 +30,7 @@ async fn main(spawner: Spawner) -> ! {
     let Board { gps, sd, .. } = Board::new(p);
     let driver = common::storage_driver(sd).await;
     info!("storage service phase 1: constructing service");
-    let mut storage = match StorageService::<_, _>::new(
-        driver,
-        &common::TIME_RESOURCES,
-        StorageConfig::default(),
-    ) {
+    let mut storage = match StorageService::<_, _>::new(driver, &common::TIME_RESOURCES) {
         Ok(storage) => storage,
         Err(e) => {
             error!("storage service construction failed: {}", e);
@@ -51,7 +47,10 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
     info!("storage service phase 3: opening /syslog.txt for append");
-    let log = match storage.create_stream(StreamType::Log).await {
+    let log = match storage
+        .begin_stream(StreamKind::Log, StorageLayout::Flat)
+        .await
+    {
         Ok(stream) => {
             info!("storage service phase 3 complete: log stream opened");
             stream
@@ -61,8 +60,16 @@ async fn main(spawner: Spawner) -> ! {
             common::pending_forever().await
         }
     };
-    info!("storage service phase 4: creating GPS timing stream");
-    let gps_timing = match storage.create_stream(StreamType::GpsTiming).await {
+    info!("storage service phase 4: starting GPS driver and time service");
+    common::start_time(spawner, gps).await;
+    while common::TIME_RESOURCES.current_utc().is_err() {
+        Timer::after_secs(1).await;
+    }
+    info!("storage service phase 5: creating GPS timing stream");
+    let mut gps_timing = match storage
+        .begin_stream(StreamKind::GpsTiming, StorageLayout::DailyFolders)
+        .await
+    {
         Ok(stream) => {
             info!("storage service phase 4 complete: GPS timing stream created");
             stream
@@ -72,9 +79,8 @@ async fn main(spawner: Spawner) -> ! {
             common::pending_forever().await
         }
     };
-    info!("storage service phase 5: starting GPS driver and time service");
-    common::start_time(spawner, gps).await;
-    info!("storage service phase 5 complete: GPS and time tasks started");
+    let mut gps_day = common::TIME_RESOURCES.current_utc().unwrap().seconds / 86_400;
+    info!("storage service phase 5 complete: GPS timing stream created");
     let mut pps = match common::GPS_RESOURCES.pps_receiver() {
         Some(receiver) => receiver,
         None => {
@@ -90,7 +96,7 @@ async fn main(spawner: Spawner) -> ! {
         seconds = seconds.saturating_add(1);
         let mut line: String<96> = String::new();
         let _ = writeln!(&mut line, "storage service log tick {seconds}");
-        if storage.append(log, line.as_bytes()).await.is_err() {
+        if storage.write(log, line.as_bytes()).await.is_err() {
             error!("log append failed");
         }
 
@@ -113,7 +119,24 @@ async fn main(spawner: Spawner) -> ! {
                 event.timestamp.as_micros(),
                 event.capture_ticks,
             );
-            if storage.append(gps_timing, record.as_bytes()).await.is_err() {
+            let current_day = common::TIME_RESOURCES.current_utc().unwrap().seconds / 86_400;
+            if current_day != gps_day {
+                if storage.finish(gps_timing).await.is_err() {
+                    error!("GPS timing stream finish failed");
+                }
+                gps_timing = match storage
+                    .begin_stream(StreamKind::GpsTiming, StorageLayout::DailyFolders)
+                    .await
+                {
+                    Ok(stream) => stream,
+                    Err(e) => {
+                        error!("GPS stream creation failed: {}", e);
+                        common::pending_forever().await
+                    }
+                };
+                gps_day = current_day;
+            }
+            if storage.write(gps_timing, record.as_bytes()).await.is_err() {
                 error!("GPS timing append failed");
             }
         }

@@ -29,7 +29,7 @@ use raylar_drivers::mic_array::stm32::{
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
 };
-use raylar_storage_service::{RollingPolicy, StorageConfig, StorageService};
+use raylar_storage_service::{StorageLayout, StorageService};
 use {defmt_rtt as _, panic_probe as _};
 
 const HEAP_BYTES: usize = 64 * 1024;
@@ -83,18 +83,9 @@ async fn main(spawner: Spawner) -> ! {
         ..
     } = leds;
     let storage_driver = common::storage_driver(sd).await;
-    let storage_config = StorageConfig {
-        audio: RollingPolicy {
-            folder_interval_seconds: 600,
-            file_interval_seconds: 60,
-            startup_alignment_seconds: 60,
-        },
-        ..StorageConfig::default()
-    };
     let mut storage = unwrap!(StorageService::<_, _>::new(
         storage_driver,
-        &common::TIME_RESOURCES,
-        storage_config,
+        &common::TIME_RESOURCES
     ));
     unwrap!(storage.mount().await);
 
@@ -122,7 +113,12 @@ async fn main(spawner: Spawner) -> ! {
         &AUDIO,
         storage,
         metadata,
-        AudioRecorderConfig::default(),
+        AudioRecorderConfig {
+            recording_seconds: 60,
+            storage_layout: StorageLayout::IntervalFolders {
+                interval_seconds: 600,
+            },
+        },
     ));
     unwrap!(recorder.start().await);
     info!("recording mono 16 kHz WAV: 60-second files, 600-second folders");

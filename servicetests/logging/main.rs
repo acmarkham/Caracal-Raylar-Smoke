@@ -20,7 +20,7 @@ use raylar_logging_service::{
     info as log_info, LoggerHandle, LoggingResources, LoggingService, ProcessOutcome,
     StorageLogSink,
 };
-use raylar_storage_service::{StorageConfig, StorageService, UtcClock};
+use raylar_storage_service::{StorageService, UtcClock};
 use raylar_time_service::UtcTimestamp;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -97,14 +97,13 @@ async fn run_logging_test(spawner: Spawner, sd: SdCard<'static>) -> ! {
         }
     };
     let driver = StorageDriver::<_>::new(PartitionedBlockDevice::new(device, volume));
-    let mut storage =
-        match StorageService::<_, _>::new(driver, NoUtcClock, StorageConfig::default()) {
-            Ok(storage) => storage,
-            Err(error) => {
-                error!("storage service construction failed: {}", error);
-                hardware::pending_forever().await
-            }
-        };
+    let mut storage = match StorageService::<_, _>::new(driver, NoUtcClock) {
+        Ok(storage) => storage,
+        Err(error) => {
+            error!("storage service construction failed: {}", error);
+            hardware::pending_forever().await
+        }
+    };
     if let Err(error) = storage.mount().await {
         error!("storage mount failed: {}", error);
         hardware::pending_forever().await;

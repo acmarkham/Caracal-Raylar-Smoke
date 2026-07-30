@@ -1,5 +1,5 @@
 use raylar_storage_service::{
-    AppendOutcome, StorageBackend, StorageService, StorageServiceError, StreamHandle, StreamType,
+    StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, StreamKind,
     UtcClock,
 };
 
@@ -15,7 +15,6 @@ pub trait LogSink {
 #[derive(Debug, PartialEq, Eq)]
 pub enum StorageLogSinkError<E> {
     Storage(StorageServiceError<E>),
-    NotWritten,
 }
 
 pub struct StorageLogSink<'a, B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize> {
@@ -33,7 +32,7 @@ where
         storage: &'a mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS>,
     ) -> Result<Self, StorageLogSinkError<B::Error>> {
         let stream = storage
-            .create_stream(StreamType::Log)
+            .begin_stream(StreamKind::Log, StorageLayout::Flat)
             .await
             .map_err(StorageLogSinkError::Storage)?;
         Ok(Self { storage, stream })
@@ -53,17 +52,10 @@ where
     type Error = StorageLogSinkError<B::Error>;
 
     async fn append(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-        match self
-            .storage
-            .append(self.stream, data)
+        self.storage
+            .write(self.stream, data)
             .await
-            .map_err(StorageLogSinkError::Storage)?
-        {
-            AppendOutcome::Written => Ok(()),
-            AppendOutcome::DroppedUtcUnavailable | AppendOutcome::RotationRequired => {
-                Err(StorageLogSinkError::NotWritten)
-            }
-        }
+            .map_err(StorageLogSinkError::Storage)
     }
 
     async fn flush(&mut self) -> Result<(), Self::Error> {
