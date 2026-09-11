@@ -15,6 +15,7 @@ members = [
     "drivertests/storage",
     "drivertests/mic_array",
     "drivertests/buzzertest",
+    "drivertests/ledtest",
     "metadrivertests/audiosource",
     "servicetests/time",
     "servicetests/storage",
