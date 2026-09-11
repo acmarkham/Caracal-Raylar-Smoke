@@ -58,6 +58,10 @@ where
             .map_err(StorageServiceError::Backend)
     }
 
+    pub fn into_inner(self) -> B {
+        self.backend
+    }
+
     pub async fn begin_stream(
         &mut self,
         kind: StreamKind,

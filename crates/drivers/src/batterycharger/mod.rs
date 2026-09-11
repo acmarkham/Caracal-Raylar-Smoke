@@ -7,7 +7,7 @@ use embassy_time::{Duration, Timer};
 
 pub const BQ25186_ADDRESS: u8 = 0x6A;
 pub const DEFAULT_WATCHERS: usize = 4;
-pub const DEFAULT_CHARGE_CURRENT_MA: u16 = 200;
+pub const DEFAULT_CHARGE_CURRENT_MA: u16 = 400;
 pub const DEFAULT_INPUT_CURRENT_LIMIT_MA: u16 = 500;
 
 const REG_STAT0: u8 = 0x00;

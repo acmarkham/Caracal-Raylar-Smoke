@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use core::sync::atomic::{AtomicBool, Ordering};
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Output, Pull};
@@ -42,6 +43,11 @@ const MESSAGE_LENGTH: usize = 256;
 const QUEUE_DEPTH: usize = 8;
 const LINE_LENGTH: usize = 384;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
+// Change this value to adjust when SD logging is allowed.
+const SD_SOC_THRESHOLD_PERCENT: u8 = 40;
+const SOC_CHECK_INTERVAL: Duration = Duration::from_secs(10);
+const LOW_SOC_LED_PULSE_TIME: Duration = Duration::from_millis(100);
+const SD_POWER_SETTLE_TIME: Duration = Duration::from_secs(1);
 
 static GPS_RESOURCES: GpsResources = GpsResources::new();
 static TIME_RESOURCES: TimeResources<4, 8> = TimeResources::new();
@@ -50,6 +56,7 @@ static CHARGER: ChargerResources = ChargerResources::new();
 static POWER: PowerResources = PowerResources::new();
 static LOGGING_RESOURCES: LoggingResources<MESSAGE_LENGTH, QUEUE_DEPTH> = LoggingResources::new();
 static ERROR_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static SD_LOGGING_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 type TestLogger = LoggerHandle<'static, MESSAGE_LENGTH, QUEUE_DEPTH>;
 type BoardVoltageMonitor =
@@ -79,6 +86,7 @@ async fn main(spawner: Spawner) -> ! {
     let Leds {
         sys_main_green,
         sys_main_red,
+        sys_sd_blue,
         ..
     } = leds;
 
@@ -91,6 +99,7 @@ async fn main(spawner: Spawner) -> ! {
         sens_i2c,
         usb_cdc,
         sys_main_green,
+        sys_sd_blue,
     )
     .await
 }
@@ -123,6 +132,7 @@ async fn run_integration(
     sens_i2c: SensI2C<'static>,
     usb_cdc: UsbCdc<'static>,
     heartbeat_led: Output<'static>,
+    mut low_soc_led: Output<'static>,
 ) -> ! {
     start_time(spawner, gps).await;
     start_power(spawner, adc_voltages, sens_i2c, usb_cdc).await;
@@ -150,81 +160,199 @@ async fn run_integration(
     sd_config.data_transfer_timeout = 120_000_000;
     let mut sdmmc = Sdmmc::new_4bit(sdmmc, Irqs, clk, cmd, d0, d1, d2, d3, sd_config);
     let mut command = CmdBlock::new();
-    power.set_low();
-    Timer::after_secs(1).await;
 
-    let card = match StorageDevice::new_sd_card(&mut sdmmc, &mut command, SD_TARGET_FREQ).await {
+    wait_for_safe_sd_soc(&mut low_soc_led).await;
+    power.set_low();
+    Timer::after(SD_POWER_SETTLE_TIME).await;
+
+    let mut card = match StorageDevice::new_sd_card(&mut sdmmc, &mut command, SD_TARGET_FREQ).await
+    {
         Ok(card) => card,
         Err(error) => fail_forever("SD card initialization failed", error).await,
     };
-    let mut device = Stm32SdBlockDevice::new(card);
-    let volume = match detect_exfat_volume(&mut device).await {
-        Ok(volume) => volume,
-        Err(error) => fail_forever("exFAT volume detection failed", error).await,
-    };
-    let driver = StorageDriver::<_>::new(PartitionedBlockDevice::new(device, volume));
-    let mut storage = match StorageService::<_, _>::new(driver, &TIME_RESOURCES) {
-        Ok(storage) => storage,
-        Err(error) => fail_forever("storage service construction failed", error).await,
-    };
-    if let Err(error) = storage.mount().await {
-        fail_forever("storage mount failed", error).await;
-    }
-    let sink = match StorageLogSink::open(&mut storage).await {
-        Ok(sink) => sink,
-        Err(error) => fail_forever("logging stream open failed", error).await,
-    };
-    let mut logging = LoggingService::<_, MESSAGE_LENGTH, QUEUE_DEPTH, LINE_LENGTH>::new(
-        &LOGGING_RESOURCES,
-        sink,
-    );
-    let system_log = logging.register("System");
-    let power_log = logging.register("Power");
-    let time_log = logging.register("Time");
 
+    let system_log = LOGGING_RESOURCES.register("System");
+    let power_log = LOGGING_RESOURCES.register("Power");
+    let time_log = LOGGING_RESOURCES.register("Time");
     spawner.spawn(unwrap!(power_time_logger_task(
         power_log,
         time_log,
         heartbeat_led
     )));
-    record_outcome(log_info!(
-        system_log,
-        "integration001 powermonitorlog started"
-    ));
-    info!("integration001 logging to /syslog.txt at 0.1 Hz");
 
-    let mut next_flush = Instant::now() + FLUSH_INTERVAL;
+    let mut first_mount = true;
     loop {
-        let now = Instant::now();
-        if now >= next_flush {
-            if let Err(error) = logging.flush().await {
-                error!("log flush failed: {}", error);
-                ERROR_SIGNAL.signal(());
+        let mut device = Stm32SdBlockDevice::new(card);
+        let volume = match detect_exfat_volume(&mut device).await {
+            Ok(volume) => volume,
+            Err(error) => fail_forever("exFAT volume detection failed", error).await,
+        };
+        let driver = StorageDriver::<_>::new(PartitionedBlockDevice::new(device, volume));
+        let mut storage = match StorageService::<_, _>::new(driver, &TIME_RESOURCES) {
+            Ok(storage) => storage,
+            Err(error) => fail_forever("storage service construction failed", error).await,
+        };
+        if let Err(error) = storage.mount().await {
+            fail_forever("storage mount failed", error).await;
+        }
+        let sink = match StorageLogSink::open(&mut storage).await {
+            Ok(sink) => sink,
+            Err(error) => fail_forever("logging stream open failed", error).await,
+        };
+        let mut logging = LoggingService::<_, MESSAGE_LENGTH, QUEUE_DEPTH, LINE_LENGTH>::new(
+            &LOGGING_RESOURCES,
+            sink,
+        );
+
+        if first_mount {
+            record_outcome(log_info!(
+                system_log,
+                "integration001 powermonitorlog started; SD SOC threshold={}",
+                SD_SOC_THRESHOLD_PERCENT
+            ));
+            first_mount = false;
+        } else {
+            let state = POWER.state();
+            record_outcome(log_info!(
+                system_log,
+                "battery recovered: batt={}mV percent={:?}; SD logging resumed",
+                state.battery_mv,
+                state.battery_percent
+            ));
+        }
+        SD_LOGGING_ACTIVE.store(true, Ordering::Relaxed);
+        info!("integration001 logging to /syslog.txt at 0.1 Hz");
+
+        let low_power_state = {
+            let mut next_flush = Instant::now() + FLUSH_INTERVAL;
+            loop {
+                let state = POWER.state();
+                if !sd_soc_is_safe(state.battery_percent) {
+                    break state;
+                }
+
+                let now = Instant::now();
+                if now >= next_flush {
+                    if let Err(error) = logging.flush().await {
+                        error!("log flush failed: {}", error);
+                        ERROR_SIGNAL.signal(());
+                    }
+                    let stats = logging.stats();
+                    info!(
+                        "logging stats: total={} dropped={} depth={} max_depth={} bytes={} truncated={} write_failures={}",
+                        stats.total_messages,
+                        stats.dropped_messages,
+                        stats.queue_depth,
+                        stats.maximum_queue_depth,
+                        stats.bytes_written,
+                        stats.truncated_messages,
+                        stats.write_failures,
+                    );
+                    if stats.dropped_messages != 0 || stats.write_failures != 0 {
+                        ERROR_SIGNAL.signal(());
+                    }
+                    next_flush = now + FLUSH_INTERVAL;
+                }
+
+                match logging.process_one().await {
+                    Ok(ProcessOutcome::Written) => {}
+                    Ok(ProcessOutcome::Empty) => Timer::after_millis(10).await,
+                    Err(error) => {
+                        error!("log append failed: {}", error);
+                        ERROR_SIGNAL.signal(());
+                        Timer::after_millis(100).await;
+                    }
+                }
             }
-            let stats = logging.stats();
-            info!(
-                "logging stats: total={} dropped={} depth={} max_depth={} bytes={} truncated={} write_failures={}",
-                stats.total_messages,
-                stats.dropped_messages,
-                stats.queue_depth,
-                stats.maximum_queue_depth,
-                stats.bytes_written,
-                stats.truncated_messages,
-                stats.write_failures,
-            );
-            if stats.dropped_messages != 0 || stats.write_failures != 0 {
-                ERROR_SIGNAL.signal(());
-            }
-            next_flush = now + FLUSH_INTERVAL;
+        };
+
+        SD_LOGGING_ACTIVE.store(false, Ordering::Relaxed);
+        drain_logging_queue(&mut logging).await;
+        record_outcome(log_info!(
+            system_log,
+            "battery below SD threshold: batt={}mV percent={:?} threshold={}; shutting down SD card",
+            low_power_state.battery_mv,
+            low_power_state.battery_percent,
+            SD_SOC_THRESHOLD_PERCENT
+        ));
+        drain_logging_queue(&mut logging).await;
+        if let Err(error) = logging.flush().await {
+            error!("final log flush failed before SD shutdown: {}", error);
+            ERROR_SIGNAL.signal(());
         }
 
+        let sink = logging.into_sink();
+        if let Err(error) = sink.close().await {
+            error!("log close failed before SD shutdown: {}", error);
+            ERROR_SIGNAL.signal(());
+        }
+
+        let driver = storage.into_inner();
+        let partition = driver.into_inner();
+        let device = partition.into_inner();
+        card = device.into_inner();
+
+        power.set_high();
+        info!(
+            "SD card powered off: batt={}mV percent={:?}",
+            low_power_state.battery_mv, low_power_state.battery_percent
+        );
+        wait_for_safe_sd_soc(&mut low_soc_led).await;
+
+        power.set_low();
+        Timer::after(SD_POWER_SETTLE_TIME).await;
+        if let Err(error) = card.reacquire(&mut command, SD_TARGET_FREQ).await {
+            fail_forever("SD card reinitialization failed", error).await;
+        }
+    }
+}
+
+fn sd_soc_is_safe(percent: Option<u8>) -> bool {
+    matches!(percent, Some(percent) if percent >= SD_SOC_THRESHOLD_PERCENT)
+}
+
+async fn wait_for_safe_sd_soc(low_soc_led: &mut Output<'_>) {
+    low_soc_led.set_low();
+    loop {
+        let state = POWER.state();
+        if sd_soc_is_safe(state.battery_percent) {
+            info!(
+                "battery permits SD startup: batt={}mV percent={:?} threshold={}",
+                state.battery_mv, state.battery_percent, SD_SOC_THRESHOLD_PERCENT
+            );
+            return;
+        }
+
+        info!(
+            "waiting with SD power off: batt={}mV percent={:?} threshold={}",
+            state.battery_mv, state.battery_percent, SD_SOC_THRESHOLD_PERCENT
+        );
+
+        let next_check = Instant::now() + SOC_CHECK_INTERVAL;
+        low_soc_led.set_high();
+        Timer::after(LOW_SOC_LED_PULSE_TIME).await;
+        low_soc_led.set_low();
+        Timer::at(next_check).await;
+    }
+}
+
+async fn drain_logging_queue<S>(
+    logging: &mut LoggingService<'_, S, MESSAGE_LENGTH, QUEUE_DEPTH, LINE_LENGTH>,
+) where
+    S: raylar_logging_service::LogSink,
+    S::Error: defmt::Format,
+{
+    loop {
         match logging.process_one().await {
             Ok(ProcessOutcome::Written) => {}
-            Ok(ProcessOutcome::Empty) => Timer::after_millis(10).await,
+            Ok(ProcessOutcome::Empty) => return,
             Err(error) => {
-                error!("log append failed: {}", error);
+                error!(
+                    "log append failed while draining before SD shutdown: {}",
+                    error
+                );
                 ERROR_SIGNAL.signal(());
-                Timer::after_millis(100).await;
+                return;
             }
         }
     }
@@ -332,37 +460,39 @@ async fn power_time_logger_task(
 ) -> ! {
     loop {
         heartbeat_led.set_high();
-        let power = POWER.state();
-        record_outcome(log_info!(
-            power_log,
-            "source={:?} batt={}mV solar={}mV ext_dc={}mV charging={} percent={:?} health={:?} charger_state={:?} charger_fault={:?}",
-            power.source,
-            power.battery_mv,
-            power.solar_mv,
-            power.ext_dc_mv,
-            power.charging,
-            power.battery_percent,
-            power.health,
-            power.charger.state,
-            power.charger.fault
-        ));
+        if SD_LOGGING_ACTIVE.load(Ordering::Relaxed) {
+            let power = POWER.state();
+            record_outcome(log_info!(
+                power_log,
+                "source={:?} batt={}mV solar={}mV ext_dc={}mV charging={} percent={:?} health={:?} charger_state={:?} charger_fault={:?}",
+                power.source,
+                power.battery_mv,
+                power.solar_mv,
+                power.ext_dc_mv,
+                power.charging,
+                power.battery_percent,
+                power.health,
+                power.charger.state,
+                power.charger.fault
+            ));
 
-        let time = TIME_RESOURCES.time_state();
-        match TIME_RESOURCES.current_utc() {
-            Ok(utc) => record_outcome(log_info!(
-                time_log,
-                "UTC {} GPS ON valid={} source={:?} uncertainty_us={}",
-                utc.seconds,
-                time.utc_valid,
-                time.active_time_source,
-                time.uncertainty_us
-            )),
-            Err(_) => record_outcome(log_info!(
-                time_log,
-                "UTC unavailable GPS ON valid=false source={:?} uncertainty_us={}",
-                time.active_time_source,
-                time.uncertainty_us
-            )),
+            let time = TIME_RESOURCES.time_state();
+            match TIME_RESOURCES.current_utc() {
+                Ok(utc) => record_outcome(log_info!(
+                    time_log,
+                    "UTC {} GPS ON valid={} source={:?} uncertainty_us={}",
+                    utc.seconds,
+                    time.utc_valid,
+                    time.active_time_source,
+                    time.uncertainty_us
+                )),
+                Err(_) => record_outcome(log_info!(
+                    time_log,
+                    "UTC unavailable GPS ON valid=false source={:?} uncertainty_us={}",
+                    time.active_time_source,
+                    time.uncertainty_us
+                )),
+            }
         }
         Timer::after_millis(100).await;
         heartbeat_led.set_low();

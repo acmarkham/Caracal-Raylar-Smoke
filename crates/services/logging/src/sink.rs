@@ -41,6 +41,13 @@ where
     pub fn storage_mut(&mut self) -> &mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS> {
         self.storage
     }
+
+    pub async fn close(self) -> Result<(), StorageLogSinkError<B::Error>> {
+        self.storage
+            .finish(self.stream)
+            .await
+            .map_err(StorageLogSinkError::Storage)
+    }
 }
 
 impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize> LogSink
