@@ -4,6 +4,7 @@
 extern crate std;
 
 pub mod batterycharger;
+pub mod button;
 pub mod buzzer;
 pub mod leds;
 pub mod gps;
