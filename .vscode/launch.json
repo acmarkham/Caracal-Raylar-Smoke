@@ -9,7 +9,7 @@
       "cwd": "${workspaceFolder}",
       "runtimeExecutable": "probe-rs",
       "consoleLogLevel": "Info",
-      "chip": "STM32U585CI",
+      "chip": "STM32U595VJ",
       "flashingConfig": {
         "flashingEnabled": true,
         "haltAfterReset": true

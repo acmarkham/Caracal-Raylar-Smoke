@@ -14,7 +14,7 @@ foreach ($arg in $RunnerArgs) {
 
 $env:DEFMT_LOG = $defmtLog
 
-& probe-rs run --chip STM32U585CI @RunnerArgs
+& probe-rs run --chip STM32U595VJ @RunnerArgs
 $exitCode = $LASTEXITCODE
 
 if ($null -eq $exitCode) {
