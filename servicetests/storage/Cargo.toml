@@ -33,6 +33,7 @@ defmt-rtt.workspace = true
 panic-probe.workspace = true
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
+static_cell.workspace = true
 
 [features]
 trustzone-secure = [

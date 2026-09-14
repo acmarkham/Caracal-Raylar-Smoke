@@ -412,6 +412,10 @@ pub struct CaptureState {
     /// Embassy system-time ticks observed when the final DMA channel completed.
     pub completed_at_ticks: u64,
     pub channel_count: u8,
+    /// Number of DMA interrupts observed for the active channel.
+    pub dma_interrupt_count: u32,
+    /// Raw MDF DFLTISR status for the active filter.
+    pub filter_status: u32,
     pub error: Option<Error>,
 }
 
@@ -442,6 +446,8 @@ impl<const BUFFER: usize, const WATCHERS: usize> MicrophoneResources<BUFFER, WAT
                 started_at_ticks: 0,
                 completed_at_ticks: 0,
                 channel_count: 0,
+                dma_interrupt_count: 0,
+                filter_status: 0,
                 error: None,
             }),
         }

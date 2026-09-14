@@ -72,6 +72,7 @@ defmt-rtt = "1.2.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core", "inline-asm"] }
 cortex-m-rt = "0.7.5"
+static_cell = "2.1.1"
 
 [profile.release]
 lto = false

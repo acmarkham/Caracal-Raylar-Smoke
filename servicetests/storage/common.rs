@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::Output;
@@ -18,7 +17,10 @@ use raylar_drivers::storage::{
 };
 use raylar_storage_service::StorageBackend;
 use raylar_time_service::gps::run_gps_time_source;
-use raylar_time_service::{TimeConfig, TimeResources, TimeService};
+use raylar_time_service::{
+    Anchor, AnchorQuality, TimeConfig, TimeResources, TimeService, TimeSource, UtcTimestamp,
+};
+use static_cell::StaticCell;
 
 pub static GPS_RESOURCES: GpsResources = GpsResources::new();
 pub static TIME_RESOURCES: TimeResources<4, 8> = TimeResources::new();
@@ -27,10 +29,15 @@ const SD_TARGET_FREQ: Hertz = mhz(24);
 /// Keeps the active-low SD power GPIO configured for as long as the filesystem
 /// backend exists. Dropping an Embassy `Output` disconnects the pin, which can
 /// remove card power after volume detection but before filesystem mounting.
-struct PoweredStorage<B> {
+pub struct PoweredStorage<B> {
     inner: B,
     _power: Output<'static>,
 }
+
+pub type BoardStorageBackend =
+    PoweredStorage<StorageDriver<PartitionedBlockDevice<Stm32SdBlockDevice<'static, 'static>>>>;
+
+static SDMMC: StaticCell<Sdmmc<'static>> = StaticCell::new();
 
 impl<B, const BLOCK_SIZE: usize> StorageBackend<BLOCK_SIZE> for PoweredStorage<B>
 where
@@ -80,6 +87,16 @@ pub fn mcu_config() -> embassy_stm32::Config {
         divp: Some(PllDiv::DIV6),
         divq: Some(PllDiv::DIV2),
         divr: Some(PllDiv::DIV2),
+    });
+    // MDF high-performance audio presets use PLL3_Q as their 96 MHz kernel
+    // clock. Storage-only callers simply leave this additional clock unused.
+    config.rcc.pll3 = Some(Pll {
+        source: PllSource::HSE,
+        prediv: PllPreDiv::DIV1,
+        mul: PllMul::MUL12,
+        divp: None,
+        divq: Some(PllDiv::DIV2),
+        divr: None,
     });
     config.rcc.sys = Sysclk::PLL1_R;
     config.rcc.hsi48 = Some(Hsi48Config::new());
@@ -132,9 +149,31 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
     GPS_RESOURCES.command_sender().send(GpsCommand::Start).await;
 }
 
-pub async fn storage_driver(
-    sd: SdCard<'static>,
-) -> impl raylar_storage_service::StorageBackend<512, Error: defmt::Format> {
+/// Starts the time service from a synthetic UTC anchor without powering GPS.
+///
+/// This is deliberately separate from `start_time` so production callers
+/// cannot accidentally mix laboratory and GPS anchors.
+#[allow(dead_code)]
+pub async fn start_fake_time(spawner: Spawner, _gps: Gps<'static>, utc_seconds: i64) {
+    let time = TimeService::new(&TIME_RESOURCES, TimeConfig::default());
+    spawner.spawn(unwrap!(time_service_task(time)));
+    TIME_RESOURCES
+        .anchor_sender()
+        .send(Anchor {
+            system_time: embassy_time::Instant::now(),
+            utc: UtcTimestamp::new(utc_seconds, 0).expect("whole-second UTC is valid"),
+            quality: AnchorQuality::new(1),
+            source: TimeSource::Laboratory,
+            capture_ticks: None,
+        })
+        .await;
+    info!(
+        "TEST ONLY: synthetic UTC anchor injected; source=Laboratory utc_seconds={}",
+        utc_seconds
+    );
+}
+
+pub async fn storage_driver(sd: SdCard<'static>) -> BoardStorageBackend {
     let SdCard {
         sdmmc,
         clk,
@@ -157,10 +196,12 @@ pub async fn storage_driver(
     info!("SD init phase 2: constructing SDMMC 4-bit peripheral");
     let mut config = SdmmcConfig::default();
     config.data_transfer_timeout = 120_000_000;
-    let sdmmc = Box::leak(Box::new(Sdmmc::new_4bit(
+    let sdmmc = SDMMC.init(Sdmmc::new_4bit(
         sdmmc, Irqs, clk, cmd, d0, d1, d2, d3, config,
-    )));
-    let cmd_block = Box::leak(Box::new(CmdBlock::new()));
+    ));
+    // CmdBlock is only scratch space for card acquisition; it does not need
+    // to be leaked for the lifetime of the mounted device.
+    let mut cmd_block = CmdBlock::new();
     info!("SD init phase 2 complete: SDMMC peripheral constructed");
 
     info!("SD init phase 3: enabling card power and waiting 1 second");
@@ -172,7 +213,7 @@ pub async fn storage_driver(
         "SD init phase 4: initializing SD card at {} Hz",
         SD_TARGET_FREQ.0
     );
-    let card = match StorageDevice::new_sd_card(sdmmc, cmd_block, SD_TARGET_FREQ).await {
+    let card = match StorageDevice::new_sd_card(sdmmc, &mut cmd_block, SD_TARGET_FREQ).await {
         Ok(card) => {
             let card_info = card.card();
             info!(

@@ -8,7 +8,7 @@ use embassy_stm32::gpio::{AfType, AnyPin, Flex, OutputType, Pull, Speed};
 use embassy_stm32::pac::{self, rcc::vals::Mdfsel};
 use embassy_stm32::peripherals::{PB8, PC2, PD3, PD6, PE4, PE7};
 use embassy_stm32::Peri;
-use embassy_time::Instant;
+use embassy_time::{Instant, TICK_HZ};
 
 use super::stm32_config::*;
 use super::{
@@ -20,6 +20,7 @@ struct InterruptTimestamp {
     version: AtomicU32,
     low: AtomicU32,
     high: AtomicU32,
+    count: AtomicU32,
 }
 
 impl InterruptTimestamp {
@@ -28,6 +29,7 @@ impl InterruptTimestamp {
             version: AtomicU32::new(0),
             low: AtomicU32::new(0),
             high: AtomicU32::new(0),
+            count: AtomicU32::new(0),
         }
     }
 
@@ -35,6 +37,7 @@ impl InterruptTimestamp {
         self.version.fetch_add(1, Ordering::SeqCst);
         self.low.store(value as u32, Ordering::SeqCst);
         self.high.store((value >> 32) as u32, Ordering::SeqCst);
+        self.count.fetch_add(1, Ordering::SeqCst);
         self.version.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -51,6 +54,10 @@ impl InterruptTimestamp {
                 return (u64::from(high) << 32) | u64::from(low);
             }
         }
+    }
+
+    fn count(&self) -> u32 {
+        self.count.load(Ordering::SeqCst)
     }
 }
 
@@ -92,6 +99,13 @@ pub struct Pins<'d> {
     pub sd3: Peri<'d, PE4>,
 }
 
+/// Pins required by a mono capture. Unlike [`Pins`], this resource does not
+/// require the unused MDF interfaces to be configured or owned by the driver.
+pub struct MonoPins<'d> {
+    pub cck0: Peri<'d, PB8>,
+    pub sd0: Peri<'d, PD3>,
+}
+
 pub struct DmaChannels<'d> {
     pub ch0: Channel<'d>,
     pub ch1: Channel<'d>,
@@ -99,6 +113,21 @@ pub struct DmaChannels<'d> {
     pub ch3: Channel<'d>,
     pub ch4: Channel<'d>,
     pub ch5: Channel<'d>,
+}
+
+/// DMA-backed microphone driver for one MDF filter.
+///
+/// Mono capture deliberately has a separate type so callers cannot
+/// accidentally create or bind the five unused DMA channels.
+pub struct Stm32MonoMicrophoneDriver<
+    'd,
+    const BUFFER: usize,
+    const WATCHERS: usize = { super::DEFAULT_WATCHERS },
+> {
+    pins: MonoPins<'d>,
+    dma: Channel<'d>,
+    resources: &'static MicrophoneResources<BUFFER, WATCHERS>,
+    config: ResolvedConfig,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,6 +238,14 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                 MicrophoneMode::Mono => DMA0_INTERRUPT_TICKS.read(),
                 MicrophoneMode::Hexaphonic => DMA5_INTERRUPT_TICKS.read(),
             };
+            let dma_interrupt_count = match self.config.requested.mode {
+                MicrophoneMode::Mono => DMA0_INTERRUPT_TICKS.count(),
+                MicrophoneMode::Hexaphonic => DMA5_INTERRUPT_TICKS.count(),
+            };
+            let filter_status = filter_status(match self.config.requested.mode {
+                MicrophoneMode::Mono => 0,
+                MicrophoneMode::Hexaphonic => 5,
+            });
             match result {
                 Ok(()) => {
                     sequence = sequence.wrapping_add(1);
@@ -220,12 +257,23 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                         started_at_ticks,
                         completed_at_ticks,
                         channel_count,
+                        dma_interrupt_count,
+                        filter_status,
                         error: None,
                     });
                 }
                 Err(error) => {
                     #[cfg(feature = "defmt")]
-                    defmt::warn!("microphone DMA ring error: {:?}", error);
+                    defmt::warn!(
+                        "microphone DMA ring error: {:?} irq_count={} filter_status={=u32:#010x} doverr={} sat={} ckab={} rfovr={}",
+                        error,
+                        dma_interrupt_count,
+                        filter_status,
+                        (filter_status & DOVRF) != 0,
+                        (filter_status & SATF) != 0,
+                        (filter_status & CKABF) != 0,
+                        (filter_status & RFOVRF) != 0,
+                    );
                     if self.config.requested.mode == MicrophoneMode::Mono {
                         mic1.clear();
                     } else {
@@ -238,6 +286,145 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                         started_at_ticks,
                         completed_at_ticks,
                         channel_count,
+                        dma_interrupt_count,
+                        filter_status,
+                        error: Some(Error::Dma),
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl<'d, const BUFFER: usize, const WATCHERS: usize>
+    Stm32MonoMicrophoneDriver<'d, BUFFER, WATCHERS>
+{
+    pub fn new(
+        pins: MonoPins<'d>,
+        dma: Channel<'d>,
+        resources: &'static MicrophoneResources<BUFFER, WATCHERS>,
+        config: MicrophoneConfig,
+    ) -> Result<Self, Error> {
+        if BUFFER < 2 || BUFFER % 2 != 0 {
+            return Err(Error::InvalidBufferSize);
+        }
+        if config.mode != MicrophoneMode::Mono {
+            return Err(Error::InvalidBufferSize);
+        }
+        let config = resolve_config(config)?;
+        Ok(Self {
+            pins,
+            dma,
+            resources,
+            config,
+        })
+    }
+
+    pub const fn resolved_config(&self) -> ResolvedConfig {
+        self.config
+    }
+
+    pub async fn run(self) -> ! {
+        configure_mono_pins(self.pins);
+        configure_mdf(self.config);
+
+        let half = BUFFER / 2;
+        let buffers = self.resources.buffers.get().cast::<[u32; BUFFER]>();
+        let sync = unsafe { &mut *self.resources.sync.get() };
+        let mut mic = make_ring(self.dma, 0, unsafe { &mut *buffers.add(0) });
+        mic.set_alignment(half);
+        mic.start();
+
+        let started_at_ticks = Instant::now().as_ticks();
+        enable_filters(MicrophoneMode::Mono);
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "mono microphone DMA started: requested={}Hz actual={}Hz clock={}Hz decimation={} total_decimation={} buffer_samples={} half_samples={} buffer_bytes={} half_bytes={}",
+            self.config.requested.sample_rate.hz(),
+            self.config.actual_sample_rate_hz,
+            self.config.microphone_clock_hz,
+            self.config.decimation,
+            self.config.total_decimation,
+            BUFFER,
+            half,
+            BUFFER * core::mem::size_of::<u32>(),
+            half * core::mem::size_of::<u32>(),
+        );
+        let publisher = self.resources.state.sender();
+        let mut sequence = 0u64;
+        #[cfg(feature = "defmt")]
+        let mut dma_error_count = 0u32;
+        publisher.send(CaptureState {
+            running: true,
+            started_at_ticks,
+            channel_count: 1,
+            ..CaptureState::default()
+        });
+
+        loop {
+            let result = mic.read_exact(&mut sync[..half]).await.map(|_| ());
+            let completed_at_ticks = DMA0_INTERRUPT_TICKS.read();
+            let dma_interrupt_count = DMA0_INTERRUPT_TICKS.count();
+            let filter_status = filter_status(0);
+            match result {
+                Ok(()) => {
+                    sequence = sequence.wrapping_add(1);
+                    fence(Ordering::Acquire);
+                    publisher.send(CaptureState {
+                        running: true,
+                        sequence,
+                        half: ((sequence - 1) & 1) as u8,
+                        started_at_ticks,
+                        completed_at_ticks,
+                        channel_count: 1,
+                        dma_interrupt_count,
+                        filter_status,
+                        error: None,
+                    });
+                }
+                Err(error) => {
+                    #[cfg(feature = "defmt")]
+                    {
+                        dma_error_count = dma_error_count.wrapping_add(1);
+                        let now_ticks = Instant::now().as_ticks();
+                        let irq_age_ticks = now_ticks.saturating_sub(completed_at_ticks);
+                        let expected_half_ticks =
+                            (half as u64 * TICK_HZ) / u64::from(self.config.actual_sample_rate_hz);
+                        defmt::warn!(
+                            "mono microphone DMA ring error: {:?} count={} sequence={} half={} buffer_samples={} half_samples={} buffer_bytes={} half_bytes={} last_irq_ticks={} now_ticks={} irq_age_ticks={} expected_half_ticks={}",
+                            error,
+                            dma_error_count,
+                            sequence,
+                            (sequence & 1) as u8,
+                            BUFFER,
+                            half,
+                            BUFFER * core::mem::size_of::<u32>(),
+                            half * core::mem::size_of::<u32>(),
+                            completed_at_ticks,
+                            now_ticks,
+                            irq_age_ticks,
+                            expected_half_ticks,
+                        );
+                        defmt::warn!(
+                            "mono microphone MDF status: irq_count={} status={=u32:#010x} doverr={} sat={} ckab={} rfovr={}",
+                            dma_interrupt_count,
+                            filter_status,
+                            (filter_status & DOVRF) != 0,
+                            (filter_status & SATF) != 0,
+                            (filter_status & CKABF) != 0,
+                            (filter_status & RFOVRF) != 0,
+                        );
+                    }
+                    mic.clear();
+                    publisher.send(CaptureState {
+                        running: true,
+                        sequence,
+                        half: (sequence & 1) as u8,
+                        started_at_ticks,
+                        completed_at_ticks,
+                        channel_count: 1,
+                        dma_interrupt_count,
+                        filter_status,
                         error: Some(Error::Dma),
                     });
                 }
@@ -353,6 +540,15 @@ fn configure_pins(pins: Pins<'_>) {
     }
 }
 
+fn configure_mono_pins(pins: MonoPins<'_>) {
+    let mut cck0 = Flex::new(pins.cck0);
+    cck0.set_as_af_unchecked(5, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+    core::mem::forget(cck0);
+    let mut sd0 = Flex::new(pins.sd0);
+    sd0.set_as_af_unchecked(6, AfType::input(Pull::None));
+    core::mem::forget(sd0);
+}
+
 fn configure_mdf(config: ResolvedConfig) {
     let rcc = pac::RCC;
     let kernel_clock = match config.requested.kernel_clock {
@@ -372,7 +568,19 @@ fn configure_mdf(config: ResolvedConfig) {
     }
 
     let divider = u32::from(config.clock_divider - 1);
-    let ckgcr = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5) | (1 << 6) | (divider << 16) | (1 << 24);
+    // CCK1 and its divider are only needed by the five additional filters.
+    // Keeping them disabled in mono avoids starting an unused microphone
+    // clock domain and mirrors the single-filter reference recorder.
+    let ckgcr = (1 << 0)
+        | (1 << 1)
+        | (1 << 5)
+        | (divider << 16)
+        | (1 << 24)
+        | if config.requested.mode == MicrophoneMode::Hexaphonic {
+            (1 << 2) | (1 << 6)
+        } else {
+            0
+        };
     write(MDF_CKGCR, ckgcr);
 
     let cck0 = (1 << 0) | (1 << 4) | (4 << 8);
@@ -414,6 +622,10 @@ fn enable_filters(mode: MicrophoneMode) {
 
 fn dfltdr_ptr(filter: usize) -> *mut u32 {
     (MDF1_BASE + register(MDF_DFLTDR0, filter)) as *mut u32
+}
+
+fn filter_status(filter: usize) -> u32 {
+    unsafe { ptr::read_volatile((MDF1_BASE + register(MDF_DFLTISR0, filter)) as *const u32) }
 }
 
 fn write(offset: usize, value: u32) {
