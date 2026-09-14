@@ -735,6 +735,12 @@ impl File {
             }
         }
 
+        // set_current_cluster starts with a full cluster remaining. A seek
+        // into the middle of that cluster must subtract the intra-cluster
+        // offset or a later sector read can appear to cross the boundary.
+        let cluster_offset = (cursor % fs.fs.cluster_length as u64) as u32;
+        self.remaining_bytes_in_cluster = fs.fs.cluster_length - cluster_offset;
+
         Ok(())
     }
 

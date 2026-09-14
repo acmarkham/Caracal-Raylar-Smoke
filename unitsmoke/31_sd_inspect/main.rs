@@ -35,6 +35,10 @@ const MAX_DEPTH: u8 = 4;
 const MAX_SNIPPET_FILES: usize = 64;
 const MAX_SNIPPET_BYTES: usize = 256;
 const SNIPPET_CHUNK_BYTES: usize = 32;
+// Audio packet records are intentionally filtered out, so a 2 MiB scan still
+// yields a compact report while covering the complete current long session.
+const SYSLOG_TAIL_SCAN_BYTES: u64 = 2 * 1024 * 1024;
+const SYSLOG_LINE_BYTES: usize = 512;
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -256,6 +260,16 @@ where
                 depth,
                 path.as_str()
             );
+            if path.as_str() == "/syslog.txt" {
+                if let Err(e) = emit_recent_time_logs(fs, path.as_str(), metadata.len()).await {
+                    error!(
+                        "SDGPT|ERROR|stage=read_syslog_tail|path={}|detail={}|#",
+                        path.as_str(),
+                        e
+                    );
+                    stats.errors += 1;
+                }
+            }
             if stats.files_snippeted >= MAX_SNIPPET_FILES || metadata.is_empty() {
                 continue;
             }
@@ -318,6 +332,64 @@ where
     }
 
     Ok(total)
+}
+
+/// Scans only the bounded tail of the system log and emits its Time records.
+/// Audio packet lines dominate this file, so filtering on-device keeps the RTT
+/// report compact while retaining several minutes of oscillator diagnostics.
+async fn emit_recent_time_logs<D>(
+    fs: &mut FileSystem<ReadOnlyDevice<D>, BLOCK_BYTES, CACHE_BLOCKS>,
+    path: &str,
+    file_len: u64,
+) -> Result<(), exfat_slim::asynchronous::error::ExFatError<ReadOnlyError<D::Error>>>
+where
+    D: BlockDevice<BLOCK_BYTES>,
+    D::Error: defmt::Format,
+{
+    let options = OpenOptions::new().read(true);
+    let mut file = fs.open(path, options).await?;
+    let start = file_len.saturating_sub(SYSLOG_TAIL_SCAN_BYTES);
+    file.seek(fs, start).await?;
+
+    let mut chunk = [0u8; 128];
+    let mut line = [0u8; SYSLOG_LINE_BYTES];
+    let mut line_len = 0usize;
+    let mut skip_partial_line = start != 0;
+    loop {
+        let Some(read) = file.read(fs, &mut chunk).await? else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        for &byte in &chunk[..read] {
+            if byte == b'\n' {
+                if !skip_partial_line && contains_bytes(&line[..line_len], b" Time ") {
+                    if let Ok(text) = core::str::from_utf8(&line[..line_len]) {
+                        info!("SDGPT|SYSLOG|line={}|#", text);
+                    }
+                }
+                line_len = 0;
+                skip_partial_line = false;
+            } else if line_len < line.len() && byte != b'\r' {
+                line[line_len] = byte;
+                line_len += 1;
+            }
+        }
+    }
+    info!(
+        "SDGPT|SYSLOG_SCAN|path={}|start={=u64}|bytes={=u64}|#",
+        path,
+        start,
+        file_len - start
+    );
+    Ok(())
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 struct ReadOnlyDevice<D>(D);
