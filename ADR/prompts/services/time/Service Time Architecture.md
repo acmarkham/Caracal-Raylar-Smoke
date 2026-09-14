@@ -271,11 +271,14 @@ The local oscillator will exhibit:
 * temperature drift
 * ageing
 
-The Time Service should estimate frequency error continuously.
+The Time Service should estimate frequency error continuously. GPS calibration
+uses a fixed-capacity, outlier-resistant regression over minute-spaced PPS
+samples spanning approximately ten minutes. Hardware capture timestamps should
+be preferred so interrupt latency is not interpreted as oscillator drift.
 
-Initially, this may use a simple exponentially weighted moving average (EWMA).
-
-Future estimators may use more sophisticated techniques without changing the public API.
+The calibrated oscillator term and any temporary phase-slew term should remain
+separate in published diagnostics. Updating either term must rebase the mapping
+at its previous prediction so UTC is not stepped.
 
 The implementation should separate:
 
@@ -311,6 +314,10 @@ Factors include:
 * elapsed holdover duration
 * estimated oscillator stability
 * recent anchor quality
+* the complete unresolved residual of the most recent accepted anchor
+
+An accepted anchor must not reset uncertainty below a phase error that the
+mapping has not yet removed.
 
 This allows downstream services to determine whether the current timestamp is suitable for their application.
 

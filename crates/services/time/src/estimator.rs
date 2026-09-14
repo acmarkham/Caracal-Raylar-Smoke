@@ -1,11 +1,29 @@
 use embassy_time::{Duration, Instant, TICK_HZ};
 
-use crate::{Anchor, TimeConfig, TimeState};
+use crate::{Anchor, TimeConfig, TimeSource, TimeState, UtcTimestamp};
+
+const FREQUENCY_SAMPLE_CAPACITY: usize = 11;
+const FREQUENCY_SLOPE_CAPACITY: usize =
+    FREQUENCY_SAMPLE_CAPACITY * (FREQUENCY_SAMPLE_CAPACITY - 1) / 2;
+
+#[derive(Clone, Copy)]
+struct FrequencySample {
+    system_ticks: u64,
+    utc_us: i64,
+    source: TimeSource,
+}
+
+const EMPTY_FREQUENCY_SAMPLE: FrequencySample = FrequencySample {
+    system_ticks: 0,
+    utc_us: 0,
+    source: TimeSource::None,
+};
 
 pub struct TimeEstimator {
     config: TimeConfig,
     state: TimeState,
-    frequency_reference: Option<Anchor>,
+    frequency_samples: [FrequencySample; FREQUENCY_SAMPLE_CAPACITY],
+    frequency_sample_count: usize,
 }
 
 impl TimeEstimator {
@@ -13,7 +31,8 @@ impl TimeEstimator {
         Self {
             config,
             state: TimeState::invalid(),
-            frequency_reference: None,
+            frequency_samples: [EMPTY_FREQUENCY_SAMPLE; FREQUENCY_SAMPLE_CAPACITY],
+            frequency_sample_count: 0,
         }
     }
 
@@ -21,7 +40,7 @@ impl TimeEstimator {
         self.state
     }
 
-    pub fn ingest(&mut self, anchor: Anchor) -> bool {
+    pub fn ingest(&mut self, mut anchor: Anchor) -> bool {
         if self.state.accepted_anchors == 0 {
             self.accept_first(anchor);
             return true;
@@ -38,7 +57,33 @@ impl TimeEstimator {
             anchor.utc,
             predicted_us
         );
-        let residual_us = anchor.utc.as_micros() as i128 - predicted_us;
+        let mut residual_us = anchor.utc.as_micros() as i128 - predicted_us;
+        if anchor.source == crate::TimeSource::GpsPps {
+            let one_second_us = 1_000_000i128;
+            let tolerance_us = self.config.utc_second_correction_tolerance_us as i128;
+            let correction_us = if (residual_us - one_second_us).abs() <= tolerance_us {
+                one_second_us
+            } else if (residual_us + one_second_us).abs() <= tolerance_us {
+                -one_second_us
+            } else {
+                0
+            };
+            if correction_us != 0 {
+                anchor.utc = UtcTimestamp::from_micros(
+                    anchor.utc.as_micros().saturating_sub(correction_us as i64),
+                );
+                residual_us -= correction_us;
+                self.state.utc_second_corrections =
+                    self.state.utc_second_corrections.saturating_add(1);
+                #[cfg(feature = "defmt")]
+                defmt::warn!(
+                    "PPS UTC second corrected: correction_us={} corrected_residual_us={} corrections={}",
+                    correction_us,
+                    residual_us,
+                    self.state.utc_second_corrections
+                );
+            }
+        }
         self.state.last_anchor_residual_us =
             Some(residual_us.clamp(i64::MIN as i128, i64::MAX as i128) as i64);
         #[cfg(feature = "defmt")]
@@ -61,11 +106,13 @@ impl TimeEstimator {
             residual_us,
             self.state.uncertainty_us
         );
-        let allowed = self
+        let mut allowed = self
             .config
             .max_anchor_residual_us
-            .saturating_add(self.state.uncertainty_us)
             .saturating_add(anchor.quality.uncertainty_us) as i128;
+        if anchor.source != TimeSource::GpsPps {
+            allowed = allowed.saturating_add(self.state.uncertainty_us as i128);
+        }
         if residual_us.abs() > allowed {
             #[cfg(feature = "defmt")]
             defmt::warn!(
@@ -78,85 +125,29 @@ impl TimeEstimator {
             return false;
         }
 
-        if self
-            .frequency_reference
-            .is_some_and(|reference| reference.source != anchor.source)
-        {
-            #[cfg(feature = "defmt")]
-            {
-                let previous = self.frequency_reference.unwrap();
-                defmt::info!(
-                    "scale baseline reset: source {:?} -> {:?}, system_ticks={} utc_us={} quality_us={}",
-                    previous.source,
-                    anchor.source,
-                    anchor.system_time.as_ticks(),
-                    anchor.utc.as_micros(),
-                    anchor.quality.uncertainty_us
-                );
-            }
-            self.frequency_reference = Some(anchor);
-        } else if let Some(reference) = self.frequency_reference {
-            let system_ticks = anchor
-                .system_time
-                .as_ticks()
-                .saturating_sub(reference.system_time.as_ticks());
-            let utc_us = anchor.utc.as_micros() as i128 - reference.utc.as_micros() as i128;
-            if system_ticks >= self.config.minimum_frequency_baseline.as_ticks() && utc_us > 0 {
-                let nominal_us = system_ticks as i128 * 1_000_000 / TICK_HZ as i128;
-                if nominal_us > 0 {
-                    let frequency_residual_us = utc_us - nominal_us;
-                    let observed_ppb = frequency_residual_us * 1_000_000_000 / nominal_us;
-                    let previous_ppb = self.state.estimated_frequency_error_ppb as i128;
-                    #[cfg(feature = "defmt")]
-                    let mapping_scale_ppb = 1_000_000_000i128 + previous_ppb;
-                    #[cfg(feature = "defmt")]
-                    defmt::info!(
-                        "scale sample: ref_ticks={} anchor_ticks={} system_ticks={} nominal_us={} utc_us={} frequency_residual_us={} raw_ppb={} current_ppb={} mapping_scale_ppb={} limit_ppb={}",
-                        reference.system_time.as_ticks(),
-                        anchor.system_time.as_ticks(),
-                        system_ticks,
-                        nominal_us,
-                        utc_us,
-                        frequency_residual_us,
-                        observed_ppb,
-                        previous_ppb,
-                        mapping_scale_ppb,
-                        self.config.max_frequency_error_ppb
-                    );
-                    if observed_ppb.abs() <= self.config.max_frequency_error_ppb as i128 {
-                        let weight = self.config.frequency_ewma_weight_per_mille.min(1_000) as i128;
+        self.add_frequency_sample(anchor);
+        self.update_frequency_calibration();
 
-                        let ewma_numerator =
-                            previous_ppb * (1_000 - weight) + observed_ppb * weight;
-                        let updated_ppb = ewma_numerator / 1_000;
-                        self.state.estimated_frequency_error_ppb = updated_ppb as i64;
-                        #[cfg(feature = "defmt")]
-                        defmt::info!(
-                            "scale EWMA applied: previous_ppb={} observed_ppb={} weight_per_mille={} numerator={} updated_ppb={} mapping_scale_ppb={}",
-                            previous_ppb,
-                            observed_ppb,
-                            weight,
-                            ewma_numerator,
-                            updated_ppb,
-                            1_000_000_000i128 + updated_ppb
-                        );
-                    } else {
-                        #[cfg(feature = "defmt")]
-                        defmt::warn!(
-                            "scale sample rejected: raw_ppb={} exceeds limit_ppb={}",
-                            observed_ppb,
-                            self.config.max_frequency_error_ppb
-                        );
-                    }
-                }
-                self.frequency_reference = Some(anchor);
-            }
-        }
+        let phase_slew_ppb = phase_slew_ppb(residual_us, &self.config);
+        self.state.phase_slew_ppb = phase_slew_ppb;
+        self.state.estimated_frequency_error_ppb = self
+            .state
+            .calibrated_frequency_error_ppb
+            .saturating_add(phase_slew_ppb);
 
-        // Do not update the reference system time or UTC, as that would cause a discontinuity in the mapping. Instead, we only update the uncertainty and last anchor information.
-        //self.state.reference_system_time = anchor.system_time;
-        //self.state.reference_utc = anchor.utc;
-        self.state.uncertainty_us = anchor.quality.uncertainty_us;
+        // Rebase at the old mapping's prediction before changing scale. This
+        // keeps UTC continuous while the temporary rate correction slews the
+        // measured phase residual toward zero.
+        let Ok(predicted_i64) = i64::try_from(predicted_us) else {
+            self.reject();
+            return false;
+        };
+        self.state.reference_system_time = anchor.system_time;
+        self.state.reference_utc = UtcTimestamp::from_micros(predicted_i64);
+        self.state.uncertainty_us = anchor
+            .quality
+            .uncertainty_us
+            .saturating_add(abs_i128_to_u64(residual_us));
         self.state.last_anchor_system_time = Some(anchor.system_time);
         self.state.last_anchor_utc = Some(anchor.utc);
         self.state.holdover_duration = Duration::from_ticks(0);
@@ -165,20 +156,21 @@ impl TimeEstimator {
         self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
         #[cfg(feature = "defmt")]
         defmt::info!(
-            "mapping epoch updated: system_ticks={} utc={}s+{}us source={:?} quality_us={} residual_us={} scale_ppb={} mapping_scale_ppb={} accepted={}",
+            "mapping epoch rebased: system_ticks={} utc={}s+{}us source={:?} quality_us={} residual_us={} calibrated_ppb={} phase_slew_ppb={} mapping_scale_ppb={} accepted={}",
             anchor.system_time.as_ticks(),
             anchor.utc.seconds,
             anchor.utc.microseconds,
             anchor.source,
             anchor.quality.uncertainty_us,
             residual_us,
-            self.state.estimated_frequency_error_ppb,
+            self.state.calibrated_frequency_error_ppb,
+            self.state.phase_slew_ppb,
             1_000_000_000i128 + self.state.estimated_frequency_error_ppb as i128,
             self.state.accepted_anchors
         );
         #[cfg(feature = "defmt")]
         defmt::info!(
-            "mapping state: reference_system_ticks={} reference_utc={}s+{}us last_anchor_system_ticks={:?} last_anchor_utc={:?} holdover_duration_ms={} uncertainty_us={} utc_valid={} active_time_source={:?} accepted_anchors={} rejected_anchors={}",
+            "mapping state: reference_system_ticks={} reference_utc={}s+{}us last_anchor_system_ticks={:?} last_anchor_utc={:?} holdover_duration_ms={} uncertainty_us={} utc_valid={} active_time_source={:?} calibrated_ppb={} calibration_samples={} phase_slew_ppb={} accepted_anchors={} rejected_anchors={} utc_second_corrections={}",
             self.state.reference_system_time.as_ticks(),
             self.state.reference_utc.seconds,
             self.state.reference_utc.microseconds,
@@ -188,8 +180,12 @@ impl TimeEstimator {
             self.state.uncertainty_us,
             self.state.utc_valid,
             self.state.active_time_source,
+            self.state.calibrated_frequency_error_ppb,
+            self.state.frequency_calibration_samples,
+            self.state.phase_slew_ppb,
             self.state.accepted_anchors,
-            self.state.rejected_anchors
+            self.state.rejected_anchors,
+            self.state.utc_second_corrections
         );
         true
     }
@@ -218,6 +214,8 @@ impl TimeEstimator {
         self.state.reference_system_time = anchor.system_time;
         self.state.reference_utc = anchor.utc;
         self.state.estimated_frequency_error_ppb = 0;
+        self.state.calibrated_frequency_error_ppb = 0;
+        self.state.phase_slew_ppb = 0;
         self.state.uncertainty_us = anchor.quality.uncertainty_us;
         self.state.last_anchor_system_time = Some(anchor.system_time);
         self.state.last_anchor_utc = Some(anchor.utc);
@@ -227,7 +225,7 @@ impl TimeEstimator {
         self.state.last_anchor_residual_us = None;
         self.state.accepted_anchors = 1;
         self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
-        self.frequency_reference = Some(anchor);
+        self.add_frequency_sample(anchor);
         #[cfg(feature = "defmt")]
         defmt::info!(
             "mapping epoch initialized with first fix: system_ticks={} utc={}s+{}us source={:?} quality_us={} scale_ppb=0 mapping_scale_ppb=1000000000",
@@ -242,6 +240,103 @@ impl TimeEstimator {
     fn reject(&mut self) {
         self.state.rejected_anchors = self.state.rejected_anchors.saturating_add(1);
     }
+
+    fn add_frequency_sample(&mut self, anchor: Anchor) {
+        if self.frequency_sample_count != 0 {
+            let last = self.frequency_samples[self.frequency_sample_count - 1];
+            if last.source != anchor.source {
+                self.frequency_sample_count = 0;
+            }
+        }
+        if self.frequency_sample_count != 0 {
+            let last = self.frequency_samples[self.frequency_sample_count - 1];
+            if anchor
+                .system_time
+                .as_ticks()
+                .saturating_sub(last.system_ticks)
+                < self.config.minimum_frequency_baseline.as_ticks()
+            {
+                return;
+            }
+        }
+
+        if self.frequency_sample_count == FREQUENCY_SAMPLE_CAPACITY {
+            self.frequency_samples.copy_within(1.., 0);
+            self.frequency_sample_count -= 1;
+        }
+        self.frequency_samples[self.frequency_sample_count] = FrequencySample {
+            system_ticks: anchor.system_time.as_ticks(),
+            utc_us: anchor.utc.as_micros(),
+            source: anchor.source,
+        };
+        self.frequency_sample_count += 1;
+        self.state.frequency_calibration_samples = self.frequency_sample_count as u8;
+    }
+
+    fn update_frequency_calibration(&mut self) {
+        if self.frequency_sample_count < 2 {
+            return;
+        }
+        // Median pairwise slope (Theil-Sen) is robust to isolated mistagged
+        // UTC samples while still using the complete ten-minute window.
+        let mut slopes = [0i64; FREQUENCY_SLOPE_CAPACITY];
+        let mut slope_count = 0usize;
+        for first_index in 0..self.frequency_sample_count - 1 {
+            let first = self.frequency_samples[first_index];
+            for second in &self.frequency_samples[first_index + 1..self.frequency_sample_count] {
+                let system_ticks = second.system_ticks.saturating_sub(first.system_ticks);
+                let nominal_us = system_ticks as i128 * 1_000_000 / TICK_HZ as i128;
+                let utc_us = second.utc_us as i128 - first.utc_us as i128;
+                if nominal_us <= 0 || utc_us <= 0 {
+                    continue;
+                }
+                let observed_ppb = (utc_us - nominal_us) * 1_000_000_000 / nominal_us;
+                if observed_ppb.abs() <= self.config.max_frequency_error_ppb as i128 {
+                    slopes[slope_count] = observed_ppb as i64;
+                    slope_count += 1;
+                }
+            }
+        }
+        if slope_count == 0 {
+            return;
+        }
+        slopes[..slope_count].sort_unstable();
+        let calibrated_ppb = if slope_count % 2 == 0 {
+            let upper = slopes[slope_count / 2] as i128;
+            let lower = slopes[slope_count / 2 - 1] as i128;
+            ((lower + upper) / 2) as i64
+        } else {
+            slopes[slope_count / 2]
+        };
+        self.state.calibrated_frequency_error_ppb = calibrated_ppb;
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "robust frequency regression: samples={} valid_slopes={} span_s={} calibrated_ppb={}",
+            self.frequency_sample_count,
+            slope_count,
+            (self.frequency_samples[self.frequency_sample_count - 1]
+                .system_ticks
+                .saturating_sub(self.frequency_samples[0].system_ticks))
+                / TICK_HZ,
+            calibrated_ppb
+        );
+    }
+}
+
+fn phase_slew_ppb(residual_us: i128, config: &TimeConfig) -> i64 {
+    let duration_us = config.phase_slew_duration.as_micros() as i128;
+    if duration_us == 0 {
+        return 0;
+    }
+    let requested = residual_us.saturating_mul(1_000_000_000) / duration_us;
+    requested.clamp(
+        -(config.max_phase_slew_ppb as i128),
+        config.max_phase_slew_ppb as i128,
+    ) as i64
+}
+
+fn abs_i128_to_u64(value: i128) -> u64 {
+    value.unsigned_abs().min(u64::MAX as u128) as u64
 }
 
 fn uncertainty_growth(duration: Duration, stability_ppb: u64) -> u64 {
@@ -293,22 +388,20 @@ mod tests {
     }
 
     #[test]
-    fn estimates_frequency_error_with_ewma() {
+    fn estimates_frequency_error_with_long_baseline_regression() {
         let mut config = TimeConfig::default();
-        config.frequency_ewma_weight_per_mille = 1_000;
         config.minimum_frequency_baseline = Duration::from_secs(1);
         let mut estimator = TimeEstimator::new(config);
         estimator.ingest(anchor(0, 1_700_000_000, 10));
         let mut second = anchor(100, 1_700_000_100, 10);
         second.utc.microseconds = 1_000;
         assert!(estimator.ingest(second));
-        assert_eq!(estimator.state().estimated_frequency_error_ppb, 10_000);
+        assert_eq!(estimator.state().calibrated_frequency_error_ppb, 10_000);
     }
 
     #[test]
     fn frequency_baseline_spans_frequent_anchors() {
         let mut config = TimeConfig::default();
-        config.frequency_ewma_weight_per_mille = 1_000;
         config.minimum_frequency_baseline = Duration::from_secs(10);
         let mut estimator = TimeEstimator::new(config);
         estimator.ingest(anchor(0, 1_700_000_000, 10));
@@ -318,27 +411,37 @@ mod tests {
         let mut tenth = anchor(10, 1_700_000_010, 10);
         tenth.utc.microseconds = 100;
         assert!(estimator.ingest(tenth));
-        assert_eq!(estimator.state().estimated_frequency_error_ppb, 10_000);
+        assert_eq!(estimator.state().calibrated_frequency_error_ppb, 10_000);
     }
 
     #[test]
-    fn source_change_restarts_frequency_baseline() {
-        let mut config = TimeConfig::default();
-        config.frequency_ewma_weight_per_mille = 1_000;
-        config.minimum_frequency_baseline = Duration::from_secs(10);
-        let mut estimator = TimeEstimator::new(config);
-        let mut coarse = anchor(0, 1_700_000_000, 1_000_000);
-        coarse.source = TimeSource::GpsNmea;
-        estimator.ingest(coarse);
-        estimator.ingest(anchor(1, 1_700_000_001, 10));
-        let mut fine = anchor(11, 1_700_000_011, 10);
-        fine.utc.microseconds = 100;
-        estimator.ingest(fine);
-        assert_eq!(estimator.state().estimated_frequency_error_ppb, 10_000);
+    fn frequency_regression_rejects_one_in_window_outlier() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        estimator.ingest(anchor(0, 1_700_000_000, 10));
+        for minute in 1..=10u64 {
+            let mut sample = anchor(minute * 60, 1_700_000_000 + (minute * 60) as i64, 10);
+            sample.utc.microseconds = minute as u32 * 600;
+            if minute == 5 {
+                sample.utc.microseconds += 50_000;
+            }
+            assert!(estimator.ingest(sample));
+        }
+        assert_eq!(estimator.state().calibrated_frequency_error_ppb, 10_000);
     }
 
     #[test]
-    fn default_guardrail_accepts_software_pps_noise() {
+    fn corrects_adjacent_utc_second_without_poisoning_phase() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        estimator.ingest(anchor(0, 1_700_000_000, 10));
+        assert!(estimator.ingest(anchor(1, 1_700_000_000, 10)));
+        let state = estimator.state();
+        assert_eq!(state.utc_second_corrections, 1);
+        assert_eq!(state.last_anchor_residual_us, Some(0));
+        assert_eq!(state.rejected_anchors, 0);
+    }
+
+    #[test]
+    fn hardware_scale_sample_handles_small_capture_quantization() {
         let mut config = TimeConfig::default();
         config.minimum_frequency_baseline = Duration::from_secs(10);
         let mut estimator = TimeEstimator::new(config);
@@ -348,7 +451,24 @@ mod tests {
             ..anchor(10, 1_700_000_010, 10)
         };
         assert!(estimator.ingest(noisy));
-        assert!(estimator.state().estimated_frequency_error_ppb < 0);
+        assert!(estimator.state().calibrated_frequency_error_ppb < 0);
+    }
+
+    #[test]
+    fn phase_slew_rebases_without_a_clock_step_and_covers_residual() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        estimator.ingest(anchor(0, 1_700_000_000, 10));
+        let system = Instant::from_ticks(TICK_HZ);
+        let before = estimator.state().system_to_utc(system).unwrap();
+        let mut next = anchor(1, 1_700_000_001, 10);
+        next.utc.microseconds = 1_000;
+        assert!(estimator.ingest(next));
+        let state = estimator.state();
+        let after = state.system_to_utc(system).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(state.last_anchor_residual_us, Some(1_000));
+        assert_eq!(state.uncertainty_us, 1_010);
+        assert!(state.phase_slew_ppb > 0);
     }
 
     #[test]

@@ -84,10 +84,15 @@ pub struct Anchor {
 pub struct TimeConfig {
     pub max_uncertainty_us: u64,
     pub holdover_stability_ppb: u64,
-    pub frequency_ewma_weight_per_mille: u16,
     pub max_frequency_error_ppb: i64,
     pub max_anchor_residual_us: u64,
     pub minimum_frequency_baseline: Duration,
+    /// Time over which a PPS phase residual is removed without stepping UTC.
+    pub phase_slew_duration: Duration,
+    pub max_phase_slew_ppb: i64,
+    /// Window around a one-second residual in which the NMEA UTC label is
+    /// corrected to the adjacent second.
+    pub utc_second_correction_tolerance_us: u64,
     pub publish_interval: Duration,
 }
 
@@ -96,13 +101,12 @@ impl Default for TimeConfig {
         Self {
             max_uncertainty_us: 5_000_000,
             holdover_stability_ppb: 10_000,
-            frequency_ewma_weight_per_mille: 10, // was 125
-            // EXTI PPS timestamps are taken in software after wake-up, so their
-            // short-baseline measurements can be noisier than the oscillator's
-            // physical tolerance. Hardware capture can use a tighter limit.
-            max_frequency_error_ppb: 1_000_000,
-            max_anchor_residual_us: 2_000_000,
-            minimum_frequency_baseline: Duration::from_secs(10),
+            max_frequency_error_ppb: 100_000,
+            max_anchor_residual_us: 100_000,
+            minimum_frequency_baseline: Duration::from_secs(60),
+            phase_slew_duration: Duration::from_secs(60),
+            max_phase_slew_ppb: 250_000,
+            utc_second_correction_tolerance_us: 100_000,
             publish_interval: Duration::from_secs(1),
         }
     }
@@ -121,7 +125,12 @@ pub struct TimeState {
     pub utc_valid: bool,
     pub reference_system_time: Instant,
     pub reference_utc: UtcTimestamp,
+    /// Total mapping scale correction, including temporary phase slew.
     pub estimated_frequency_error_ppb: i64,
+    /// Long-baseline oscillator calibration, excluding phase slew.
+    pub calibrated_frequency_error_ppb: i64,
+    pub frequency_calibration_samples: u8,
+    pub phase_slew_ppb: i64,
     pub uncertainty_us: u64,
     pub last_anchor_system_time: Option<Instant>,
     pub last_anchor_utc: Option<UtcTimestamp>,
@@ -131,6 +140,7 @@ pub struct TimeState {
     /// Residual of the most recently evaluated post-initial anchor, expressed
     /// as actual UTC minus the current clock mapping.
     pub last_anchor_residual_us: Option<i64>,
+    pub utc_second_corrections: u32,
     pub accepted_anchors: u32,
     pub rejected_anchors: u32,
 }
@@ -145,6 +155,9 @@ impl TimeState {
                 microseconds: 0,
             },
             estimated_frequency_error_ppb: 0,
+            calibrated_frequency_error_ppb: 0,
+            frequency_calibration_samples: 0,
+            phase_slew_ppb: 0,
             uncertainty_us: u64::MAX,
             last_anchor_system_time: None,
             last_anchor_utc: None,
@@ -152,6 +165,7 @@ impl TimeState {
             active_time_source: TimeSource::None,
             first_anchor_source: TimeSource::None,
             last_anchor_residual_us: None,
+            utc_second_corrections: 0,
             accepted_anchors: 0,
             rejected_anchors: 0,
         }

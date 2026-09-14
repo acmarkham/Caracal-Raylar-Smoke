@@ -9,8 +9,8 @@ use embassy_stm32::time::{mhz, Hertz};
 use embassy_stm32::usart::{BufferedUart, Config as UartConfig, DataBits, Parity, StopBits};
 use embassy_time::Timer;
 use raylar_board_v1p0::{Gps, Irqs, SdCard};
-use raylar_drivers::gps::stm32::{ExtiPps, Stm32GpsPower};
-use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources};
+use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
+use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources, PpsTimingSource};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
     detect_exfat_volume, FileHandle, PartitionedBlockDevice, StorageDriver,
@@ -110,9 +110,10 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
         tx,
         rx,
         pps,
+        pps_capture_pin,
+        pps_capture_timer,
         rst,
         en,
-        ..
     } = gps;
     let mut uart_config = UartConfig::default();
     uart_config.baudrate = 9_600;
@@ -134,12 +135,17 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
         uart_config
     ));
 
+    let gps_config = GpsConfig {
+        pps_timing_source: PpsTimingSource::Tim4Capture,
+        ..GpsConfig::default()
+    };
+    let pps = Stm32Pps::from_config(&gps_config, pps, pps_capture_timer, pps_capture_pin, Irqs);
     let driver = GpsDriver::new(
         uart,
-        ExtiPps::new(pps),
+        pps,
         Stm32GpsPower::new(en, rst),
         &GPS_RESOURCES,
-        GpsConfig::default(),
+        gps_config,
     );
     let time = TimeService::new(&TIME_RESOURCES, TimeConfig::default());
     let correlations = unwrap!(GPS_RESOURCES.time_receiver()).as_dyn();
@@ -174,6 +180,23 @@ pub async fn start_fake_time(spawner: Spawner, _gps: Gps<'static>, utc_seconds: 
 }
 
 pub async fn storage_driver(sd: SdCard<'static>) -> BoardStorageBackend {
+    storage_driver_inner(sd, None).await
+}
+
+/// Creates the board storage driver and invokes `fatal_handler` before
+/// entering the terminal wait used for unrecoverable media failures.
+#[allow(dead_code)]
+pub async fn storage_driver_with_fatal_handler(
+    sd: SdCard<'static>,
+    fatal_handler: fn(),
+) -> BoardStorageBackend {
+    storage_driver_inner(sd, Some(fatal_handler)).await
+}
+
+async fn storage_driver_inner(
+    sd: SdCard<'static>,
+    fatal_handler: Option<fn()>,
+) -> BoardStorageBackend {
     let SdCard {
         sdmmc,
         clk,
@@ -189,6 +212,7 @@ pub async fn storage_driver(sd: SdCard<'static>) -> BoardStorageBackend {
     power.set_high();
     if switch.is_high() {
         error!("SD init failed at card-detect: SD_SW is high (no card detected)");
+        notify_fatal(fatal_handler);
         pending_forever().await;
     }
     info!("SD init phase 1 complete: card detected (SD_SW low)");
@@ -225,6 +249,7 @@ pub async fn storage_driver(sd: SdCard<'static>) -> BoardStorageBackend {
         }
         Err(e) => {
             error!("SD init failed during card initialization: {}", e);
+            notify_fatal(fatal_handler);
             pending_forever().await
         }
     };
@@ -244,6 +269,7 @@ pub async fn storage_driver(sd: SdCard<'static>) -> BoardStorageBackend {
         }
         Err(e) => {
             error!("SD init failed during exFAT volume detection: {}", e);
+            notify_fatal(fatal_handler);
             pending_forever().await
         }
     };
@@ -256,8 +282,14 @@ pub async fn storage_driver(sd: SdCard<'static>) -> BoardStorageBackend {
     }
 }
 
+fn notify_fatal(fatal_handler: Option<fn()>) {
+    if let Some(handler) = fatal_handler {
+        handler();
+    }
+}
+
 #[embassy_executor::task]
-async fn gps_driver_task(driver: GpsDriver<BufferedUart<'static>, ExtiPps, Stm32GpsPower>) -> ! {
+async fn gps_driver_task(driver: GpsDriver<BufferedUart<'static>, Stm32Pps, Stm32GpsPower>) -> ! {
     driver.run().await
 }
 

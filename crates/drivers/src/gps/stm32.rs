@@ -75,6 +75,8 @@ pub struct Tim4Pps {
     capture: InputCapture<'static, TIM4>,
     previous_raw: Option<u32>,
     extended_ticks: u64,
+    reference_capture_ticks: Option<u64>,
+    reference_system_time: Option<Instant>,
 }
 
 impl Tim4Pps {
@@ -101,6 +103,8 @@ impl Tim4Pps {
             capture,
             previous_raw: None,
             extended_ticks: 0,
+            reference_capture_ticks: None,
+            reference_system_time: None,
         }
     }
 
@@ -122,8 +126,29 @@ impl PpsSource for Tim4Pps {
 
     async fn wait_for_pps(&mut self) -> Result<PpsCapture, Self::Error> {
         let raw: u32 = self.capture.wait_for_rising_edge(Channel::Ch4).await;
-        let timestamp = Instant::now();
         let capture_ticks = self.extend_ticks(raw);
+        // The first edge establishes the cross-domain epoch. Later timestamps
+        // are reconstructed from the hardware capture counter, so interrupt
+        // wake-up latency cannot appear as PPS jitter.
+        let timestamp = match (self.reference_capture_ticks, self.reference_system_time) {
+            (Some(reference_ticks), Some(reference_time)) => {
+                let elapsed_capture_ticks = capture_ticks.saturating_sub(reference_ticks);
+                let elapsed_system_ticks = (elapsed_capture_ticks as u128)
+                    .saturating_mul(embassy_time::TICK_HZ as u128)
+                    / TIM4_PPS_CAPTURE_FREQUENCY_HZ as u128;
+                Instant::from_ticks(
+                    reference_time
+                        .as_ticks()
+                        .saturating_add(elapsed_system_ticks.min(u64::MAX as u128) as u64),
+                )
+            }
+            _ => {
+                let now = Instant::now();
+                self.reference_capture_ticks = Some(capture_ticks);
+                self.reference_system_time = Some(now);
+                now
+            }
+        };
         Ok(PpsCapture {
             timing_source: PpsTimingSource::Tim4Capture,
             timestamp,

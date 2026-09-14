@@ -1,10 +1,14 @@
 use embassy_sync::watch::DynReceiver;
 use embassy_time::Duration;
-use raylar_drivers::gps::{TimeCorrelation, UtcDate, UtcDateTime};
+use raylar_drivers::gps::{PpsTimingSource, TimeCorrelation, UtcDate, UtcDateTime};
 
 use crate::{Anchor, AnchorQuality, AnchorSender, TimeSource, UtcTimestamp};
 
 pub const GPS_PPS_UNCERTAINTY: Duration = Duration::from_micros(100);
+// Hardware capture removes edge-to-edge interrupt jitter, but its first edge
+// is still aligned to Embassy time in software. Retain the conservative phase
+// bound until those clock domains have a fully hardware-defined epoch.
+pub const GPS_CAPTURE_PPS_UNCERTAINTY: Duration = Duration::from_micros(100);
 
 pub async fn run_gps_time_source<const ANCHOR_DEPTH: usize>(
     mut correlations: DynReceiver<'static, TimeCorrelation>,
@@ -26,7 +30,13 @@ pub fn correlation_to_anchor(correlation: TimeCorrelation) -> Option<Anchor> {
     Some(Anchor {
         system_time: pps_timestamp,
         utc,
-        quality: AnchorQuality::new(GPS_PPS_UNCERTAINTY.as_micros()),
+        quality: AnchorQuality::new(
+            if correlation.pps_timing_source == Some(PpsTimingSource::Tim4Capture) {
+                GPS_CAPTURE_PPS_UNCERTAINTY.as_micros()
+            } else {
+                GPS_PPS_UNCERTAINTY.as_micros()
+            },
+        ),
         source: TimeSource::GpsPps,
         capture_ticks: correlation.pps_capture_ticks,
     })
@@ -111,6 +121,15 @@ mod tests {
         let anchor = correlation_to_anchor(correlation(Some(pps))).unwrap();
         assert_eq!(anchor.system_time, pps);
         assert_eq!(anchor.source, TimeSource::GpsPps);
+        assert_eq!(anchor.quality.uncertainty_us, 100);
+    }
+
+    #[test]
+    fn hardware_capture_retains_cross_clock_phase_bound() {
+        let pps = Instant::from_ticks(1_000);
+        let mut value = correlation(Some(pps));
+        value.pps_timing_source = Some(PpsTimingSource::Tim4Capture);
+        let anchor = correlation_to_anchor(value).unwrap();
         assert_eq!(anchor.quality.uncertainty_us, 100);
     }
 

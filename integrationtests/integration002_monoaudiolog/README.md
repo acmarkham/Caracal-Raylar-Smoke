@@ -61,11 +61,30 @@ each flash are retained under `.probe-rs-logs/`.
   Time Service can calibrate its oscillator frequency from PPS. Only after this
   one-time calibration period does the normal 30-second on/30-second off duty
   cycle begin.
+- PPS edges use TIM4 channel 4 hardware input capture at 1 MHz. After the first
+  cross-clock epoch is established, edge timestamps are reconstructed from the
+  capture counter rather than interrupt wake-up time.
+- Oscillator calibration uses an allocation-free 11-point, ten-minute
+  Theil-Sen regression over minute-spaced PPS samples. Pairwise slopes outside
+  100 ppm are discarded, so an isolated timing or UTC-label outlier cannot
+  dominate the calibration.
+- A PPS label approximately one second from the current mapping is corrected to
+  the adjacent UTC second when that leaves a residual within 100 ms; larger
+  discontinuities are rejected. Accepted phase error is removed by a bounded
+  60-second rate slew, without stepping the existing UTC mapping.
+- Published uncertainty includes the full latest PPS residual plus capture
+  uncertainty, then grows according to the holdover stability bound while GPS
+  is off.
 - The ten-second Time records include first/current anchor source, latest PPS
-  residual, oscillator estimate, accepted/rejected anchor counts, uncertainty,
-  and holdover duration. Separate GPS records expose `Searching`, `Calibrating`,
-  and `Reacquiring` state plus calibration, search, reacquisition, and PPS
-  counters.
+  residual, calibrated and slew frequency components, accepted/rejected anchor
+  counts, UTC-second corrections, uncertainty, and holdover duration. Separate
+  GPS records expose `Searching`, `Calibrating`, and `Reacquiring` state, PPS
+  capture backend, and calibration/search/reacquisition counters.
+- Severe failures that make recording unsafe or impossible—including missing
+  SD media, card/filesystem initialization failures, stream write failures,
+  and unrecoverable recorder failures—latch recording off. Both red LEDs then
+  flash together at 1 Hz and a three-note descending alarm repeats every ten
+  seconds. Green heartbeats stop until the board is reset.
 - `MDF_DFLTISR.DOVRF` (bit 1) is the data-overrun flag. The observed sticky
   `CKABF` bit (bit 10) is reported separately as `clock_absent`; it is not a DMA
   or data overrun.

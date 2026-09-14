@@ -88,6 +88,8 @@ static AUDIO: AudioSource<AUDIO_CAPACITY, 2> = AudioSource::new(AudioFormat::new
 static ERROR_SIGNAL: embassy_sync::signal::Signal<CriticalSectionRawMutex, ()> =
     embassy_sync::signal::Signal::new();
 static LED_COMMANDS: Channel<CriticalSectionRawMutex, LedCommand, 16> = Channel::new();
+static BUZZER_COMMANDS: Channel<CriticalSectionRawMutex, BuzzerCommand, 4> = Channel::new();
+static SEVERE_ERROR_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CPU_IDLE_OPEN: AtomicBool = AtomicBool::new(false);
 static CPU_IDLE_START_TICKS: AtomicU32 = AtomicU32::new(0);
@@ -141,6 +143,20 @@ enum LedCommand {
     On(leds::LedName),
     Off(leds::LedName),
     Toggle(leds::LedName),
+}
+
+#[derive(Clone, Copy)]
+enum BuzzerCommand {
+    #[cfg(not(feature = "fake-gps-time"))]
+    GpsPpsAcquired,
+    SevereError,
+}
+
+fn signal_severe_error() {
+    if !SEVERE_ERROR_ACTIVE.swap(true, Ordering::AcqRel) {
+        AUDIO_RECORDING_ACTIVE.store(false, Ordering::Release);
+        ERROR_SIGNAL.signal(());
+    }
 }
 
 struct SharedStorage<B: 'static> {
@@ -273,7 +289,7 @@ async fn main(spawner: Spawner) -> ! {
         sys_main_green,
         sys_sd_blue
     }))));
-    spawner.spawn(unwrap!(error_latch_task()));
+    spawner.spawn(unwrap!(severe_error_task()));
     spawner.spawn(unwrap!(cpu_usage_task()));
     #[cfg(not(feature = "fake-gps-time"))]
     common::start_time(spawner, gps).await;
@@ -291,6 +307,9 @@ async fn main(spawner: Spawner) -> ! {
         pin: board_buzzer.pin,
     });
     for _ in 0..3 {
+        if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+            break;
+        }
         let _ = buzzer_driver
             .play_tone(
                 buzzer::PitchHz(1_000),
@@ -300,12 +319,17 @@ async fn main(spawner: Spawner) -> ! {
             .await;
         Timer::after_millis(250).await;
     }
+    spawner.spawn(unwrap!(buzzer_task(buzzer_driver)));
+    if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+        common::pending_forever().await;
+    }
     #[cfg(not(feature = "fake-gps-time"))]
-    spawner.spawn(unwrap!(gps_pps_trill_task(buzzer_driver)));
-    #[cfg(feature = "fake-gps-time")]
-    drop(buzzer_driver);
-    let backend = common::storage_driver(sd).await;
-    let mut storage = unwrap!(StorageService::new(backend, &common::TIME_RESOURCES));
+    spawner.spawn(unwrap!(gps_pps_trill_task()));
+    let backend = common::storage_driver_with_fatal_handler(sd, signal_severe_error).await;
+    let mut storage = match StorageService::new(backend, &common::TIME_RESOURCES) {
+        Ok(storage) => storage,
+        Err(error) => fail_forever("storage service creation failed", error).await,
+    };
     if let Err(error) = storage.mount().await {
         fail_forever("storage mount failed", error).await;
     }
@@ -328,16 +352,16 @@ async fn main(spawner: Spawner) -> ! {
         Ok(ProcessOutcome::Written) => {}
         Ok(ProcessOutcome::Empty) => {
             error!("system log startup record was not queued");
-            ERROR_SIGNAL.signal(());
+            signal_severe_error();
         }
         Err(error) => {
             error!("system log startup write failed: {}", error);
-            ERROR_SIGNAL.signal(());
+            signal_severe_error();
         }
     }
     if let Err(error) = logging.flush().await {
         error!("system log startup flush failed: {}", error);
-        ERROR_SIGNAL.signal(());
+        signal_severe_error();
     } else {
         info!("system log stream opened and flushed: /syslog.txt");
     }
@@ -361,15 +385,18 @@ async fn main(spawner: Spawner) -> ! {
     );
     spawner.spawn(unwrap!(capture_task(microphone_driver)));
     spawner.spawn(unwrap!(audio_forwarder_task(audio_log)));
-    let recorder = unwrap!(AudioRecorder::<_, _, AUDIO_CAPACITY, 2>::new(
+    let recorder = match AudioRecorder::<_, _, AUDIO_CAPACITY, 2>::new(
         &AUDIO,
         SharedRecording { storage },
         TimeMetadataSource::new(&common::TIME_RESOURCES),
         AudioRecorderConfig {
             recording_seconds: 60,
-            storage_layout: StorageLayout::HourlyFolders
-        }
-    ));
+            storage_layout: StorageLayout::HourlyFolders,
+        },
+    ) {
+        Ok(recorder) => recorder,
+        Err(error) => fail_forever("audio recorder creation failed", error).await,
+    };
     run_services(logging, recorder).await
 }
 
@@ -454,13 +481,34 @@ async fn led_task(mut driver: leds::LedDriver<'static>) -> ! {
 }
 
 #[embassy_executor::task]
-async fn error_latch_task() -> ! {
+async fn severe_error_task() -> ! {
     ERROR_SIGNAL.wait().await;
+    AUDIO_RECORDING_ACTIVE.store(false, Ordering::Release);
+    BUZZER_COMMANDS.send(BuzzerCommand::SevereError).await;
     LED_COMMANDS
-        .send(LedCommand::On(leds::LedName::SysMainRed))
+        .send(LedCommand::Off(leds::LedName::SysMainGreen))
+        .await;
+    LED_COMMANDS
+        .send(LedCommand::Off(leds::LedName::SysGpsGreen))
+        .await;
+    LED_COMMANDS
+        .send(LedCommand::Off(leds::LedName::SysSdBlue))
         .await;
     loop {
-        Timer::after_secs(60).await;
+        LED_COMMANDS
+            .send(LedCommand::On(leds::LedName::SysMainRed))
+            .await;
+        LED_COMMANDS
+            .send(LedCommand::On(leds::LedName::SysGpsRed))
+            .await;
+        Timer::after_millis(500).await;
+        LED_COMMANDS
+            .send(LedCommand::Off(leds::LedName::SysMainRed))
+            .await;
+        LED_COMMANDS
+            .send(LedCommand::Off(leds::LedName::SysGpsRed))
+            .await;
+        Timer::after_millis(500).await;
     }
 }
 
@@ -472,11 +520,13 @@ async fn voltage_task(driver: BoardVoltageDriver) -> ! {
 #[embassy_executor::task]
 async fn charger_task(mut driver: BoardChargerDriver) -> ! {
     if driver.initialize().is_err() || driver.enable().is_err() {
-        ERROR_SIGNAL.signal(());
+        signal_severe_error();
     }
     loop {
         if driver.refresh_state().is_err() {
-            ERROR_SIGNAL.signal(());
+            // A transient telemetry refresh failure is recoverable. Keep the
+            // service running; initialization/enable failure above is fatal.
+            error!("charger state refresh failed; retrying");
         }
         Timer::after_secs(1).await;
     }
@@ -493,7 +543,8 @@ async fn capture_task(driver: MicDriver) -> ! {
 }
 
 #[embassy_executor::task]
-async fn gps_pps_trill_task(mut buzzer: buzzer::BuzzerDriver<'static>) {
+#[cfg(not(feature = "fake-gps-time"))]
+async fn gps_pps_trill_task() {
     let mut states = unwrap!(common::TIME_RESOURCES.state_receiver());
     let state = loop {
         let state = states.changed().await;
@@ -507,7 +558,28 @@ async fn gps_pps_trill_task(mut buzzer: buzzer::BuzzerDriver<'static>) {
         "GPS first PPS anchor accepted; playing acquisition trill: accepted={} residual_us={:?}",
         state.accepted_anchors, state.last_anchor_residual_us
     );
+    if !SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+        BUZZER_COMMANDS.send(BuzzerCommand::GpsPpsAcquired).await;
+    }
+}
 
+#[embassy_executor::task]
+async fn buzzer_task(mut driver: buzzer::BuzzerDriver<'static>) -> ! {
+    loop {
+        match BUZZER_COMMANDS.receive().await {
+            #[cfg(not(feature = "fake-gps-time"))]
+            BuzzerCommand::GpsPpsAcquired => play_gps_pps_trill(&mut driver).await,
+            BuzzerCommand::SevereError => loop {
+                let next_alarm = Instant::now() + Duration::from_secs(10);
+                play_severe_error_signal(&mut driver).await;
+                Timer::at(next_alarm).await;
+            },
+        }
+    }
+}
+
+#[cfg(not(feature = "fake-gps-time"))]
+async fn play_gps_pps_trill(buzzer: &mut buzzer::BuzzerDriver<'static>) {
     // A quick alternating arpeggio followed by a high resolve: distinctive
     // from the three slow startup beeps, but short enough not to be intrusive.
     for pitch_hz in [1_319, 1_568, 1_319, 1_568, 1_319, 1_568] {
@@ -527,6 +599,19 @@ async fn gps_pps_trill_task(mut buzzer: buzzer::BuzzerDriver<'static>) {
             buzzer::Volume(200),
         )
         .await;
+}
+
+async fn play_severe_error_signal(buzzer: &mut buzzer::BuzzerDriver<'static>) {
+    for pitch_hz in [1_200, 800, 400] {
+        let _ = buzzer
+            .play_tone(
+                buzzer::PitchHz(pitch_hz),
+                Duration::from_millis(180),
+                buzzer::Volume(255),
+            )
+            .await;
+        Timer::after_millis(80).await;
+    }
 }
 
 #[embassy_executor::task]
@@ -580,6 +665,9 @@ where
 {
     let mut next_flush = Instant::now() + Duration::from_secs(10);
     loop {
+        if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+            common::pending_forever().await;
+        }
         match recorder.start().await {
             Ok(()) => break,
             Err(AudioRecorderError::TimeUnavailable) => {
@@ -597,6 +685,9 @@ where
         "audio recording started after valid UTC time; source={:?}",
         common::TIME_RESOURCES.time_state().active_time_source
     );
+    if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+        common::pending_forever().await;
+    }
     AUDIO_RECORDING_ACTIVE.store(true, Ordering::Release);
     loop {
         match recorder.record_next().await {
@@ -605,6 +696,10 @@ where
                 dropped_samples,
                 rotated,
             }) => {
+                if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+                    AUDIO_RECORDING_ACTIVE.store(false, Ordering::Release);
+                    common::pending_forever().await;
+                }
                 LED_COMMANDS
                     .send(LedCommand::Toggle(leds::LedName::SysSdBlue))
                     .await;
@@ -639,7 +734,7 @@ async fn flush_logging<B>(
 {
     if let Err(error) = logging.flush().await {
         error!("system log flush failed: {}", error);
-        ERROR_SIGNAL.signal(());
+        signal_severe_error();
     }
     let stats = logging.stats();
     info!(
@@ -653,7 +748,7 @@ async fn flush_logging<B>(
         stats.write_failures,
     );
     if stats.dropped_messages != 0 || stats.write_failures != 0 {
-        ERROR_SIGNAL.signal(());
+        signal_severe_error();
     }
 }
 
@@ -675,7 +770,7 @@ async fn drain_logging<B>(
             Ok(ProcessOutcome::Empty) => return,
             Err(error) => {
                 error!("system log write failed: {}", error);
-                ERROR_SIGNAL.signal(());
+                signal_severe_error();
                 return;
             }
         }
@@ -685,6 +780,9 @@ async fn drain_logging<B>(
 #[embassy_executor::task]
 async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log: TestLogger) -> ! {
     loop {
+        if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+            common::pending_forever().await;
+        }
         LED_COMMANDS
             .send(LedCommand::On(leds::LedName::SysMainGreen))
             .await;
@@ -709,35 +807,43 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         match common::TIME_RESOURCES.current_utc() {
             Ok(utc) => record_outcome(log_info!(
                 time_log,
-                "UTC {} source={:?} first={:?} valid={} drift_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} accepted={} rejected={}",
+                "UTC {} src={:?} first={:?} valid={} map_ppb={} cal_ppb={} cal_n={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
                 utc.seconds,
                 time.active_time_source,
                 time.first_anchor_source,
                 time.utc_valid,
                 time.estimated_frequency_error_ppb,
+                time.calibrated_frequency_error_ppb,
+                time.frequency_calibration_samples,
+                time.phase_slew_ppb,
                 time.last_anchor_residual_us,
                 time.uncertainty_us,
                 time.holdover_duration.as_micros(),
                 time.accepted_anchors,
-                time.rejected_anchors
+                time.rejected_anchors,
+                time.utc_second_corrections
             )),
             Err(_) => record_outcome(log_info!(
                 time_log,
-                "UTC unavailable source={:?} first={:?} valid=false drift_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} accepted={} rejected={}",
+                "UTC unavailable src={:?} first={:?} valid=false map_ppb={} cal_ppb={} cal_n={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
                 time.active_time_source,
                 time.first_anchor_source,
                 time.estimated_frequency_error_ppb,
+                time.calibrated_frequency_error_ppb,
+                time.frequency_calibration_samples,
+                time.phase_slew_ppb,
                 time.last_anchor_residual_us,
                 time.uncertainty_us,
                 time.holdover_duration.as_micros(),
                 time.accepted_anchors,
-                time.rejected_anchors
+                time.rejected_anchors,
+                time.utc_second_corrections
             )),
         }
         let gps = common::GPS_RESOURCES.stats();
         record_outcome(log_info!(
             gps_log,
-            "state={:?} powered={} calibrated={} reacq_attempts={} reacq_successes={} search_attempts={} search_failures={} pps_events={} pps_timeouts={} search_timeouts={}",
+            "state={:?} powered={} calibrated={} reacq_attempts={} reacq_successes={} search_attempts={} search_failures={} pps_events={} pps_source={:?} pps_timeouts={} search_timeouts={}",
             gps.operating_state,
             gps.powered,
             gps.initial_calibration_complete,
@@ -746,6 +852,7 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             gps.num_search_attempts,
             gps.num_search_failures,
             gps.num_pps_events,
+            gps.last_pps_timing_source,
             gps.num_pps_timeouts,
             gps.num_search_timeouts
         ));
@@ -841,7 +948,7 @@ async fn audio_forwarder_task(audio_log: TestLogger) -> ! {
             })
             .is_err()
         {
-            ERROR_SIGNAL.signal(());
+            signal_severe_error();
             continue;
         }
         record_outcome(audio_log.log_at(
@@ -858,14 +965,12 @@ async fn audio_forwarder_task(audio_log: TestLogger) -> ! {
 
 fn record_outcome(outcome: LogOutcome) {
     if matches!(outcome, LogOutcome::DroppedQueueFull) {
-        ERROR_SIGNAL.signal(());
+        signal_severe_error();
     }
 }
 
 async fn fail_forever<E: defmt::Format>(message: &str, value: E) -> ! {
     error!("{}: {}", message, value);
-    ERROR_SIGNAL.signal(());
-    loop {
-        Timer::after_secs(60).await;
-    }
+    signal_severe_error();
+    common::pending_forever().await
 }

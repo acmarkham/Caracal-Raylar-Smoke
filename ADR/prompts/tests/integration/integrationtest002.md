@@ -45,6 +45,10 @@ After GPS fix is acquired: Audio
    been accepted.
 3. Keep GPS continuously powered for 10 minutes after the first fix to
    calibrate oscillator frequency before entering the normal GPS power cycle.
+   Use hardware timer input capture for PPS and an outlier-resistant regression
+   spanning this calibration interval. Correct unambiguous adjacent-second NMEA
+   labels, reject remaining large residuals, slew smaller phase errors without
+   stepping UTC, and include residual phase error in published uncertainty.
 4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
 5. Save data to minute long wav files, in hourly folders. 
 6. Start on top-of-the minute boundary e.g. 00s

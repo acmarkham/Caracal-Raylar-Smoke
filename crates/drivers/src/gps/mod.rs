@@ -963,7 +963,10 @@ where
                 previous = Some(capture.timestamp);
                 previous_capture_ticks = capture.capture_ticks;
                 pps_pub.send(info);
-                modify_stats(&stats_pub, |stats| stats.num_pps_events = count);
+                modify_stats(&stats_pub, |stats| {
+                    stats.num_pps_events = count;
+                    stats.last_pps_timing_source = Some(capture.timing_source);
+                });
             }
             Err(_) => {
                 modify_stats(&stats_pub, |stats| {
