@@ -31,6 +31,7 @@ param(
     [switch]$NoBuild,
     [switch]$NoVerify,
     [switch]$DryRun,
+    [switch]$QuietTargetOutput,
 
     [string[]]$CargoArgs = @(),
     [string[]]$ProbeArgs = @()
@@ -279,7 +280,9 @@ try {
         $targetChunk = Read-NewText -Path $targetLog -Offset ([ref]$targetOffset)
         if ($targetChunk) {
             $targetHadOutput = $true
-            Write-Host -NoNewline $targetChunk
+            if (-not $QuietTargetOutput) {
+                Write-Host -NoNewline $targetChunk
+            }
             if ($Until) {
                 $matchWindow = ($matchWindow + $targetChunk)
                 if ($matchWindow.Length -gt 65536) {
@@ -316,7 +319,9 @@ try {
     $targetChunk = Read-NewText -Path $targetLog -Offset ([ref]$targetOffset)
     if ($targetChunk) {
         $targetHadOutput = $true
-        Write-Host -NoNewline $targetChunk
+        if (-not $QuietTargetOutput) {
+            Write-Host -NoNewline $targetChunk
+        }
         if ($Until -and $untilRegex.IsMatch($matchWindow + $targetChunk)) {
             $matchedUntil = $true
         }
@@ -324,7 +329,7 @@ try {
 
     # probe-rs currently mirrors target output to stdout even when it also
     # writes --target-output-file. Avoid echoing that stream twice.
-    if ($stdoutText -and -not $targetHadOutput) {
+    if ($stdoutText -and -not $targetHadOutput -and -not $QuietTargetOutput) {
         Write-Host -NoNewline $stdoutText
     }
     if ($stderrText) {

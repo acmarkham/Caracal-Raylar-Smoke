@@ -55,6 +55,7 @@ members = [
     "unitsmoke/28_GPS_TIM_CC",
     "unitsmoke/29_exfat_read",
     "unitsmoke/30_exfat_write",
+    "unitsmoke/31_sd_inspect",
 ]
 
 [workspace.package]
