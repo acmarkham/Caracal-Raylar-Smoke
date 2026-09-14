@@ -29,7 +29,10 @@ const CACHE_BLOCKS: usize = 8;
 const MAX_ENTRIES: usize = 128;
 const MAX_DIRECTORIES: usize = 32;
 const MAX_DEPTH: u8 = 4;
-const MAX_SNIPPET_FILES: usize = 16;
+// The card commonly contains more than 16 rotated recordings. Cover the full
+// bounded directory listing so newly created files are not hidden behind old
+// entries during automated validation.
+const MAX_SNIPPET_FILES: usize = 64;
 const MAX_SNIPPET_BYTES: usize = 256;
 const SNIPPET_CHUNK_BYTES: usize = 32;
 
