@@ -14,7 +14,19 @@ foreach ($arg in $RunnerArgs) {
 
 $env:DEFMT_LOG = $defmtLog
 
-& probe-rs run --chip STM32U595VJ @RunnerArgs
+$probeArgs = @(
+    "run",
+    "--chip", "STM32U595VJ",
+    "--non-interactive",
+    "--disable-progressbars",
+    "--verify"
+)
+
+if ($env:PROBE_RS_PROBE) {
+    $probeArgs += @("--probe", $env:PROBE_RS_PROBE)
+}
+
+& probe-rs @probeArgs @RunnerArgs
 $exitCode = $LASTEXITCODE
 
 if ($null -eq $exitCode) {

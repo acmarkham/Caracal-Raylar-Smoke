@@ -9,7 +9,14 @@ pub(super) const MDF_BSMXCR0: usize = 0x0084;
 pub(super) const MDF_DFLTCR0: usize = 0x0088;
 pub(super) const MDF_DFLTCICR0: usize = 0x008c;
 pub(super) const MDF_DFLTRSFR0: usize = 0x0090;
+pub(super) const MDF_DFLTISR0: usize = 0x00b0;
 pub(super) const MDF_DFLTDR0: usize = 0x00f0;
+
+// DFLTISR status flags from RM0456. They are sticky while the filter runs.
+pub(super) const DOVRF: u32 = 1 << 1;
+pub(super) const SATF: u32 = 1 << 9;
+pub(super) const CKABF: u32 = 1 << 10;
+pub(super) const RFOVRF: u32 = 1 << 11;
 
 pub(super) const FILTERS: [usize; 6] = [0, 1, 2, 3, 4, 5];
 pub(super) const DMA_REQUESTS: [u8; 6] = [92, 93, 94, 95, 96, 97];
