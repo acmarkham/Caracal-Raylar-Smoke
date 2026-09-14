@@ -15,14 +15,14 @@ use core::str;
 
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
+use embassy_stm32::Peri;
 use embassy_stm32::exti::ExtiInput;
-use embassy_stm32::gpio::Output;
+use embassy_stm32::gpio::{Output, Pull};
 use embassy_stm32::mode::Async;
 use embassy_stm32::peripherals::{PA2, PA3, USART2};
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usart::{BufferedUart, Config, DataBits, Parity, StopBits};
-use embassy_stm32::Peri;
 use embassy_time::{Duration, Timer};
 use embedded_io_async::Read;
 use raylar_board_v1p0::{Board, Gps, Irqs};
@@ -55,6 +55,7 @@ async fn main(spawner: Spawner) -> ! {
         tx,
         rx,
         pps,
+        pps_exti,
         mut rst,
         mut en,
         ..
@@ -68,6 +69,7 @@ async fn main(spawner: Spawner) -> ! {
 
     Timer::after(Duration::from_millis(250)).await;
 
+    let pps = ExtiInput::new(pps, pps_exti, Pull::None, Irqs);
     spawner.spawn(unwrap!(gps_pps_task(pps, leds.sys_gps_red)));
     spawner.spawn(unwrap!(gps_serial_task(usart, tx, rx)));
 

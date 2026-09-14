@@ -1,13 +1,13 @@
-use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::Peri;
+use embassy_stm32::exti::{ExtiInput, InterruptHandler as ExtiInterruptHandler};
 use embassy_stm32::gpio::{Output, Pull};
 use embassy_stm32::interrupt::typelevel::Binding;
 use embassy_stm32::mode::Async;
-use embassy_stm32::peripherals::{PB9, TIM4};
+use embassy_stm32::peripherals::{EXTI9, PB9, TIM4};
 use embassy_stm32::time::hz;
 use embassy_stm32::timer::input_capture::{CapturePin, Ch1, Ch2, Ch3, Ch4, InputCapture};
 use embassy_stm32::timer::low_level::CountingMode;
 use embassy_stm32::timer::{CaptureCompareInterruptHandler, Channel, GeneralInstance1Channel};
-use embassy_stm32::Peri;
 use embassy_time::Instant;
 
 use crate::gps::{GpsConfig, GpsPowerControl, PpsCapture, PpsSource, PpsTimingSource};
@@ -84,9 +84,9 @@ impl Tim4Pps {
         timer: Peri<'static, TIM4>,
         pin: Peri<'static, PB9>,
         irq: impl Binding<
-                <TIM4 as GeneralInstance1Channel>::CaptureCompareInterrupt,
-                CaptureCompareInterruptHandler<TIM4>,
-            > + 'static,
+            <TIM4 as GeneralInstance1Channel>::CaptureCompareInterrupt,
+            CaptureCompareInterruptHandler<TIM4>,
+        > + 'static,
     ) -> Self {
         let capture_pin = CapturePin::new(pin, Pull::None);
         let capture = InputCapture::new(
@@ -166,17 +166,26 @@ pub enum Stm32Pps {
 impl Stm32Pps {
     pub fn from_config(
         config: &GpsConfig,
-        exti: ExtiInput<'static, Async>,
+        pin: Peri<'static, PB9>,
+        exti: Peri<'static, EXTI9>,
         timer: Peri<'static, TIM4>,
-        capture_pin: Peri<'static, PB9>,
-        irq: impl Binding<
-                <TIM4 as GeneralInstance1Channel>::CaptureCompareInterrupt,
-                CaptureCompareInterruptHandler<TIM4>,
-            > + 'static,
+        exti_irq: impl Binding<
+            embassy_stm32::interrupt::typelevel::EXTI9,
+            ExtiInterruptHandler<embassy_stm32::interrupt::typelevel::EXTI9>,
+        > + 'static,
+        timer_irq: impl Binding<
+            <TIM4 as GeneralInstance1Channel>::CaptureCompareInterrupt,
+            CaptureCompareInterruptHandler<TIM4>,
+        > + 'static,
     ) -> Self {
         match config.pps_timing_source {
-            PpsTimingSource::EmbassyInstant => Self::Exti(ExtiPps::new(exti)),
-            PpsTimingSource::Tim4Capture => Self::Tim4(Tim4Pps::new(timer, capture_pin, irq)),
+            PpsTimingSource::EmbassyInstant => Self::Exti(ExtiPps::new(ExtiInput::new(
+                pin,
+                exti,
+                Pull::None,
+                exti_irq,
+            ))),
+            PpsTimingSource::Tim4Capture => Self::Tim4(Tim4Pps::new(timer, pin, timer_irq)),
         }
     }
 }

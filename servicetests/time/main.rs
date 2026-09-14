@@ -3,10 +3,12 @@
 
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::Pull;
 use embassy_stm32::rcc::*;
 use embassy_stm32::time::mhz;
 use embassy_stm32::usart::{BufferedUart, Config, DataBits, Parity, StopBits};
-use embassy_time::{Duration, Instant, Timer};
+use embassy_time::{Instant, Timer};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_board_v1p0::{Board, Gps, Irqs};
 use raylar_drivers::gps::stm32::{ExtiPps, Stm32GpsPower};
@@ -54,6 +56,7 @@ async fn start_services(spawner: Spawner, gps: Gps<'static>) -> ! {
         tx,
         rx,
         pps,
+        pps_exti,
         rst,
         en,
         ..
@@ -80,7 +83,7 @@ async fn start_services(spawner: Spawner, gps: Gps<'static>) -> ! {
 
     let gps_driver = GpsDriver::new(
         uart,
-        ExtiPps::new(pps),
+        ExtiPps::new(ExtiInput::new(pps, pps_exti, Pull::None, Irqs)),
         Stm32GpsPower::new(en, rst),
         &GPS_RESOURCES,
         GpsConfig::default(),
@@ -122,15 +125,23 @@ async fn time_observer_task() -> ! {
         match TIME_RESOURCES.system_to_utc(now) {
             Ok(utc) => info!(
                 "time: system_us={} utc={}s+{}us valid={} drift_ppb={} uncertainty_us={} holdover_ms={} source={} accepted={} rejected={}",
-                now.as_micros(), utc.seconds, utc.microseconds, state.utc_valid,
-                state.estimated_frequency_error_ppb, state.uncertainty_us,
-                state.holdover_duration.as_millis(), state.active_time_source,
-                state.accepted_anchors, state.rejected_anchors,
+                now.as_micros(),
+                utc.seconds,
+                utc.microseconds,
+                state.utc_valid,
+                state.estimated_frequency_error_ppb,
+                state.uncertainty_us,
+                state.holdover_duration.as_millis(),
+                state.active_time_source,
+                state.accepted_anchors,
+                state.rejected_anchors,
             ),
             Err(_) => info!(
                 "time: system_us={} utc=unavailable valid=false uncertainty_us={} accepted={} rejected={}",
-                now.as_micros(), state.uncertainty_us,
-                state.accepted_anchors, state.rejected_anchors,
+                now.as_micros(),
+                state.uncertainty_us,
+                state.accepted_anchors,
+                state.rejected_anchors,
             ),
         }
     }

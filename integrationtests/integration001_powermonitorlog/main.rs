@@ -4,17 +4,18 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
+use embassy_stm32::Peri;
+use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::{Input, Output, Pull};
-use embassy_stm32::i2c::{mode::Master, Config as I2cConfig, I2c};
+use embassy_stm32::i2c::{Config as I2cConfig, I2c, mode::Master};
 use embassy_stm32::mode::Blocking;
 use embassy_stm32::peripherals::{PA0, PA1, PB1};
 use embassy_stm32::rcc::mux::Sdmmcsel;
 use embassy_stm32::rcc::*;
 use embassy_stm32::sdmmc::sd::{CmdBlock, StorageDevice};
 use embassy_stm32::sdmmc::{Config as SdmmcConfig, Sdmmc};
-use embassy_stm32::time::{mhz, Hertz};
+use embassy_stm32::time::{Hertz, mhz};
 use embassy_stm32::usart::{BufferedUart, Config as UartConfig, DataBits, Parity, StopBits};
-use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
@@ -24,12 +25,12 @@ use raylar_drivers::batterycharger::{ChargerConfig, ChargerDriver, ChargerResour
 use raylar_drivers::gps::stm32::{ExtiPps, Stm32GpsPower};
 use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
-use raylar_drivers::storage::{detect_exfat_volume, PartitionedBlockDevice, StorageDriver};
+use raylar_drivers::storage::{PartitionedBlockDevice, StorageDriver, detect_exfat_volume};
 use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use raylar_logging_service::{
-    info as log_info, LogOutcome, LoggerHandle, LoggingResources, LoggingService, ProcessOutcome,
-    StorageLogSink,
+    LogOutcome, LoggerHandle, LoggingResources, LoggingService, ProcessOutcome, StorageLogSink,
+    info as log_info,
 };
 use raylar_power_management_service::{PowerConfig, PowerManagementService, PowerResources};
 use raylar_storage_service::StorageService;
@@ -364,6 +365,7 @@ async fn start_time(spawner: Spawner, gps: Gps<'static>) {
         tx,
         rx,
         pps,
+        pps_exti,
         rst,
         en,
         ..
@@ -390,7 +392,7 @@ async fn start_time(spawner: Spawner, gps: Gps<'static>) {
 
     let driver = GpsDriver::new(
         uart,
-        ExtiPps::new(pps),
+        ExtiPps::new(ExtiInput::new(pps, pps_exti, Pull::None, Irqs)),
         Stm32GpsPower::new(en, rst),
         &GPS_RESOURCES,
         GpsConfig::default(),

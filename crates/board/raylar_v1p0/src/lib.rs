@@ -1,27 +1,27 @@
 #![no_std]
 
+use embassy_stm32::Peri;
+use embassy_stm32::Peripherals;
 use embassy_stm32::exti::{self, ExtiInput};
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
-use embassy_stm32::Peri;
-use embassy_stm32::Peripherals;
 // ADC voltage sense imports
 use embassy_stm32::peripherals::{ADC1, ADC4, PA0, PA1, PB1};
 // buzzer imports
 use embassy_stm32::peripherals::{PA5, TIM8};
 // USB-C CDC imports
-use embassy_stm32::peripherals::{PA11, PA12, PA9, USB_OTG_HS};
+use embassy_stm32::peripherals::{PA9, PA11, PA12, USB_OTG_HS};
 // i2c imports
 use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
 // gps imports
-use embassy_stm32::peripherals::{PA2, PA3, PB9, TIM4, USART2};
+use embassy_stm32::peripherals::{EXTI9, PA2, PA3, PB9, TIM4, USART2};
 // pdm microphone imports
 use embassy_stm32::peripherals::{
     GPDMA1_CH0, GPDMA1_CH1, GPDMA1_CH2, GPDMA1_CH3, GPDMA1_CH4, GPDMA1_CH5, PB8, PC2, PD3, PD6,
     PE4, PE7,
 };
 // microSD imports
-use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
+use embassy_stm32::peripherals::{PC8, PC9, PC10, PC11, PC12, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
 use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
@@ -192,8 +192,10 @@ pub struct Gps<'d> {
     pub usart: Peri<'d, USART2>,
     pub tx: Peri<'d, PA2>,
     pub rx: Peri<'d, PA3>,
-    pub pps: ExtiInput<'d, Async>,
-    pub pps_capture_pin: Peri<'d, PB9>,
+    /// Raw PPS pin. The application must configure this as either EXTI or
+    /// TIM4_CH4, but never construct both GPIO owners for it.
+    pub pps: Peri<'d, PB9>,
+    pub pps_exti: Peri<'d, EXTI9>,
     pub pps_capture_timer: Peri<'d, TIM4>,
     pub rst: Output<'d>,
     pub en: Output<'d>,
@@ -337,11 +339,6 @@ impl Board<'static> {
             ..
         } = p;
 
-        // PB9 feeds both EXTI9 and TIM4_CH4. The duplicate peripheral token is
-        // safe here because the two drivers use distinct hardware functions;
-        // applications select one timing source through GpsConfig.
-        let pps_capture_pin = unsafe { PB9.clone_unchecked() };
-
         // Preserve the original mono-only board field for the legacy smoke
         // test. Applications must consume either it or `pdm_mic_array`, never
         // both; both tokens address the same two pins.
@@ -384,8 +381,8 @@ impl Board<'static> {
                 usart: USART2,
                 tx: PA2,
                 rx: PA3,
-                pps: ExtiInput::new(PB9, EXTI9, Pull::None, Irqs),
-                pps_capture_pin,
+                pps: PB9,
+                pps_exti: EXTI9,
                 pps_capture_timer: TIM4,
                 rst: Output::new(PE3, Level::Low, Speed::Medium),
                 en: Output::new(PC13, Level::Low, Speed::Medium),

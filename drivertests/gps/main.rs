@@ -63,7 +63,7 @@ async fn start_gps_driver(spawner: Spawner, gps: Gps<'static>) -> ! {
         tx,
         rx,
         pps,
-        pps_capture_pin,
+        pps_exti,
         pps_capture_timer,
         rst,
         en,
@@ -90,7 +90,7 @@ async fn start_gps_driver(spawner: Spawner, gps: Gps<'static>) -> ! {
         pps_timing_source: PpsTimingSource::Tim4Capture,
         ..GpsConfig::default()
     };
-    let pps = Stm32Pps::from_config(&gps_config, pps, pps_capture_timer, pps_capture_pin, Irqs);
+    let pps = Stm32Pps::from_config(&gps_config, pps, pps_exti, pps_capture_timer, Irqs, Irqs);
     let driver = GpsDriver::new(
         uart,
         pps,
@@ -121,14 +121,14 @@ async fn gps_observer_task() -> ! {
     loop {
         while let Some(next_stats) = stats.try_changed() {
             info!(
-            "GPS stats: powered={} operating state={} fixes={} pps={} checksum_errors={} uart_errors={}",
-            next_stats.powered,
-            next_stats.operating_state,
-            next_stats.num_fixes,
-            next_stats.num_pps_events,
-            next_stats.num_checksum_errors,
-            next_stats.num_uart_errors
-        );
+                "GPS stats: powered={} operating state={} fixes={} pps={} checksum_errors={} uart_errors={}",
+                next_stats.powered,
+                next_stats.operating_state,
+                next_stats.num_fixes,
+                next_stats.num_pps_events,
+                next_stats.num_checksum_errors,
+                next_stats.num_uart_errors
+            );
         }
 
         while let Some(fix) = fixes.try_changed() {

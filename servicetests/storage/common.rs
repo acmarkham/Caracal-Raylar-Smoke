@@ -5,7 +5,7 @@ use embassy_stm32::rcc::mux::Sdmmcsel;
 use embassy_stm32::rcc::*;
 use embassy_stm32::sdmmc::sd::{CmdBlock, StorageDevice};
 use embassy_stm32::sdmmc::{Config as SdmmcConfig, Sdmmc};
-use embassy_stm32::time::{mhz, Hertz};
+use embassy_stm32::time::{Hertz, mhz};
 use embassy_stm32::usart::{BufferedUart, Config as UartConfig, DataBits, Parity, StopBits};
 use embassy_time::Timer;
 use raylar_board_v1p0::{Gps, Irqs, SdCard};
@@ -13,7 +13,7 @@ use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
 use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources, PpsTimingSource};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
-    detect_exfat_volume, FileHandle, PartitionedBlockDevice, StorageDriver,
+    FileHandle, PartitionedBlockDevice, StorageDriver, detect_exfat_volume,
 };
 use raylar_storage_service::StorageBackend;
 use raylar_time_service::gps::run_gps_time_source;
@@ -110,7 +110,7 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
         tx,
         rx,
         pps,
-        pps_capture_pin,
+        pps_exti,
         pps_capture_timer,
         rst,
         en,
@@ -139,7 +139,7 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
         pps_timing_source: PpsTimingSource::Tim4Capture,
         ..GpsConfig::default()
     };
-    let pps = Stm32Pps::from_config(&gps_config, pps, pps_capture_timer, pps_capture_pin, Irqs);
+    let pps = Stm32Pps::from_config(&gps_config, pps, pps_exti, pps_capture_timer, Irqs, Irqs);
     let driver = GpsDriver::new(
         uart,
         pps,
