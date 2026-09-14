@@ -53,6 +53,8 @@ each flash are retained under `.probe-rs-logs/`.
 - Before UTC is valid, DMA cadence and errors are still monitored, but samples
   are deliberately not inserted into the recorder ring. This prevents an
   expected GPS wait from appearing as an audio overrun.
+- The first real GPS fix plays a short alternating success trill followed by a
+  high resolving note. The synthetic-time feature does not play this signal.
 - `MDF_DFLTISR.DOVRF` (bit 1) is the data-overrun flag. The observed sticky
   `CKABF` bit (bit 10) is reported separately as `clock_absent`; it is not a DMA
   or data overrun.
@@ -84,4 +86,3 @@ The read-only card report found the finalized file at
 `/1789380000/aud_1789380248_2.wav`. The following zero-length file is the open
 successor interrupted when probe-rs reset the board to flash the inspector; it
 is expected for this forced test termination, not a rotation failure.
-

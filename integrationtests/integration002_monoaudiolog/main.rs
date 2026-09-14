@@ -300,6 +300,10 @@ async fn main(spawner: Spawner) -> ! {
             .await;
         Timer::after_millis(250).await;
     }
+    #[cfg(not(feature = "fake-gps-time"))]
+    spawner.spawn(unwrap!(gps_fix_trill_task(buzzer_driver)));
+    #[cfg(feature = "fake-gps-time")]
+    drop(buzzer_driver);
     let backend = common::storage_driver(sd).await;
     let mut storage = unwrap!(StorageService::new(backend, &common::TIME_RESOURCES));
     if let Err(error) = storage.mount().await {
@@ -485,6 +489,36 @@ async fn power_service_task(service: PowerManagementService) -> ! {
 #[embassy_executor::task]
 async fn capture_task(driver: MicDriver) -> ! {
     driver.run().await
+}
+
+#[embassy_executor::task]
+async fn gps_fix_trill_task(mut buzzer: buzzer::BuzzerDriver<'static>) {
+    let mut fixes = unwrap!(common::GPS_RESOURCES.fix_receiver());
+    let fix = fixes.changed().await;
+    info!(
+        "GPS first fix attained; playing acquisition trill: satellites={} hdop_centi={:?}",
+        fix.satellites, fix.hdop_centi
+    );
+
+    // A quick alternating arpeggio followed by a high resolve: distinctive
+    // from the three slow startup beeps, but short enough not to be intrusive.
+    for pitch_hz in [1_319, 1_568, 1_319, 1_568, 1_319, 1_568] {
+        let _ = buzzer
+            .play_tone(
+                buzzer::PitchHz(pitch_hz),
+                Duration::from_millis(45),
+                buzzer::Volume(180),
+            )
+            .await;
+        Timer::after_millis(12).await;
+    }
+    let _ = buzzer
+        .play_tone(
+            buzzer::PitchHz(2_093),
+            Duration::from_millis(110),
+            buzzer::Volume(200),
+        )
+        .await;
 }
 
 #[embassy_executor::task]
