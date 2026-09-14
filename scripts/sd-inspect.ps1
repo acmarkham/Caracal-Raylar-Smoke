@@ -123,7 +123,7 @@ if ($payloads.Count -eq 0) {
 
 $entries = New-Object System.Collections.Generic.List[object]
 $snippets = [ordered]@{}
-$recentTimeLogs = New-Object System.Collections.Generic.List[string]
+$recentSyslogRecords = New-Object System.Collections.Generic.List[string]
 $diagnostics = New-Object System.Collections.Generic.List[string]
 $cardSummary = "Unavailable"
 $volumeSummary = "Unavailable"
@@ -162,7 +162,7 @@ foreach ($payload in $payloads) {
         continue
     }
     if ($payload -match '^SDGPT\|SYSLOG\|line=(.*)$') {
-        $recentTimeLogs.Add($Matches[1])
+        $recentSyslogRecords.Add($Matches[1])
         continue
     }
     if ($payload -match '^SDGPT\|(ERROR|FATAL|TRUNCATED)\|') {
@@ -220,12 +220,12 @@ foreach ($path in $snippets.Keys) {
     [void]$report.AppendLine('```')
 }
 
-if ($recentTimeLogs.Count -gt 0) {
+if ($recentSyslogRecords.Count -gt 0) {
     [void]$report.AppendLine()
-    [void]$report.AppendLine("## Recent Time records from syslog tail")
+    [void]$report.AppendLine("## Recent Time and GPS records from syslog tail")
     [void]$report.AppendLine()
     [void]$report.AppendLine('```text')
-    foreach ($line in $recentTimeLogs) {
+    foreach ($line in $recentSyslogRecords) {
         [void]$report.AppendLine($line)
     }
     [void]$report.AppendLine('```')

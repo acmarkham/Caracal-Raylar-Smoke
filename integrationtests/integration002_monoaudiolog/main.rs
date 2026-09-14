@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Pull};
-use embassy_stm32::i2c::{mode::Master, Config as I2cConfig, I2c};
+use embassy_stm32::i2c::{Config as I2cConfig, I2c, mode::Master};
 use embassy_stm32::mode::Blocking;
 use embassy_stm32::peripherals::{PA0, PA1, PB1};
 use embassy_stm32::time::Hertz;
@@ -20,7 +20,7 @@ use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Duration, Instant, Timer, TICK_HZ};
+use embassy_time::{Duration, Instant, TICK_HZ, Timer};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_audio_recorder_service::{
     AudioRecorder, AudioRecorderConfig, AudioRecorderError, RecorderProgress, TimeMetadataSource,
@@ -36,8 +36,8 @@ use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use raylar_drivers::{buzzer, leds};
 use raylar_logging_service::{
-    info as log_info, LogOutcome, LogSink, LoggerHandle, LoggingResources, LoggingService,
-    ProcessOutcome,
+    LogOutcome, LogSink, LoggerHandle, LoggingResources, LoggingService, ProcessOutcome,
+    info as log_info,
 };
 use raylar_power_management_service::{PowerConfig, PowerManagementService, PowerResources};
 use raylar_storage_service::{
@@ -345,7 +345,11 @@ async fn main(spawner: Spawner) -> ! {
     let time_log = logging.register("Time");
     let gps_log = logging.register("Gps");
     let audio_log = logging.register("Audio");
-    record_outcome(log_info!(system_log, "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders", SAMPLE_RATE_HZ));
+    record_outcome(log_info!(
+        system_log,
+        "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders",
+        SAMPLE_RATE_HZ
+    ));
     // Commit one record before audio startup. This makes /syslog.txt visible
     // even if GPS acquisition or microphone capture subsequently stalls.
     match logging.process_one().await {
@@ -843,10 +847,14 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         let gps = common::GPS_RESOURCES.stats();
         record_outcome(log_info!(
             gps_log,
-            "state={:?} powered={} calibrated={} reacq_attempts={} reacq_successes={} search_attempts={} search_failures={} pps_events={} pps_source={:?} pps_timeouts={} search_timeouts={}",
+            "state={:?} powered={} calibrated={} fixes={} checksum_err={} uart_err={} overflow={} reacq={}/{} search={}/{} pps_events={} pps_source={:?} pps_timeouts={} search_timeouts={}",
             gps.operating_state,
             gps.powered,
             gps.initial_calibration_complete,
+            gps.num_fixes,
+            gps.num_checksum_errors,
+            gps.num_uart_errors,
+            gps.num_buffer_overflows,
             gps.num_reacquisition_attempts,
             gps.num_reacquisition_successes,
             gps.num_search_attempts,
@@ -856,6 +864,75 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             gps.num_pps_timeouts,
             gps.num_search_timeouts
         ));
+        let now = Instant::now();
+        let latest_pps = common::GPS_RESOURCES.latest_pps();
+        let latest_fix = common::GPS_RESOURCES.latest_fix();
+        if let Some(pps) = latest_pps {
+            record_outcome(log_info!(
+                gps_log,
+                "PPS count={} age_us={} source={:?} systime_us={} capture_ticks={:?} delta_ticks={:?} capture_hz={:?} system_delta_us={:?}",
+                pps.pps_count,
+                now.saturating_duration_since(pps.timestamp).as_micros(),
+                pps.timing_source,
+                pps.timestamp.as_micros(),
+                pps.capture_ticks,
+                pps.capture_delta_ticks,
+                pps.capture_frequency_hz,
+                pps.delta_time.map(|delta| delta.as_micros())
+            ));
+        } else {
+            record_outcome(log_info!(gps_log, "PPS none received"));
+        }
+        if let Some(fix) = latest_fix {
+            record_outcome(log_info!(
+                gps_log,
+                "FIX count={} age_us={} systime_us={} utc={}:{}:{} date={:?} sats={} hdop_centi={:?}",
+                gps.num_fixes,
+                now.saturating_duration_since(fix.system_timestamp)
+                    .as_micros(),
+                fix.system_timestamp.as_micros(),
+                fix.utc_time.time.hour,
+                fix.utc_time.time.minute,
+                fix.utc_time.time.second,
+                fix.utc_time.date,
+                fix.satellites,
+                fix.hdop_centi
+            ));
+        } else {
+            record_outcome(log_info!(gps_log, "FIX none received"));
+        }
+        if let (Some(fix), Some(pps)) = (latest_fix, latest_pps) {
+            let candidate_offset_us = signed_instant_delta_us(fix.system_timestamp, pps.timestamp);
+            record_outcome(log_info!(
+                gps_log,
+                "PAIR latest_fix_minus_pps_us={} within_window={} fix_count={} pps_count={}",
+                candidate_offset_us,
+                (0..=750_000).contains(&candidate_offset_us),
+                gps.num_fixes,
+                pps.pps_count
+            ));
+        }
+        if let Some(correlation) = common::GPS_RESOURCES.latest_time_correlation() {
+            let pps_systime_us = correlation.pps_timestamp.map(|value| value.as_micros());
+            let pair_offset_us = correlation
+                .pps_timestamp
+                .map(|pps| signed_instant_delta_us(correlation.local_timestamp, pps));
+            record_outcome(log_info!(
+                gps_log,
+                "CORR age_us={} nmea_systime_us={} pps_systime_us={:?} offset_us={:?} source={:?} capture_ticks={:?} delta_ticks={:?} capture_hz={:?}",
+                now.saturating_duration_since(correlation.local_timestamp)
+                    .as_micros(),
+                correlation.local_timestamp.as_micros(),
+                pps_systime_us,
+                pair_offset_us,
+                correlation.pps_timing_source,
+                correlation.pps_capture_ticks,
+                correlation.pps_capture_delta_ticks,
+                correlation.pps_capture_frequency_hz
+            ));
+        } else {
+            record_outcome(log_info!(gps_log, "CORR none emitted"));
+        }
         Timer::after_millis(100).await;
         LED_COMMANDS
             .send(LedCommand::Off(leds::LedName::SysMainGreen))
@@ -864,6 +941,20 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             .send(LedCommand::Off(leds::LedName::SysGpsGreen))
             .await;
         Timer::after_secs(10).await;
+    }
+}
+
+fn signed_instant_delta_us(value: Instant, reference: Instant) -> i64 {
+    if value >= reference {
+        value
+            .saturating_duration_since(reference)
+            .as_micros()
+            .min(i64::MAX as u64) as i64
+    } else {
+        -(reference
+            .saturating_duration_since(value)
+            .as_micros()
+            .min(i64::MAX as u64) as i64)
     }
 }
 

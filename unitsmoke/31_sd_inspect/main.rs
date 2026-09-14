@@ -12,15 +12,15 @@ use embassy_stm32::rcc::mux::Sdmmcsel;
 use embassy_stm32::rcc::*;
 use embassy_stm32::sdmmc::sd::{CmdBlock, StorageDevice};
 use embassy_stm32::sdmmc::{Config as SdmmcConfig, Sdmmc};
-use embassy_stm32::time::{mhz, Hertz};
+use embassy_stm32::time::{Hertz, mhz};
 use embassy_time::Timer;
 use embedded_alloc::LlffHeap as Heap;
+use exfat_slim::asynchronous::BlockDevice;
 use exfat_slim::asynchronous::file::OpenOptions;
 use exfat_slim::asynchronous::file_system::FileSystem;
-use exfat_slim::asynchronous::BlockDevice;
 use raylar_board_v1p0::{Board, Irqs, SdCard};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
-use raylar_drivers::storage::{detect_exfat_volume, PartitionedBlockDevice, BLOCK_BYTES};
+use raylar_drivers::storage::{BLOCK_BYTES, PartitionedBlockDevice, detect_exfat_volume};
 use {defmt_rtt as _, panic_probe as _};
 
 const SD_TARGET_FREQ: Hertz = mhz(24);
@@ -74,11 +74,7 @@ async fn main(_spawner: Spawner) -> ! {
 async fn inspect_card(mut sd: SdCard<'static>) -> ! {
     info!(
         "SDGPT|BEGIN|version=1|max_entries={}|max_directories={}|max_depth={}|max_snippet_files={}|max_snippet_bytes={}|#",
-        MAX_ENTRIES,
-        MAX_DIRECTORIES,
-        MAX_DEPTH,
-        MAX_SNIPPET_FILES,
-        MAX_SNIPPET_BYTES
+        MAX_ENTRIES, MAX_DIRECTORIES, MAX_DEPTH, MAX_SNIPPET_FILES, MAX_SNIPPET_BYTES
     );
 
     // The Raylar SD power switch is active-low. Keep power off while checking
@@ -334,9 +330,9 @@ where
     Ok(total)
 }
 
-/// Scans only the bounded tail of the system log and emits its Time records.
-/// Audio packet lines dominate this file, so filtering on-device keeps the RTT
-/// report compact while retaining several minutes of oscillator diagnostics.
+/// Scans only the bounded tail of the system log and emits its Time and GPS
+/// records. Audio packet lines dominate this file, so filtering on-device keeps
+/// the RTT report compact while retaining clock and correlation diagnostics.
 async fn emit_recent_time_logs<D>(
     fs: &mut FileSystem<ReadOnlyDevice<D>, BLOCK_BYTES, CACHE_BLOCKS>,
     path: &str,
@@ -355,16 +351,22 @@ where
     let mut line = [0u8; SYSLOG_LINE_BYTES];
     let mut line_len = 0usize;
     let mut skip_partial_line = start != 0;
-    loop {
-        let Some(read) = file.read(fs, &mut chunk).await? else {
+    let mut remaining = file_len - start;
+    while remaining != 0 {
+        let request = core::cmp::min(remaining as usize, chunk.len());
+        let Some(read) = file.read(fs, &mut chunk[..request]).await? else {
             break;
         };
         if read == 0 {
             break;
         }
+        remaining = remaining.saturating_sub(read as u64);
         for &byte in &chunk[..read] {
             if byte == b'\n' {
-                if !skip_partial_line && contains_bytes(&line[..line_len], b" Time ") {
+                if !skip_partial_line
+                    && (contains_bytes(&line[..line_len], b" Time ")
+                        || contains_bytes(&line[..line_len], b" Gps "))
+                {
                     if let Ok(text) = core::str::from_utf8(&line[..line_len]) {
                         info!("SDGPT|SYSLOG|line={}|#", text);
                     }
@@ -375,6 +377,15 @@ where
                 line[line_len] = byte;
                 line_len += 1;
             }
+        }
+    }
+    if !skip_partial_line
+        && line_len != 0
+        && (contains_bytes(&line[..line_len], b" Time ")
+            || contains_bytes(&line[..line_len], b" Gps "))
+    {
+        if let Ok(text) = core::str::from_utf8(&line[..line_len]) {
+            info!("SDGPT|SYSLOG|line={}|#", text);
         }
     }
     info!(

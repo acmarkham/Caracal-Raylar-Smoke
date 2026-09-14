@@ -4,7 +4,7 @@ pub mod nmea;
 pub mod stm32;
 mod types;
 
-use core::future::{poll_fn, Future};
+use core::future::{Future, poll_fn};
 use core::pin::pin;
 use core::task::Poll;
 
@@ -12,7 +12,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::pubsub::PubSubChannel;
 use embassy_sync::watch::Watch;
-use embassy_time::{with_timeout, Duration, Instant, Timer};
+use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::{Read, Write};
 use framer::{FramerEvent, NmeaFramer};
 use nmea::{NavigationEvent, NmeaParser};
@@ -40,11 +40,11 @@ pub struct GpsResources<
 }
 
 impl<
-        const SENTENCE_LEN: usize,
-        const WATCHERS: usize,
-        const COMMAND_DEPTH: usize,
-        const RAW_DEPTH: usize,
-    > GpsResources<SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
+    const SENTENCE_LEN: usize,
+    const WATCHERS: usize,
+    const COMMAND_DEPTH: usize,
+    const RAW_DEPTH: usize,
+> GpsResources<SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
 {
     pub const fn new() -> Self {
         Self {
@@ -88,6 +88,26 @@ impl<
         self.stats.try_get().unwrap_or_default()
     }
 
+    /// Returns the most recently published navigation fix without consuming a
+    /// watcher. Intended for low-rate health and correlation diagnostics.
+    pub fn latest_fix(&self) -> Option<GpsFix> {
+        self.fixes.try_get()
+    }
+
+    /// Returns the most recently captured PPS edge without consuming a
+    /// watcher. The monotonically increasing count and capture deltas make it
+    /// possible to distinguish a stopped PPS input from a pairing failure.
+    pub fn latest_pps(&self) -> Option<PpsInfo> {
+        self.pps.try_get()
+    }
+
+    /// Returns the latest NMEA time correlation emitted by the GPS driver.
+    /// `pps_timestamp == None` means that NMEA time was published without a
+    /// matching PPS edge inside the configured correlation window.
+    pub fn latest_time_correlation(&self) -> Option<TimeCorrelation> {
+        self.time.try_get()
+    }
+
     pub fn time_receiver(
         &self,
     ) -> Option<embassy_sync::watch::Receiver<'_, GpsMutex, TimeCorrelation, WATCHERS>> {
@@ -112,11 +132,11 @@ impl<
 }
 
 impl<
-        const SENTENCE_LEN: usize,
-        const WATCHERS: usize,
-        const COMMAND_DEPTH: usize,
-        const RAW_DEPTH: usize,
-    > Default for GpsResources<SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
+    const SENTENCE_LEN: usize,
+    const WATCHERS: usize,
+    const COMMAND_DEPTH: usize,
+    const RAW_DEPTH: usize,
+> Default for GpsResources<SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
 {
     fn default() -> Self {
         Self::new()
@@ -161,14 +181,14 @@ pub struct GpsDriver<
 }
 
 impl<
-        UART,
-        PPS,
-        POWER,
-        const SENTENCE_LEN: usize,
-        const WATCHERS: usize,
-        const COMMAND_DEPTH: usize,
-        const RAW_DEPTH: usize,
-    > GpsDriver<UART, PPS, POWER, SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
+    UART,
+    PPS,
+    POWER,
+    const SENTENCE_LEN: usize,
+    const WATCHERS: usize,
+    const COMMAND_DEPTH: usize,
+    const RAW_DEPTH: usize,
+> GpsDriver<UART, PPS, POWER, SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
 {
     pub fn new(
         uart: UART,
@@ -188,14 +208,14 @@ impl<
 }
 
 impl<
-        UART,
-        PPS,
-        POWER,
-        const SENTENCE_LEN: usize,
-        const WATCHERS: usize,
-        const COMMAND_DEPTH: usize,
-        const RAW_DEPTH: usize,
-    > GpsDriver<UART, PPS, POWER, SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
+    UART,
+    PPS,
+    POWER,
+    const SENTENCE_LEN: usize,
+    const WATCHERS: usize,
+    const COMMAND_DEPTH: usize,
+    const RAW_DEPTH: usize,
+> GpsDriver<UART, PPS, POWER, SENTENCE_LEN, WATCHERS, COMMAND_DEPTH, RAW_DEPTH>
 where
     UART: Read + Write,
     PPS: PpsSource,
@@ -546,11 +566,7 @@ async fn handle_runtime_command<const COMMAND_DEPTH: usize>(
 }
 
 fn min_duration(a: Duration, b: Duration) -> Duration {
-    if a < b {
-        a
-    } else {
-        b
-    }
+    if a < b { a } else { b }
 }
 
 async fn enter_low_power<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usize>(
