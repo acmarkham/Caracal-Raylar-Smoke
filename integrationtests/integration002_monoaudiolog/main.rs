@@ -301,7 +301,7 @@ async fn main(spawner: Spawner) -> ! {
         Timer::after_millis(250).await;
     }
     #[cfg(not(feature = "fake-gps-time"))]
-    spawner.spawn(unwrap!(gps_fix_trill_task(buzzer_driver)));
+    spawner.spawn(unwrap!(gps_pps_trill_task(buzzer_driver)));
     #[cfg(feature = "fake-gps-time")]
     drop(buzzer_driver);
     let backend = common::storage_driver(sd).await;
@@ -319,6 +319,7 @@ async fn main(spawner: Spawner) -> ! {
     let system_log = logging.register("System");
     let power_log = logging.register("Power");
     let time_log = logging.register("Time");
+    let gps_log = logging.register("Gps");
     let audio_log = logging.register("Audio");
     record_outcome(log_info!(system_log, "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders", SAMPLE_RATE_HZ));
     // Commit one record before audio startup. This makes /syslog.txt visible
@@ -340,7 +341,7 @@ async fn main(spawner: Spawner) -> ! {
     } else {
         info!("system log stream opened and flushed: /syslog.txt");
     }
-    spawner.spawn(unwrap!(status_logger_task(power_log, time_log)));
+    spawner.spawn(unwrap!(status_logger_task(power_log, time_log, gps_log)));
     let microphone_driver = microphone_driver(pdm_mic_array);
     let resolved = microphone_driver.resolved_config();
     info!(
@@ -492,12 +493,19 @@ async fn capture_task(driver: MicDriver) -> ! {
 }
 
 #[embassy_executor::task]
-async fn gps_fix_trill_task(mut buzzer: buzzer::BuzzerDriver<'static>) {
-    let mut fixes = unwrap!(common::GPS_RESOURCES.fix_receiver());
-    let fix = fixes.changed().await;
+async fn gps_pps_trill_task(mut buzzer: buzzer::BuzzerDriver<'static>) {
+    let mut states = unwrap!(common::TIME_RESOURCES.state_receiver());
+    let state = loop {
+        let state = states.changed().await;
+        if state.active_time_source == raylar_time_service::TimeSource::GpsPps
+            && state.accepted_anchors != 0
+        {
+            break state;
+        }
+    };
     info!(
-        "GPS first fix attained; playing acquisition trill: satellites={} hdop_centi={:?}",
-        fix.satellites, fix.hdop_centi
+        "GPS first PPS anchor accepted; playing acquisition trill: accepted={} residual_us={:?}",
+        state.accepted_anchors, state.last_anchor_residual_us
     );
 
     // A quick alternating arpeggio followed by a high resolve: distinctive
@@ -675,7 +683,7 @@ async fn drain_logging<B>(
 }
 
 #[embassy_executor::task]
-async fn status_logger_task(power_log: TestLogger, time_log: TestLogger) -> ! {
+async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log: TestLogger) -> ! {
     loop {
         LED_COMMANDS
             .send(LedCommand::On(leds::LedName::SysMainGreen))
@@ -701,23 +709,46 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger) -> ! {
         match common::TIME_RESOURCES.current_utc() {
             Ok(utc) => record_outcome(log_info!(
                 time_log,
-                "UTC {} source={:?} valid={} drift_ppb={} uncertainty_us={} holdover_us={}",
+                "UTC {} source={:?} first={:?} valid={} drift_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} accepted={} rejected={}",
                 utc.seconds,
                 time.active_time_source,
+                time.first_anchor_source,
                 time.utc_valid,
                 time.estimated_frequency_error_ppb,
+                time.last_anchor_residual_us,
                 time.uncertainty_us,
-                time.holdover_duration.as_micros()
+                time.holdover_duration.as_micros(),
+                time.accepted_anchors,
+                time.rejected_anchors
             )),
             Err(_) => record_outcome(log_info!(
                 time_log,
-                "UTC unavailable source={:?} valid=false drift_ppb={} uncertainty_us={} holdover_us={}",
+                "UTC unavailable source={:?} first={:?} valid=false drift_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} accepted={} rejected={}",
                 time.active_time_source,
+                time.first_anchor_source,
                 time.estimated_frequency_error_ppb,
+                time.last_anchor_residual_us,
                 time.uncertainty_us,
-                time.holdover_duration.as_micros()
+                time.holdover_duration.as_micros(),
+                time.accepted_anchors,
+                time.rejected_anchors
             )),
         }
+        let gps = common::GPS_RESOURCES.stats();
+        record_outcome(log_info!(
+            gps_log,
+            "state={:?} powered={} calibrated={} reacq_attempts={} reacq_successes={} search_attempts={} search_failures={} pps_events={} pps_timeouts={} search_timeouts={}",
+            gps.operating_state,
+            gps.powered,
+            gps.initial_calibration_complete,
+            gps.num_reacquisition_attempts,
+            gps.num_reacquisition_successes,
+            gps.num_search_attempts,
+            gps.num_search_failures,
+            gps.num_pps_events,
+            gps.num_pps_timeouts,
+            gps.num_search_timeouts
+        ));
         Timer::after_millis(100).await;
         LED_COMMANDS
             .send(LedCommand::Off(leds::LedName::SysMainGreen))

@@ -127,6 +127,10 @@ pub struct TimeState {
     pub last_anchor_utc: Option<UtcTimestamp>,
     pub holdover_duration: Duration,
     pub active_time_source: TimeSource,
+    pub first_anchor_source: TimeSource,
+    /// Residual of the most recently evaluated post-initial anchor, expressed
+    /// as actual UTC minus the current clock mapping.
+    pub last_anchor_residual_us: Option<i64>,
     pub accepted_anchors: u32,
     pub rejected_anchors: u32,
 }
@@ -146,6 +150,8 @@ impl TimeState {
             last_anchor_utc: None,
             holdover_duration: Duration::from_ticks(0),
             active_time_source: TimeSource::None,
+            first_anchor_source: TimeSource::None,
+            last_anchor_residual_us: None,
             accepted_anchors: 0,
             rejected_anchors: 0,
         }

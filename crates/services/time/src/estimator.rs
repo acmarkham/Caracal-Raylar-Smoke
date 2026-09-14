@@ -39,6 +39,8 @@ impl TimeEstimator {
             predicted_us
         );
         let residual_us = anchor.utc.as_micros() as i128 - predicted_us;
+        self.state.last_anchor_residual_us =
+            Some(residual_us.clamp(i64::MIN as i128, i64::MAX as i128) as i64);
         #[cfg(feature = "defmt")]
         if anchor.source == crate::TimeSource::GpsPps {
             let predicted_seconds = predicted_us.div_euclid(1_000_000);
@@ -221,6 +223,8 @@ impl TimeEstimator {
         self.state.last_anchor_utc = Some(anchor.utc);
         self.state.holdover_duration = Duration::from_ticks(0);
         self.state.active_time_source = anchor.source;
+        self.state.first_anchor_source = anchor.source;
+        self.state.last_anchor_residual_us = None;
         self.state.accepted_anchors = 1;
         self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
         self.frequency_reference = Some(anchor);

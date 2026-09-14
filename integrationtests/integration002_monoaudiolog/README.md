@@ -8,7 +8,8 @@ PCM and rotated into 60-second WAV files in hourly directories.
 
 ## Running it
 
-The default build requires valid UTC from GPS before it creates an audio file:
+The default build requires a GPS PPS-correlated UTC anchor before it creates an
+audio file. NMEA arrival timestamps are never used as time anchors:
 
 ```powershell
 rtk powershell -NoProfile -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
@@ -54,7 +55,17 @@ each flash are retained under `.probe-rs-logs/`.
   are deliberately not inserted into the recorder ring. This prevents an
   expected GPS wait from appearing as an audio overrun.
 - The first real GPS fix plays a short alternating success trill followed by a
-  high resolving note. The synthetic-time feature does not play this signal.
+  high resolving note once its first PPS anchor has been accepted. The
+  synthetic-time feature does not play this signal.
+- After the first fix, GPS remains continuously powered for ten minutes so the
+  Time Service can calibrate its oscillator frequency from PPS. Only after this
+  one-time calibration period does the normal 30-second on/30-second off duty
+  cycle begin.
+- The ten-second Time records include first/current anchor source, latest PPS
+  residual, oscillator estimate, accepted/rejected anchor counts, uncertainty,
+  and holdover duration. Separate GPS records expose `Searching`, `Calibrating`,
+  and `Reacquiring` state plus calibration, search, reacquisition, and PPS
+  counters.
 - `MDF_DFLTISR.DOVRF` (bit 1) is the data-overrun flag. The observed sticky
   `CKABF` bit (bit 10) is reported separately as `clock_absent`; it is not a DMA
   or data overrun.

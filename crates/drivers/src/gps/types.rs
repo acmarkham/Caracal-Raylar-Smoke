@@ -19,7 +19,13 @@ pub enum StartMode {
 pub enum OperatingState {
     Off,
     PoweringOn,
+    /// Waiting for the first navigation fix after startup.
     Searching,
+    /// Keeping GPS continuously powered after the first fix so the time
+    /// service can estimate the local oscillator frequency from PPS.
+    Calibrating,
+    /// Searching after a completed initial calibration and holdover period.
+    Reacquiring,
     Acquired,
     Standby,
     PoweringOff,
@@ -73,6 +79,8 @@ pub struct GpsConfig {
     pub gps_on_time: Duration,
     pub gps_off_time: Duration,
     pub first_search_time: Duration,
+    /// Continuous on-time after the first fix, before duty cycling starts.
+    pub initial_calibration_time: Duration,
     pub search_time: Duration,
     pub search_failure_threshold: u32,
     pub initial_start_mode: StartMode,
@@ -89,6 +97,7 @@ impl Default for GpsConfig {
             gps_on_time: Duration::from_secs(30),
             gps_off_time: Duration::from_secs(30),
             first_search_time: Duration::from_secs(15 * 60),
+            initial_calibration_time: Duration::from_secs(10 * 60),
             search_time: Duration::from_secs(30),
             search_failure_threshold: 10,
             initial_start_mode: StartMode::Hot,
@@ -190,6 +199,9 @@ pub struct GpsStats {
     pub num_pps_events: u64,
     pub num_pps_timeouts: u32,
     pub num_search_timeouts: u32,
+    pub initial_calibration_complete: bool,
+    pub num_reacquisition_attempts: u32,
+    pub num_reacquisition_successes: u32,
 }
 
 impl Default for GpsStats {
@@ -211,6 +223,9 @@ impl Default for GpsStats {
             num_pps_events: 0,
             num_pps_timeouts: 0,
             num_search_timeouts: 0,
+            initial_calibration_complete: false,
+            num_reacquisition_attempts: 0,
+            num_reacquisition_successes: 0,
         }
     }
 }

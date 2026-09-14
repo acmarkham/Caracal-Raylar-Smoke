@@ -4,7 +4,6 @@ use raylar_drivers::gps::{TimeCorrelation, UtcDate, UtcDateTime};
 
 use crate::{Anchor, AnchorQuality, AnchorSender, TimeSource, UtcTimestamp};
 
-pub const GPS_NMEA_UNCERTAINTY: Duration = Duration::from_secs(1);
 pub const GPS_PPS_UNCERTAINTY: Duration = Duration::from_micros(100);
 
 pub async fn run_gps_time_source<const ANCHOR_DEPTH: usize>(
@@ -20,22 +19,15 @@ pub async fn run_gps_time_source<const ANCHOR_DEPTH: usize>(
 
 pub fn correlation_to_anchor(correlation: TimeCorrelation) -> Option<Anchor> {
     let utc = gps_utc_to_timestamp(correlation.utc_time)?;
-    let fine = correlation.pps_timestamp.is_some();
+    // NMEA supplies the UTC second associated with the edge, but its serial
+    // arrival timestamp is not a sufficiently precise clock anchor. A
+    // correlation without a matched PPS edge is deliberately ignored.
+    let pps_timestamp = correlation.pps_timestamp?;
     Some(Anchor {
-        system_time: correlation
-            .pps_timestamp
-            .unwrap_or(correlation.local_timestamp),
+        system_time: pps_timestamp,
         utc,
-        quality: AnchorQuality::new(if fine {
-            GPS_PPS_UNCERTAINTY.as_micros()
-        } else {
-            GPS_NMEA_UNCERTAINTY.as_micros()
-        }),
-        source: if fine {
-            TimeSource::GpsPps
-        } else {
-            TimeSource::GpsNmea
-        },
+        quality: AnchorQuality::new(GPS_PPS_UNCERTAINTY.as_micros()),
+        source: TimeSource::GpsPps,
         capture_ticks: correlation.pps_capture_ticks,
     })
 }
@@ -82,7 +74,45 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raylar_drivers::gps::UtcTime;
+    use embassy_time::Instant;
+    use raylar_drivers::gps::{PpsTimingSource, UtcTime};
+
+    fn correlation(pps_timestamp: Option<Instant>) -> TimeCorrelation {
+        TimeCorrelation {
+            utc_time: UtcDateTime {
+                date: Some(UtcDate {
+                    year: 2024,
+                    month: 1,
+                    day: 1,
+                }),
+                time: UtcTime {
+                    hour: 0,
+                    minute: 0,
+                    second: 0,
+                },
+            },
+            local_timestamp: Instant::from_ticks(1_100),
+            pps_timestamp,
+            pps_capture_ticks: None,
+            pps_capture_delta_ticks: None,
+            pps_capture_frequency_hz: None,
+            pps_timing_source: Some(PpsTimingSource::EmbassyInstant),
+        }
+    }
+
+    #[test]
+    fn ignores_nmea_without_a_matched_pps_edge() {
+        assert_eq!(correlation_to_anchor(correlation(None)), None);
+    }
+
+    #[test]
+    fn uses_only_the_matched_pps_timestamp_as_an_anchor() {
+        let pps = Instant::from_ticks(1_000);
+        let anchor = correlation_to_anchor(correlation(Some(pps))).unwrap();
+        assert_eq!(anchor.system_time, pps);
+        assert_eq!(anchor.source, TimeSource::GpsPps);
+        assert_eq!(anchor.quality.uncertainty_us, 100);
+    }
 
     #[test]
     fn converts_unix_epoch() {

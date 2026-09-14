@@ -83,6 +83,11 @@ impl<
         self.stats.receiver()
     }
 
+    /// Returns the latest GPS manager statistics without consuming a watcher.
+    pub fn stats(&self) -> GpsStats {
+        self.stats.try_get().unwrap_or_default()
+    }
+
     pub fn time_receiver(
         &self,
     ) -> Option<embassy_sync::watch::Receiver<'_, GpsMutex, TimeCorrelation, WATCHERS>> {
@@ -244,6 +249,7 @@ where
     let serial = resources.serial_requests.sender();
     let stats_pub = resources.stats.sender();
     let mut first_search = true;
+    let mut initial_calibration_pending = true;
 
     modify_stats(&stats_pub, |stats| {
         *stats = GpsStats::default();
@@ -261,6 +267,7 @@ where
                     &stats_pub,
                     &config,
                     &mut first_search,
+                    &mut initial_calibration_pending,
                     config.initial_start_mode,
                 )
                 .await;
@@ -274,6 +281,7 @@ where
                     &stats_pub,
                     &config,
                     &mut first_search,
+                    &mut initial_calibration_pending,
                     config.initial_start_mode,
                 )
                 .await;
@@ -287,6 +295,7 @@ where
                     &stats_pub,
                     &config,
                     &mut first_search,
+                    &mut initial_calibration_pending,
                     StartMode::Cold,
                 )
                 .await;
@@ -300,6 +309,7 @@ where
                     &stats_pub,
                     &config,
                     &mut first_search,
+                    &mut initial_calibration_pending,
                     StartMode::Warm,
                 )
                 .await;
@@ -313,6 +323,7 @@ where
                     &stats_pub,
                     &config,
                     &mut first_search,
+                    &mut initial_calibration_pending,
                     StartMode::Hot,
                 )
                 .await;
@@ -332,6 +343,7 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
     stats_pub: &embassy_sync::watch::Sender<'_, GpsMutex, GpsStats, WATCHERS>,
     config: &GpsConfig,
     first_search: &mut bool,
+    initial_calibration_pending: &mut bool,
     start_mode: StartMode,
 ) where
     POWER: GpsPowerControl,
@@ -339,6 +351,9 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
     let mut cycle_start_mode = start_mode;
 
     loop {
+        // Fix notifications produced while the previous on-window was already
+        // tracking must not satisfy a later reacquisition attempt.
+        drain_manager_events(manager_events);
         let search_time = if *first_search {
             config.first_search_time
         } else {
@@ -350,6 +365,10 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
         modify_stats(stats_pub, |stats| {
             stats.last_fix_attempt_time = Some(on_started);
             stats.num_search_attempts = stats.num_search_attempts.saturating_add(1);
+            if !*initial_calibration_pending {
+                stats.num_reacquisition_attempts =
+                    stats.num_reacquisition_attempts.saturating_add(1);
+            }
             stats.operating_state = OperatingState::PoweringOn;
         });
 
@@ -360,7 +379,11 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
 
         send_start_mode(serial, config, cycle_start_mode).await;
         modify_stats(stats_pub, |stats| {
-            stats.operating_state = OperatingState::Searching
+            stats.operating_state = if *initial_calibration_pending {
+                OperatingState::Searching
+            } else {
+                OperatingState::Reacquiring
+            };
         });
 
         match wait_for_search_outcome(commands, manager_events, serial, config, search_time).await {
@@ -370,11 +393,30 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
                     stats.got_first_fix = true;
                     stats.last_successful_fix_time = Some(now);
                     stats.total_on_time += now.saturating_duration_since(on_started);
-                    stats.operating_state = OperatingState::Acquired;
+                    if *initial_calibration_pending {
+                        stats.operating_state = OperatingState::Calibrating;
+                    } else {
+                        stats.num_reacquisition_successes =
+                            stats.num_reacquisition_successes.saturating_add(1);
+                        stats.operating_state = OperatingState::Acquired;
+                    }
                 });
-                if sleep_or_stop(commands, serial, config, config.gps_on_time).await {
+
+                let tracking_time = if *initial_calibration_pending {
+                    config.initial_calibration_time
+                } else {
+                    config.gps_on_time
+                };
+                if sleep_or_stop(commands, serial, config, tracking_time).await {
                     enter_low_power(power, serial, stats_pub, config).await;
                     return;
+                }
+                if *initial_calibration_pending {
+                    *initial_calibration_pending = false;
+                    modify_stats(stats_pub, |stats| {
+                        stats.initial_calibration_complete = true;
+                        stats.operating_state = OperatingState::Acquired;
+                    });
                 }
                 enter_low_power(power, serial, stats_pub, config).await;
                 if sleep_or_stop(commands, serial, config, config.gps_off_time).await {
@@ -573,6 +615,12 @@ fn drain_stop_command<const COMMAND_DEPTH: usize>(
             break;
         }
     }
+}
+
+fn drain_manager_events<const COMMAND_DEPTH: usize>(
+    manager_events: &embassy_sync::channel::Receiver<'_, GpsMutex, ManagerEvent, COMMAND_DEPTH>,
+) {
+    while manager_events.try_receive().is_ok() {}
 }
 
 fn modify_stats<const WATCHERS: usize, F>(

@@ -39,12 +39,17 @@ Startup:
 3. Beep 1000Hz for 0.25s on/0.25s off three times
 
 After GPS fix is acquired: Audio
-1. Issue a different "successful GPS" beep to indicate a good PPS fix has been obtained
-2. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
-3. Save data to minute long wav files, in hourly folders. 
-4. Start on top-of-the minute boundary e.g. 00s
-5. Toggle the SysSdBlue LED after each packet is written to storage
-6. Log each timestamp of the audio packet/buffer to the logfile
+1. Use only a GPS PPS-correlated timestamp as a Time Service anchor; never use
+   the NMEA serial-arrival timestamp as an anchor.
+2. Issue a different "successful GPS" beep after the first GPS PPS anchor has
+   been accepted.
+3. Keep GPS continuously powered for 10 minutes after the first fix to
+   calibrate oscillator frequency before entering the normal GPS power cycle.
+4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
+5. Save data to minute long wav files, in hourly folders. 
+6. Start on top-of-the minute boundary e.g. 00s
+7. Toggle the SysSdBlue LED after each packet is written to storage
+8. Log each timestamp of the audio packet/buffer to the logfile
 
 
 Every **10 seconds (0.1 Hz)**: Power State
@@ -59,12 +64,30 @@ Every **10 seconds (0.1 Hz)**:
 
 1. Read the latest time information published by the Time Service.
 2. Generate a human-readable log message from the time service to show if it is under GPS PPS sync or not, and what the drift/tolerance is. Also handle the case where no fix has yet been acquired.
+   Include the first anchor type, latest PPS residual, accepted and rejected
+   anchor counts, and GPS calibration/reacquisition state and counters.
 3. Append the messages to the system log using the Logging Service.
 4. Briefly flash the SysGpsGreen LED as a hearbeat signal to show that it is correctly operating
 
 
 Error:
-In the event of any error, turn and leave on the RED sys_led.
+In the event of a severe error that prevents the test from operating safely or
+recording valid data (for example, no SD card, SD-card initialization failure,
+filesystem mount/open/write failure, or an unrecoverable service failure):
+
+1. Stop normal test operation and do not attempt to record further audio.
+2. Play a distinctive error signal on the buzzer: three short descending tones.
+   This must be clearly different from both the three 1000 Hz startup beeps and
+   the successful-GPS trill.
+3. Flash both red system LEDs (`SysMainRed` and `SysGpsRed`) together at 1 Hz
+   with a 50% duty cycle, indefinitely. Normal green heartbeat indications must
+   stop while this severe-error state is active.
+4. Repeat the three-tone error signal every 10 seconds so that the fault remains
+   discoverable when the LEDs are not visible.
+
+Recoverable errors may continue to be logged and counted without entering this
+latched severe-error indication. Once entered, the severe-error state remains
+latched until the board is reset.
 
 Termination:
 The test should run continuously. 
@@ -107,6 +130,8 @@ The test should verify that:
 * Audio is correctly recorded
 * Audio wav files correctly start and terminate at the correct time intervals
 * User interface (LEDS) correctly display state
+* Missing/unusable SD media and filesystem failures latch the severe-error
+  state, stop recording, play the error signal, and flash both red LEDs
 
 
 
