@@ -13,6 +13,7 @@ use embassy_time::Instant;
 use crate::gps::{GpsConfig, GpsPowerControl, PpsCapture, PpsSource, PpsTimingSource};
 
 pub const TIM4_PPS_CAPTURE_FREQUENCY_HZ: u32 = 1_000_000;
+const TIM4_COUNTER_MODULUS: u64 = 1 << 16;
 
 pub struct Stm32GpsPower {
     en: Output<'static>,
@@ -74,6 +75,7 @@ impl PpsSource for ExtiPps {
 pub struct Tim4Pps {
     capture: InputCapture<'static, TIM4>,
     previous_raw: Option<u32>,
+    previous_observation_time: Option<Instant>,
     extended_ticks: u64,
     reference_capture_ticks: Option<u64>,
     reference_system_time: Option<Instant>,
@@ -102,21 +104,46 @@ impl Tim4Pps {
         Self {
             capture,
             previous_raw: None,
+            previous_observation_time: None,
             extended_ticks: 0,
             reference_capture_ticks: None,
             reference_system_time: None,
         }
     }
 
-    fn extend_ticks(&mut self, raw: u32) -> u64 {
+    fn extend_ticks(&mut self, raw: u32, observation_time: Instant) -> u64 {
+        // TIM4 on STM32U595 is a 16-bit timer even though Embassy exposes its
+        // capture value as u32. At 1 MHz it wraps about fifteen times between
+        // 1 Hz PPS edges. Use the coarse monotonic elapsed time only to resolve
+        // that integer wrap ambiguity; the sub-wrap phase still comes directly
+        // from the hardware capture register.
+        let raw = raw & 0xffff;
         if let Some(previous_raw) = self.previous_raw {
-            self.extended_ticks = self
-                .extended_ticks
-                .saturating_add(raw.wrapping_sub(previous_raw) as u64);
+            let modulo_delta = raw.wrapping_sub(previous_raw) as u64 & 0xffff;
+            let approximate_delta = self
+                .previous_observation_time
+                .map(|previous_time| {
+                    let elapsed_system_ticks = observation_time
+                        .saturating_duration_since(previous_time)
+                        .as_ticks();
+                    ((elapsed_system_ticks as u128)
+                        .saturating_mul(TIM4_PPS_CAPTURE_FREQUENCY_HZ as u128)
+                        / embassy_time::TICK_HZ as u128)
+                        .min(u64::MAX as u128) as u64
+                })
+                .unwrap_or(modulo_delta);
+            let whole_wraps = approximate_delta
+                .saturating_sub(modulo_delta)
+                .saturating_add(TIM4_COUNTER_MODULUS / 2)
+                / TIM4_COUNTER_MODULUS;
+            let capture_delta =
+                modulo_delta.saturating_add(whole_wraps.saturating_mul(TIM4_COUNTER_MODULUS));
+            self.extended_ticks = self.extended_ticks.saturating_add(capture_delta);
         } else {
             self.extended_ticks = raw as u64;
         }
         self.previous_raw = Some(raw);
+        self.previous_observation_time = Some(observation_time);
         self.extended_ticks
     }
 }
@@ -126,7 +153,8 @@ impl PpsSource for Tim4Pps {
 
     async fn wait_for_pps(&mut self) -> Result<PpsCapture, Self::Error> {
         let raw: u32 = self.capture.wait_for_rising_edge(Channel::Ch4).await;
-        let capture_ticks = self.extend_ticks(raw);
+        let observation_time = Instant::now();
+        let capture_ticks = self.extend_ticks(raw, observation_time);
         // The first edge establishes the cross-domain epoch. Later timestamps
         // are reconstructed from the hardware capture counter, so interrupt
         // wake-up latency cannot appear as PPS jitter.
@@ -143,10 +171,9 @@ impl PpsSource for Tim4Pps {
                 )
             }
             _ => {
-                let now = Instant::now();
                 self.reference_capture_ticks = Some(capture_ticks);
-                self.reference_system_time = Some(now);
-                now
+                self.reference_system_time = Some(observation_time);
+                observation_time
             }
         };
         Ok(PpsCapture {

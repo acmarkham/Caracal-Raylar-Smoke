@@ -11,6 +11,7 @@ use super::{
         StreamExtensionDirEntry, update_checksum,
     },
     error::ExFatError,
+    fat::END_OF_CHAIN,
     file_system::{ExFatResult, FileSystem},
     utils::split_path,
 };
@@ -522,6 +523,13 @@ impl File {
                     .await?;
                 cluster_id = cluster_next;
             }
+
+            // FAT entries in free clusters are allowed to contain stale data.
+            // Always terminate an extended chain explicitly so reopening the
+            // file cannot follow an old link into another file's allocation.
+            fs.fat
+                .set(&mut fs.dev, &mut self.touched, cluster_id, END_OF_CHAIN)
+                .await?;
         }
 
         let old_chain = self.chain.clone();

@@ -31,6 +31,14 @@ const fn clusters_per_bitmap_sector<const SIZE: usize>() -> u32 {
     SIZE as u32 * u8::BITS
 }
 
+const fn bitmap_sector_index<const SIZE: usize>(cluster_id: u32) -> u32 {
+    (cluster_id - FIRST_CLUSTER_ID) / clusters_per_bitmap_sector::<SIZE>()
+}
+
+const fn first_cluster_in_bitmap_sector<const SIZE: usize>(sector_index: u32) -> u32 {
+    FIRST_CLUSTER_ID + sector_index * clusters_per_bitmap_sector::<SIZE>()
+}
+
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 pub(crate) struct AllocationBitmap<const SIZE: usize> {
@@ -231,7 +239,7 @@ where
         let num_sectors = self.bitmap.num_sectors;
 
         let clusters_per_sector = clusters_per_bitmap_sector::<SIZE>();
-        let sector_index = (run.first_cluster - FIRST_CLUSTER_ID) / clusters_per_sector;
+        let sector_index = bitmap_sector_index::<SIZE>(run.first_cluster);
         let mut remaining = run.cluster_count;
         let mut cluster_id = run.first_cluster;
 
@@ -239,8 +247,7 @@ where
             let sector_id = first_sector + sector_offset;
             let slot = self.cache.read_mut(sector_id, io).await?;
 
-            let first_cluster_of_slot =
-                sector_offset * clusters_per_sector + FIRST_CLUSTER_ID;
+            let first_cluster_of_slot = sector_offset * clusters_per_sector + FIRST_CLUSTER_ID;
             let start = cluster_id - first_cluster_of_slot;
             let end = clusters_per_sector.min(start + remaining);
             Self::set_bit_range(slot.as_mut_slice(), start..end, allocated);
@@ -269,9 +276,8 @@ where
         let first_sector = self.bitmap.first_sector;
         let num_sectors = self.bitmap.num_sectors;
 
-        let clusters_per_sector = clusters_per_bitmap_sector::<SIZE>();
-        let sector_index = (from_cluster - FIRST_CLUSTER_ID) / clusters_per_sector;
-        let mut cluster_id = sector_index * clusters_per_sector + FIRST_CLUSTER_ID;
+        let sector_index = bitmap_sector_index::<SIZE>(from_cluster);
+        let mut cluster_id = first_cluster_in_bitmap_sector::<SIZE>(sector_index);
         let mut first_cluster = None;
         let mut count = 0;
 
@@ -332,10 +338,14 @@ where
         io: &mut D,
         num_clusters: u32,
     ) -> ExFatResult<AllocatedRun, D, SIZE> {
-        let mut cluster_id = self.next_search_cluster;
+        let search_start = self.next_search_cluster;
         let sector_id = self.bitmap.first_sector;
         let num_sectors = self.bitmap.num_sectors;
-        let sector_index = (cluster_id - FIRST_CLUSTER_ID) / SIZE as u32;
+        // Each bit, rather than each byte, represents one cluster. Dividing by
+        // the sector byte size reads the wrong bitmap sector after the first
+        // SIZE clusters and can allocate a cluster that is already in use.
+        let sector_index = bitmap_sector_index::<SIZE>(search_start);
+        let mut cluster_id = first_cluster_in_bitmap_sector::<SIZE>(sector_index);
         let mut first_cluster = None;
         let mut count = 0;
 
@@ -349,6 +359,14 @@ where
                     for byte in chunk {
                         for bit in 0..u8::BITS {
                             if *byte & 1 << bit == 0 {
+                                // The scan starts at the beginning of the
+                                // containing bitmap sector. Do not relabel its
+                                // earlier bits as `search_start` clusters.
+                                if cluster_id < search_start {
+                                    cluster_id += 1;
+                                    continue;
+                                }
+
                                 if first_cluster.is_none() {
                                     first_cluster = Some(cluster_id);
                                     count = 1
@@ -391,5 +409,96 @@ where
             Some(run) => Ok(run),
             None => Err(ExFatError::Unexpected("disk full")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aligned::Aligned;
+    use alloc::{vec, vec::Vec};
+
+    use super::super::only_sync;
+    use super::{
+        AllocationBitmapSlim, Allocator, FIRST_CLUSTER_ID, bitmap_sector_index,
+        clusters_per_bitmap_sector, first_cluster_in_bitmap_sector,
+    };
+
+    const BLOCK_SIZE: usize = 512;
+    const BITMAP_SECTOR: u32 = 100;
+
+    #[derive(Debug)]
+    struct DummyBlockDevice {
+        blocks: Vec<[u8; BLOCK_SIZE]>,
+    }
+
+    #[only_sync]
+    impl super::BlockDevice<BLOCK_SIZE> for DummyBlockDevice {
+        type Error = ();
+        type Align = aligned::A4;
+
+        fn read(
+            &mut self,
+            block_address: u32,
+            data: &mut [Aligned<Self::Align, [u8; BLOCK_SIZE]>],
+        ) -> Result<(), Self::Error> {
+            data[0].copy_from_slice(&self.blocks[(block_address - BITMAP_SECTOR) as usize]);
+            Ok(())
+        }
+
+        fn write(
+            &mut self,
+            block_address: u32,
+            data: &[Aligned<Self::Align, [u8; BLOCK_SIZE]>],
+        ) -> Result<(), Self::Error> {
+            self.blocks[(block_address - BITMAP_SECTOR) as usize]
+                .copy_from_slice(data[0].as_slice());
+            Ok(())
+        }
+
+        fn size(&mut self) -> Result<u64, Self::Error> {
+            Ok(self.blocks.len() as u64 * BLOCK_SIZE as u64)
+        }
+    }
+
+    #[test]
+    fn bitmap_sector_index_counts_bits_not_bytes() {
+        const SECTOR_SIZE: usize = 512;
+        const CLUSTERS_PER_SECTOR: u32 = clusters_per_bitmap_sector::<SECTOR_SIZE>();
+
+        assert_eq!(CLUSTERS_PER_SECTOR, 4096);
+        assert_eq!(bitmap_sector_index::<SECTOR_SIZE>(FIRST_CLUSTER_ID), 0);
+        assert_eq!(
+            bitmap_sector_index::<SECTOR_SIZE>(FIRST_CLUSTER_ID + CLUSTERS_PER_SECTOR - 1),
+            0
+        );
+        assert_eq!(
+            bitmap_sector_index::<SECTOR_SIZE>(FIRST_CLUSTER_ID + CLUSTERS_PER_SECTOR),
+            1
+        );
+        assert_eq!(first_cluster_in_bitmap_sector::<SECTOR_SIZE>(0), 2);
+        assert_eq!(first_cluster_in_bitmap_sector::<SECTOR_SIZE>(1), 4098);
+    }
+
+    #[only_sync]
+    #[test]
+    fn new_file_scan_preserves_bit_offset_within_bitmap_sector() {
+        let search_start = 600;
+        let bitmap_bit = search_start - FIRST_CLUSTER_ID;
+        let mut first_sector = [0u8; BLOCK_SIZE];
+        first_sector[bitmap_bit as usize / 8] |= 1 << (bitmap_bit % 8);
+        let mut device = DummyBlockDevice {
+            blocks: vec![first_sector, [0; BLOCK_SIZE]],
+        };
+        let mut allocator = Allocator::<DummyBlockDevice, BLOCK_SIZE, 2>::new();
+        allocator.bitmap = AllocationBitmapSlim {
+            first_sector: BITMAP_SECTOR,
+            num_sectors: 2,
+        };
+        allocator.next_search_cluster = search_start;
+
+        let run = allocator.find_free_clusters(&mut device, 1).unwrap();
+
+        assert_eq!(run.first_cluster, search_start + 1);
+        assert_eq!(run.cluster_count, 1);
     }
 }

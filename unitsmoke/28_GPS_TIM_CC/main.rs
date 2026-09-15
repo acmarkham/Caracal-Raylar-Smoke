@@ -7,8 +7,10 @@
 //
 // Clock check: HSE=16 MHz, PLL1_R = 16 MHz / 1 * 10 / 2 = 80 MHz SYSCLK.
 // APB1 defaults to DIV1, so TIM4 is clocked at 80 MHz. The input-capture
-// driver sets TIM4 to 1 MHz, so each TIM4 tick is 1 us. TIM4 is a 32-bit
-// general-purpose timer on STM32U595, so the capture value is a 32-bit counter.
+// driver sets TIM4 to 1 MHz, so each TIM4 tick is 1 us. TIM4 is a 16-bit
+// general-purpose timer on STM32U595 and therefore wraps about fifteen times
+// between PPS edges; production code resolves those wraps against coarse
+// monotonic elapsed time.
 
 #![no_std]
 #![no_main]
@@ -25,7 +27,7 @@ use embassy_stm32::time::{hz, mhz};
 use embassy_stm32::timer::input_capture::{CapturePin, Ch1, Ch2, Ch3, Ch4, InputCapture};
 use embassy_stm32::timer::low_level::{CountingMode, InputCaptureMode, InputTISelection};
 use embassy_stm32::timer::{self, Channel, CoreInstance};
-use embassy_stm32::{bind_interrupts, exti, Peripherals};
+use embassy_stm32::{Peripherals, bind_interrupts, exti};
 use embassy_time::{Duration, Instant, Timer};
 use {defmt_rtt as _, panic_probe as _};
 

@@ -63,7 +63,9 @@ each flash are retained under `.probe-rs-logs/`.
   cycle begin.
 - PPS edges use TIM4 channel 4 hardware input capture at 1 MHz. After the first
   cross-clock epoch is established, edge timestamps are reconstructed from the
-  capture counter rather than interrupt wake-up time.
+  capture counter rather than interrupt wake-up time. TIM4 is 16-bit, so its
+  multiple wraps between 1 Hz edges are resolved using coarse monotonic elapsed
+  time while the captured sub-wrap phase retains 1 us resolution.
 - Oscillator calibration uses an allocation-free 11-point, ten-minute
   Theil-Sen regression over minute-spaced PPS samples. Pairwise slopes outside
   100 ppm are discarded, so an isolated timing or UTC-label outlier cannot
