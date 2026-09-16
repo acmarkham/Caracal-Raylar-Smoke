@@ -70,6 +70,15 @@ each flash are retained under `.probe-rs-logs/`.
 - RTT emits start, completion/failure, and elapsed-time markers while closing
   each WAV, opening its successor, and appending the new WAV header. These
   markers do not depend on the SD-backed system-log queue.
+- RTT reports total CPU use once per second and an attributed CPU profile every
+  five seconds. `mic_dma`, `audio_forward`, `audio_recorder`, and `logging` are
+  disjoint executor work; `other` is the active time not covered by those
+  points. `nested_audio_storage` and `nested_log_storage` are subsets of their
+  callers and show whether filesystem/SD polling, rather than PCM conversion or
+  log formatting, accounts for the time. Each entry is `%/calls/polls`.
+- The async profile measures time inside each future's `poll` calls and excludes
+  time returned as `Pending`. It therefore measures MCU work rather than
+  charging the CPU for time spent asleep while DMA or SDMMC hardware runs.
 - Before UTC is valid, DMA cadence and errors are still monitored, but samples
   are deliberately not inserted into the recorder ring. This prevents an
   expected GPS wait from appearing as an audio overrun.

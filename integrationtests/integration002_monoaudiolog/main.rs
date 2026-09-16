@@ -8,11 +8,14 @@ extern crate alloc;
 mod common;
 
 use core::cell::RefCell;
+use core::future::Future;
+use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::task::{Context, Poll};
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Pull};
-use embassy_stm32::i2c::{Config as I2cConfig, I2c, mode::Master};
+use embassy_stm32::i2c::{mode::Master, Config as I2cConfig, I2c};
 use embassy_stm32::mode::Blocking;
 use embassy_stm32::peripherals::{PA0, PA1, PB1};
 use embassy_stm32::time::Hertz;
@@ -22,7 +25,7 @@ use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 #[cfg(not(feature = "fake-gps-time"))]
 use embassy_sync::pubsub::WaitResult;
-use embassy_time::{Duration, Instant, TICK_HZ, Timer};
+use embassy_time::{Duration, Instant, Timer, TICK_HZ};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_audio_recorder_service::{
     AudioRecorder, AudioRecorderConfig, AudioRecorderError, RecorderProgress, TimeMetadataSource,
@@ -39,8 +42,8 @@ use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, Voltag
 use raylar_drivers::{buzzer, leds};
 use raylar_location_service::{LocationConfig, LocationResources, LocationService, LocationState};
 use raylar_logging_service::{
-    LogOutcome, LogSink, LoggerHandle, LoggingResources, LoggingService, ProcessOutcome,
-    info as log_info,
+    info as log_info, LogOutcome, LogSink, LoggerHandle, LoggingResources, LoggingService,
+    ProcessOutcome,
 };
 use raylar_power_management_service::{PowerConfig, PowerManagementService, PowerResources};
 use raylar_storage_service::{
@@ -105,6 +108,12 @@ static AUDIO_RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CPU_IDLE_OPEN: AtomicBool = AtomicBool::new(false);
 static CPU_IDLE_START_TICKS: AtomicU32 = AtomicU32::new(0);
 static CPU_IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
+static MIC_CAPTURE_PROFILE: CpuProfile = CpuProfile::new();
+static AUDIO_FORWARD_PROFILE: CpuProfile = CpuProfile::new();
+static AUDIO_RECORDER_PROFILE: CpuProfile = CpuProfile::new();
+static AUDIO_STORAGE_PROFILE: CpuProfile = CpuProfile::new();
+static LOGGING_PROFILE: CpuProfile = CpuProfile::new();
+static LOG_STORAGE_PROFILE: CpuProfile = CpuProfile::new();
 // Diagnostic INFO records are best-effort. A temporarily full telemetry queue
 // must not turn storage latency at a recording boundary into a fatal error.
 static DROPPED_INFO_DIAGNOSTICS: AtomicU32 = AtomicU32::new(0);
@@ -151,6 +160,95 @@ fn embassy_trace_task_exec_end(_executor_id: u32, _task_id: u32) {}
 
 #[unsafe(export_name = "_embassy_trace_task_ready_begin")]
 fn embassy_trace_task_ready_begin(_executor_id: u32, _task_id: u32) {}
+
+/// Measures CPU time spent polling an async operation, excluding the time for
+/// which it returns `Pending`. This is deliberately different from ordinary
+/// elapsed timing: a 20 ms SD transfer that consumes 100 us to submit and
+/// complete is charged about 100 us, not 20 ms.
+struct CpuProfile {
+    active_ticks: AtomicU32,
+    polls: AtomicU32,
+    completions: AtomicU32,
+}
+
+impl CpuProfile {
+    const fn new() -> Self {
+        Self {
+            active_ticks: AtomicU32::new(0),
+            polls: AtomicU32::new(0),
+            completions: AtomicU32::new(0),
+        }
+    }
+
+    fn instrument<F>(&'static self, future: F) -> Profiled<F> {
+        Profiled {
+            future,
+            profile: self,
+        }
+    }
+
+    fn enter(&'static self) -> CpuProfileGuard {
+        CpuProfileGuard {
+            profile: self,
+            started_ticks: Instant::now().as_ticks() as u32,
+        }
+    }
+
+    fn record(&self, started_ticks: u32, completed: bool) {
+        let elapsed = (Instant::now().as_ticks() as u32).wrapping_sub(started_ticks);
+        self.active_ticks.fetch_add(elapsed, Ordering::Relaxed);
+        self.polls.fetch_add(1, Ordering::Relaxed);
+        if completed {
+            self.completions.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn take(&self) -> CpuProfileSample {
+        CpuProfileSample {
+            active_ticks: self.active_ticks.swap(0, Ordering::AcqRel),
+            polls: self.polls.swap(0, Ordering::AcqRel),
+            completions: self.completions.swap(0, Ordering::AcqRel),
+        }
+    }
+}
+
+struct Profiled<F> {
+    future: F,
+    profile: &'static CpuProfile,
+}
+
+impl<F: Future> Future for Profiled<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let started_ticks = Instant::now().as_ticks() as u32;
+        // SAFETY: projection never moves `future`; it remains pinned with its
+        // containing `Profiled` value for the duration of the poll.
+        let this = unsafe { self.get_unchecked_mut() };
+        let result = unsafe { Pin::new_unchecked(&mut this.future) }.poll(cx);
+        this.profile
+            .record(started_ticks, matches!(result, Poll::Ready(_)));
+        result
+    }
+}
+
+struct CpuProfileGuard {
+    profile: &'static CpuProfile,
+    started_ticks: u32,
+}
+
+impl Drop for CpuProfileGuard {
+    fn drop(&mut self) {
+        self.profile.record(self.started_ticks, true);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CpuProfileSample {
+    active_ticks: u32,
+    polls: u32,
+    completions: u32,
+}
 
 #[derive(Clone, Copy)]
 enum LedCommand {
@@ -243,7 +341,9 @@ where
     ) -> Result<Self::Handle, Self::Error> {
         let started = Instant::now();
         info!("RTT audio boundary: begin stream start");
-        let result = self.storage.begin(StreamKind::Audio, layout).await;
+        let result = AUDIO_STORAGE_PROFILE
+            .instrument(self.storage.begin(StreamKind::Audio, layout))
+            .await;
         let elapsed_us = Instant::now()
             .saturating_duration_since(started)
             .as_micros();
@@ -263,7 +363,9 @@ where
         // WAV headers are one storage block; PCM writes use the larger
         // recorder buffer. Trace only this first append, not every audio write.
         if data.len() != 512 {
-            return self.storage.write(stream, data).await;
+            return AUDIO_STORAGE_PROFILE
+                .instrument(self.storage.write(stream, data))
+                .await;
         }
 
         let started = Instant::now();
@@ -271,7 +373,9 @@ where
             "RTT audio boundary: header append start bytes={}",
             data.len()
         );
-        let result = self.storage.write(stream, data).await;
+        let result = AUDIO_STORAGE_PROFILE
+            .instrument(self.storage.write(stream, data))
+            .await;
         let elapsed_us = Instant::now()
             .saturating_duration_since(started)
             .as_micros();
@@ -290,7 +394,9 @@ where
     async fn finish_audio(&mut self, stream: Self::Handle) -> Result<(), Self::Error> {
         let started = Instant::now();
         info!("RTT audio boundary: finish stream start");
-        let result = self.storage.finish(stream).await;
+        let result = AUDIO_STORAGE_PROFILE
+            .instrument(self.storage.finish(stream))
+            .await;
         let elapsed_us = Instant::now()
             .saturating_duration_since(started)
             .as_micros();
@@ -331,13 +437,19 @@ where
 {
     type Error = StorageServiceError<B::Error>;
     async fn append(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-        self.storage.write(self.stream, data).await
+        LOG_STORAGE_PROFILE
+            .instrument(self.storage.write(self.stream, data))
+            .await
     }
     async fn flush(&mut self) -> Result<(), Self::Error> {
-        self.storage.flush(self.stream).await
+        LOG_STORAGE_PROFILE
+            .instrument(self.storage.flush(self.stream))
+            .await
     }
     async fn checkpoint(&mut self) -> Result<(), Self::Error> {
-        self.storage.checkpoint(self.stream).await
+        LOG_STORAGE_PROFILE
+            .instrument(self.storage.checkpoint(self.stream))
+            .await
     }
 }
 
@@ -724,7 +836,7 @@ async fn power_service_task(service: PowerManagementService) -> ! {
 
 #[embassy_executor::task]
 async fn capture_task(driver: MicDriver) -> ! {
-    driver.run().await
+    MIC_CAPTURE_PROFILE.instrument(driver.run()).await
 }
 
 #[embassy_executor::task]
@@ -805,6 +917,9 @@ async fn cpu_usage_task() -> ! {
     // one-second window after the task has been scheduled.
     let _ = CPU_IDLE_TICKS.swap(0, Ordering::AcqRel);
     let mut previous_ticks = Instant::now().as_ticks() as u32;
+    let mut report_windows = 0u32;
+    let mut report_elapsed_ticks = 0u32;
+    let mut report_active_ticks = 0u32;
     loop {
         Timer::after_secs(1).await;
         let now = Instant::now().as_ticks() as u32;
@@ -824,8 +939,79 @@ async fn cpu_usage_task() -> ! {
             idle_ticks / 1_000,
             elapsed_ticks / 1_000,
         );
+        report_windows += 1;
+        report_elapsed_ticks = report_elapsed_ticks.saturating_add(elapsed_ticks);
+        report_active_ticks = report_active_ticks.saturating_add(active_ticks);
+        if report_windows == 5 {
+            report_cpu_profiles(report_elapsed_ticks, report_active_ticks);
+            report_windows = 0;
+            report_elapsed_ticks = 0;
+            report_active_ticks = 0;
+        }
         previous_ticks = now;
     }
+}
+
+fn report_cpu_profiles(elapsed_ticks: u32, active_ticks: u32) {
+    let mic = MIC_CAPTURE_PROFILE.take();
+    let forward = AUDIO_FORWARD_PROFILE.take();
+    let recorder = AUDIO_RECORDER_PROFILE.take();
+    let logging = LOGGING_PROFILE.take();
+    let audio_storage = AUDIO_STORAGE_PROFILE.take();
+    let log_storage = LOG_STORAGE_PROFILE.take();
+
+    // The first four profiles are disjoint executor work. Storage profiles are
+    // nested subsets and are intentionally not added again.
+    let attributed_ticks = mic
+        .active_ticks
+        .saturating_add(forward.active_ticks)
+        .saturating_add(recorder.active_ticks)
+        .saturating_add(logging.active_ticks);
+    let other_ticks = active_ticks.saturating_sub(attributed_ticks);
+    info!(
+        "cpu profile window_ms={} active={}.{}% mic_dma={}.{}%/{}/{} audio_forward={}.{}%/{}/{} audio_recorder={}.{}%/{}/{} logging={}.{}%/{}/{} other={}.{}% nested_audio_storage={}.{}%/{}/{} nested_log_storage={}.{}%/{}/{} (percent/calls/polls)",
+        ticks_to_millis(elapsed_ticks),
+        tenths_percent(active_ticks, elapsed_ticks) / 10,
+        tenths_percent(active_ticks, elapsed_ticks) % 10,
+        tenths_percent(mic.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(mic.active_ticks, elapsed_ticks) % 10,
+        mic.completions,
+        mic.polls,
+        tenths_percent(forward.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(forward.active_ticks, elapsed_ticks) % 10,
+        forward.completions,
+        forward.polls,
+        tenths_percent(recorder.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(recorder.active_ticks, elapsed_ticks) % 10,
+        recorder.completions,
+        recorder.polls,
+        tenths_percent(logging.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(logging.active_ticks, elapsed_ticks) % 10,
+        logging.completions,
+        logging.polls,
+        tenths_percent(other_ticks, elapsed_ticks) / 10,
+        tenths_percent(other_ticks, elapsed_ticks) % 10,
+        tenths_percent(audio_storage.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(audio_storage.active_ticks, elapsed_ticks) % 10,
+        audio_storage.completions,
+        audio_storage.polls,
+        tenths_percent(log_storage.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(log_storage.active_ticks, elapsed_ticks) % 10,
+        log_storage.completions,
+        log_storage.polls,
+    );
+}
+
+fn tenths_percent(ticks: u32, elapsed_ticks: u32) -> u32 {
+    if elapsed_ticks == 0 {
+        0
+    } else {
+        ((u64::from(ticks) * 1_000) / u64::from(elapsed_ticks)) as u32
+    }
+}
+
+fn ticks_to_millis(ticks: u32) -> u64 {
+    u64::from(ticks).saturating_mul(1_000) / TICK_HZ
 }
 
 async fn run_services<B>(
@@ -875,7 +1061,10 @@ where
     }
     AUDIO_RECORDING_ACTIVE.store(true, Ordering::Release);
     loop {
-        match recorder.record_next().await {
+        match AUDIO_RECORDER_PROFILE
+            .instrument(recorder.record_next())
+            .await
+        {
             Ok(RecorderProgress {
                 pcm_samples,
                 dropped_samples,
@@ -917,7 +1106,7 @@ async fn checkpoint_logging<B>(
     B: StorageBackend<512> + 'static,
     B::Error: defmt::Format,
 {
-    if let Err(error) = logging.checkpoint().await {
+    if let Err(error) = LOGGING_PROFILE.instrument(logging.checkpoint()).await {
         error!("system log checkpoint failed: {}", error);
         signal_severe_error();
     }
@@ -952,7 +1141,7 @@ async fn drain_logging<B>(
     B::Error: defmt::Format,
 {
     loop {
-        match logging.process_one().await {
+        match LOGGING_PROFILE.instrument(logging.process_one()).await {
             Ok(ProcessOutcome::Written) => {}
             Ok(ProcessOutcome::Empty) => return,
             Err(error) => {
@@ -1294,6 +1483,7 @@ async fn audio_forwarder_task(audio_log: TestLogger) -> ! {
     let mut stamp_first_ticks = 0u64;
     loop {
         let state = frames.changed().await;
+        let _cpu_profile = AUDIO_FORWARD_PROFILE.enter();
         if let Some(dma_error) = state.error {
             dma_error_count = dma_error_count.wrapping_add(1);
             error!(
