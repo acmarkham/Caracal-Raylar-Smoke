@@ -19,6 +19,7 @@ raylar-drivers = { path = "../../crates/drivers", features = ["stm32", "defmt"] 
 raylar-storage-service = { path = "../../crates/services/storage", features = ["defmt"] }
 raylar-time-service = { path = "../../crates/services/time", features = ["gps", "defmt"] }
 raylar-logging-service = { path = "../../crates/services/logging", features = ["defmt"] }
+raylar-location-service = { path = "../../crates/services/location", features = ["defmt"] }
 raylar-power-management-service = { path = "../../crates/services/powermanagement", features = ["defmt"] }
 embassy-stm32.workspace = true
 embassy-executor = { workspace = true, features = ["trace"] }

@@ -7,8 +7,9 @@ before planning and implementing
 
 ## Objective
 
-Validate the complete integration of the Power Management Service, Logging Service, Storage Service, Time Service, Audio Service
-and Identity Driver
+Validate the complete integration of the Power Management Service, Logging
+Service, Storage Service, Time Service, Location Service, Audio Service and
+Identity Driver.
 
 ---
 
@@ -20,6 +21,7 @@ Start the following services:
 * Storage Service
 * Logging Service
 * Power Management Service
+* Location Service
 * Audio Service
 * Identity Driver
 
@@ -76,6 +78,18 @@ After GPS fix is acquired: Audio
 8. Aggregate audio packet timestamps into one logfile record per second. Each
    record includes the first and last packet timestamps plus packet and sample
    counts, preserving timing diagnostics without generating 10 Hz SD traffic.
+
+After GPS location is acquired:
+
+1. Feed the GPS Driver's fix stream into the Location Service.
+2. Use the Location Service's filtered, application-facing estimate rather
+   than logging raw coordinates as the device location. The default filter
+   requires at least three accepted fixes.
+3. Immediately append the first valid location estimate to `/syslog.txt`.
+4. Subsequently append the latest retained location estimate every 60 seconds.
+   Each record must include latitude and longitude in signed degrees times
+   10^7, fix age, fixes used/seen, satellite and HDOP metadata, estimated
+   uncertainty, source, and the UTC label of the contributing fix.
 
 
 Every **10 seconds (0.1 Hz)**: Power State
@@ -150,6 +164,8 @@ Example log messages:
 00000127 1244.967 INFO Time: UTC 174829830 GPS OFF
 
 00000128 1254.567 INFO  Power: source=Usb batt=3722mV solar=39mV ext_dc=323mV charging=true percent=Some(44) health=Normal charger_state=FastCharge charger_fault=None
+
+00000129 1255.100 INFO  Location: event=acquired valid=true source=Gps lat_e7=520000010 lon_e7=-10000010 fix_age_us=125000 fixes_used=3 fixes_seen=3 sats=Some(8) hdop_centi=Some(120) uncertainty_m=Some(6) fix_utc=Some(...)
 ```
 
 The precise formatting may evolve, but the log should remain human-readable.
@@ -163,6 +179,9 @@ The test should verify that:
 * Voltage measurements are updated correctly.
 * Charger state is reflected in the published `PowerState`.
 * Time state is reflected in the log message.
+* The Location Service publishes a filtered GPS-derived estimate after its
+  acceptance threshold, logs it immediately, and logs the latest estimate at
+  one-minute intervals thereafter.
 * Holdover uses calibrated frequency only; phase slew is zero once PPS loss is
   declared.
 * Reacquisition anchors are withheld until three clean one-second PPS intervals

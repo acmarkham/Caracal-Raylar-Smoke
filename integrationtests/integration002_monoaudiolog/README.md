@@ -64,6 +64,12 @@ each flash are retained under `.probe-rs-logs/`.
 - The first real GPS fix plays a short alternating success trill followed by a
   high resolving note once its first PPS anchor has been accepted. The
   synthetic-time feature does not play this signal.
+- GPS fixes also feed the Location Service's nine-sample median filter. The
+  first valid estimate (after three accepted fixes) is written immediately to
+  the `Location` syslog component; the latest retained estimate is then logged
+  every 60 seconds with coordinates in signed degrees times 10^7, fix age,
+  source quality, and uncertainty metadata. Synthetic-time mode has no GPS
+  location and therefore emits no location records.
 - After the first fix, GPS remains continuously powered for ten minutes so the
   Time Service can calibrate its oscillator frequency from PPS. Only after this
   one-time calibration period does the normal 30-second on/30-second off duty

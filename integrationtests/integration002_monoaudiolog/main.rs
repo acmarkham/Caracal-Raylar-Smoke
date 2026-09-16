@@ -38,6 +38,7 @@ use raylar_drivers::mic_array::{
 use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use raylar_drivers::{buzzer, leds};
+use raylar_location_service::{LocationConfig, LocationResources, LocationService, LocationState};
 use raylar_logging_service::{
     LogOutcome, LogSink, LoggerHandle, LoggingResources, LoggingService, ProcessOutcome,
     info as log_info,
@@ -66,6 +67,7 @@ const CHANNELS: usize = MIC_CONFIG.mode.channel_count();
 const HALF_SAMPLES: usize = 1_600;
 const DMA_SAMPLES: usize = HALF_SAMPLES * 2;
 const AUDIO_PACKETS_PER_SECOND: u32 = (SAMPLE_RATE_HZ / HALF_SAMPLES) as u32;
+const LOCATION_HISTORY: usize = 9;
 // Eight seconds absorbs SD write latency while the recorder catches up.
 const AUDIO_CAPACITY: usize = SAMPLE_RATE_HZ * CHANNELS * 8;
 
@@ -83,6 +85,7 @@ type MicDriver = Stm32MonoMicrophoneDriver<'static, DMA_SAMPLES>;
 static VOLTAGES: VoltageResources = VoltageResources::new();
 static CHARGER: ChargerResources = ChargerResources::new();
 static POWER: PowerResources = PowerResources::new();
+static LOCATION: LocationResources<4> = LocationResources::new();
 static LOGGING: LoggingResources<MESSAGE_LENGTH, QUEUE_DEPTH> = LoggingResources::new();
 static MICROPHONES: MicrophoneResources<DMA_SAMPLES> = MicrophoneResources::new();
 static AUDIO: AudioSource<AUDIO_CAPACITY, 2> = AudioSource::new(AudioFormat::new(
@@ -377,6 +380,12 @@ async fn main(spawner: Spawner) -> ! {
         common::start_fake_time(spawner, gps, fake_utc).await;
         info!("TEST MODE: fake-gps-time enabled; GPS hardware is ignored");
     }
+    let location_service = LocationService::<4, LOCATION_HISTORY>::new(
+        &LOCATION,
+        unwrap!(common::GPS_RESOURCES.fix_receiver()).as_dyn(),
+        LocationConfig::default(),
+    );
+    spawner.spawn(unwrap!(location_service_task(location_service)));
     start_power(spawner, adc_voltages, sens_i2c, usb_cdc).await;
     let mut buzzer_driver = buzzer::init(buzzer::BuzzerResources {
         timer: board_buzzer.tim,
@@ -420,6 +429,7 @@ async fn main(spawner: Spawner) -> ! {
     let power_log = logging.register("Power");
     let time_log = logging.register("Time");
     let gps_log = logging.register("Gps");
+    let location_log = logging.register("Location");
     #[cfg(not(feature = "fake-gps-time"))]
     let pps_log = logging.register("Pps");
     #[cfg(not(feature = "fake-gps-time"))]
@@ -456,6 +466,7 @@ async fn main(spawner: Spawner) -> ! {
         info!("system log stream opened and flushed: /syslog.txt");
     }
     spawner.spawn(unwrap!(status_logger_task(power_log, time_log, gps_log)));
+    spawner.spawn(unwrap!(location_logger_task(location_log)));
     #[cfg(not(feature = "fake-gps-time"))]
     {
         spawner.spawn(unwrap!(pps_logger_task(pps_log)));
@@ -904,6 +915,61 @@ async fn drain_logging<B>(
             }
         }
     }
+}
+
+#[embassy_executor::task]
+async fn location_service_task(service: LocationService<4, LOCATION_HISTORY>) -> ! {
+    service.run().await
+}
+
+#[embassy_executor::task]
+async fn location_logger_task(location_log: TestLogger) -> ! {
+    let mut states = unwrap!(LOCATION.state_receiver());
+    let first = loop {
+        if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+            common::pending_forever().await;
+        }
+
+        let current = LOCATION.state();
+        if current.valid {
+            break current;
+        }
+        let changed = states.changed().await;
+        if changed.valid {
+            break changed;
+        }
+    };
+
+    log_location(location_log, "acquired", first);
+    loop {
+        Timer::after_secs(60).await;
+        if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+            common::pending_forever().await;
+        }
+        log_location(location_log, "periodic", LOCATION.state());
+    }
+}
+
+fn log_location(location_log: TestLogger, event: &'static str, state: LocationState) {
+    let fix_age_us = Instant::now()
+        .saturating_duration_since(state.last_fix_system_time)
+        .as_micros();
+    record_outcome(log_info!(
+        location_log,
+        "event={} valid={} source={:?} lat_e7={} lon_e7={} fix_age_us={} fixes_used={} fixes_seen={} sats={:?} hdop_centi={:?} uncertainty_m={:?} fix_utc={:?}",
+        event,
+        state.valid,
+        state.source,
+        state.latitude.degrees_e7,
+        state.longitude.degrees_e7,
+        fix_age_us,
+        state.fix_count_used,
+        state.total_fix_count_seen,
+        state.satellites,
+        state.hdop_centi,
+        state.uncertainty_meters,
+        state.last_fix_utc_time
+    ));
 }
 
 #[embassy_executor::task]
