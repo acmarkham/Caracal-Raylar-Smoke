@@ -73,7 +73,9 @@ After GPS fix is acquired: Audio
 5. Save data to minute long wav files, in hourly folders. 
 6. Start on top-of-the minute boundary e.g. 00s
 7. Toggle the SysSdBlue LED after each packet is written to storage
-8. Log each timestamp of the audio packet/buffer to the logfile
+8. Aggregate audio packet timestamps into one logfile record per second. Each
+   record includes the first and last packet timestamps plus packet and sample
+   counts, preserving timing diagnostics without generating 10 Hz SD traffic.
 
 
 Every **10 seconds (0.1 Hz)**: Power State

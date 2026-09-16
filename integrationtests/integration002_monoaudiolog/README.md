@@ -51,6 +51,13 @@ each flash are retained under `.probe-rs-logs/`.
 - DMA completion is distributed as latest-state data through an
   `embassy_sync::watch`. The audio source retains eight seconds so filesystem
   latency during rotation does not lose samples.
+- Audio packet timing is aggregated into a 1 Hz system-log record containing
+  the first and last DMA timestamps and the packet/sample totals for that
+  interval. A full diagnostic INFO queue increments a reported drop counter
+  but does not stop recording; filesystem write failures remain fatal.
+- RTT emits start, completion/failure, and elapsed-time markers while closing
+  each WAV, opening its successor, and appending the new WAV header. These
+  markers do not depend on the SD-backed system-log queue.
 - Before UTC is valid, DMA cadence and errors are still monitored, but samples
   are deliberately not inserted into the recorder ring. This prevents an
   expected GPS wait from appearing as an audio overrun.
@@ -108,7 +115,9 @@ each flash are retained under `.probe-rs-logs/`.
   waiting for UTC. A checkpoint commits all complete 512-byte sectors without
   closing and reopening the file; at most the final 511 bytes remain buffered
   in RAM. Startup still performs a full flush so the initial record is durable.
-  Queue drops or storage write failures latch the red system LED.
+  Storage write failures latch the red system LED. Best-effort diagnostic INFO
+  queue drops are counted and reported at the next checkpoint but are not
+  fatal.
 
 ## Hardware validation (2026-09-14)
 

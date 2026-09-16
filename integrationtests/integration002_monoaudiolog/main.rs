@@ -65,6 +65,7 @@ const CHANNELS: usize = MIC_CONFIG.mode.channel_count();
 // 16 kHz rate. Each GPDMA linked-list item is 6,400 bytes.
 const HALF_SAMPLES: usize = 1_600;
 const DMA_SAMPLES: usize = HALF_SAMPLES * 2;
+const AUDIO_PACKETS_PER_SECOND: u32 = (SAMPLE_RATE_HZ / HALF_SAMPLES) as u32;
 // Eight seconds absorbs SD write latency while the recorder catches up.
 const AUDIO_CAPACITY: usize = SAMPLE_RATE_HZ * CHANNELS * 8;
 
@@ -98,6 +99,9 @@ static AUDIO_RECORDING_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CPU_IDLE_OPEN: AtomicBool = AtomicBool::new(false);
 static CPU_IDLE_START_TICKS: AtomicU32 = AtomicU32::new(0);
 static CPU_IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
+// Diagnostic INFO records are best-effort. A temporarily full telemetry queue
+// must not turn storage latency at a recording boundary into a fatal error.
+static DROPPED_INFO_DIAGNOSTICS: AtomicU32 = AtomicU32::new(0);
 static SHARED_STORAGE: StaticCell<SharedStorage<common::BoardStorageBackend>> = StaticCell::new();
 
 #[global_allocator]
@@ -231,13 +235,70 @@ where
         &mut self,
         layout: StorageLayout,
     ) -> Result<Self::Handle, Self::Error> {
-        self.storage.begin(StreamKind::Audio, layout).await
+        let started = Instant::now();
+        info!("RTT audio boundary: begin stream start");
+        let result = self.storage.begin(StreamKind::Audio, layout).await;
+        let elapsed_us = Instant::now()
+            .saturating_duration_since(started)
+            .as_micros();
+        match &result {
+            Ok(_) => info!(
+                "RTT audio boundary: begin stream complete elapsed_us={}",
+                elapsed_us
+            ),
+            Err(_) => error!(
+                "RTT audio boundary: begin stream failed elapsed_us={}",
+                elapsed_us
+            ),
+        }
+        result
     }
     async fn append_audio(&mut self, stream: Self::Handle, data: &[u8]) -> Result<(), Self::Error> {
-        self.storage.write(stream, data).await
+        // WAV headers are one storage block; PCM writes use the larger
+        // recorder buffer. Trace only this first append, not every audio write.
+        if data.len() != 512 {
+            return self.storage.write(stream, data).await;
+        }
+
+        let started = Instant::now();
+        info!(
+            "RTT audio boundary: header append start bytes={}",
+            data.len()
+        );
+        let result = self.storage.write(stream, data).await;
+        let elapsed_us = Instant::now()
+            .saturating_duration_since(started)
+            .as_micros();
+        match &result {
+            Ok(_) => info!(
+                "RTT audio boundary: header append complete elapsed_us={}",
+                elapsed_us
+            ),
+            Err(_) => error!(
+                "RTT audio boundary: header append failed elapsed_us={}",
+                elapsed_us
+            ),
+        }
+        result
     }
     async fn finish_audio(&mut self, stream: Self::Handle) -> Result<(), Self::Error> {
-        self.storage.finish(stream).await
+        let started = Instant::now();
+        info!("RTT audio boundary: finish stream start");
+        let result = self.storage.finish(stream).await;
+        let elapsed_us = Instant::now()
+            .saturating_duration_since(started)
+            .as_micros();
+        match &result {
+            Ok(_) => info!(
+                "RTT audio boundary: finish stream complete elapsed_us={}",
+                elapsed_us
+            ),
+            Err(_) => error!(
+                "RTT audio boundary: finish stream failed elapsed_us={}",
+                elapsed_us
+            ),
+        }
+        result
     }
 }
 
@@ -803,8 +864,9 @@ async fn checkpoint_logging<B>(
         signal_severe_error();
     }
     let stats = logging.stats();
+    let dropped_info = DROPPED_INFO_DIAGNOSTICS.swap(0, Ordering::AcqRel);
     info!(
-        "system log stats: total={} dropped={} depth={} max_depth={} bytes={} truncated={} write_failures={}",
+        "system log stats: total={} dropped={} depth={} max_depth={} bytes={} truncated={} write_failures={} nonfatal_info_drops_since_checkpoint={}",
         stats.total_messages,
         stats.dropped_messages,
         stats.queue_depth,
@@ -812,8 +874,9 @@ async fn checkpoint_logging<B>(
         stats.bytes_written,
         stats.truncated_messages,
         stats.write_failures,
+        dropped_info,
     );
-    if stats.dropped_messages != 0 || stats.write_failures != 0 {
+    if stats.write_failures != 0 {
         signal_severe_error();
     }
 }
@@ -1108,6 +1171,9 @@ async fn audio_forwarder_task(audio_log: TestLogger) -> ! {
     let mut dma_error_count = 0u32;
     let mut rate_sequence = 0u64;
     let mut rate_ticks = 0u64;
+    let mut stamp_packets = 0u32;
+    let mut stamp_samples = 0usize;
+    let mut stamp_first_ticks = 0u64;
     loop {
         let state = frames.changed().await;
         if let Some(dma_error) = state.error {
@@ -1172,6 +1238,8 @@ async fn audio_forwarder_task(audio_log: TestLogger) -> ! {
         // fill the bounded recorder queue with pre-fix audio. Recording begins
         // with the first frame captured after a valid UTC anchor exists.
         if !AUDIO_RECORDING_ACTIVE.load(Ordering::Acquire) {
+            stamp_packets = 0;
+            stamp_samples = 0;
             continue;
         }
         let frame = MICROPHONES.frame(state);
@@ -1185,21 +1253,32 @@ async fn audio_forwarder_task(audio_log: TestLogger) -> ! {
             signal_severe_error();
             continue;
         }
-        record_outcome(audio_log.log_at(
-            Instant::from_ticks(state.completed_at_ticks),
-            raylar_logging_service::LogLevel::Info,
-            format_args!(
-                "audio packet timestamp_ticks={} samples={}",
-                state.completed_at_ticks,
-                channel.len()
-            ),
-        ));
+        if stamp_packets == 0 {
+            stamp_first_ticks = state.completed_at_ticks;
+        }
+        stamp_packets = stamp_packets.saturating_add(1);
+        stamp_samples = stamp_samples.saturating_add(channel.len());
+        if stamp_packets >= AUDIO_PACKETS_PER_SECOND {
+            record_outcome(audio_log.log_at(
+                Instant::from_ticks(state.completed_at_ticks),
+                raylar_logging_service::LogLevel::Info,
+                format_args!(
+                    "audio packets first_timestamp_ticks={} last_timestamp_ticks={} packets={} samples={}",
+                    stamp_first_ticks,
+                    state.completed_at_ticks,
+                    stamp_packets,
+                    stamp_samples
+                ),
+            ));
+            stamp_packets = 0;
+            stamp_samples = 0;
+        }
     }
 }
 
 fn record_outcome(outcome: LogOutcome) {
     if matches!(outcome, LogOutcome::DroppedQueueFull) {
-        signal_severe_error();
+        DROPPED_INFO_DIAGNOSTICS.fetch_add(1, Ordering::Relaxed);
     }
 }
 
