@@ -20,6 +20,8 @@ use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
+#[cfg(not(feature = "fake-gps-time"))]
+use embassy_sync::pubsub::WaitResult;
 use embassy_time::{Duration, Instant, TICK_HZ, Timer};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_audio_recorder_service::{
@@ -49,9 +51,10 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 const HEAP_BYTES: usize = 64 * 1024;
-const MESSAGE_LENGTH: usize = 256;
+// Preserve complete raw PPS/correlation records for post-hoc reconstruction.
+const MESSAGE_LENGTH: usize = 384;
 const QUEUE_DEPTH: usize = 16;
-const LINE_LENGTH: usize = 384;
+const LINE_LENGTH: usize = 512;
 const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: MicrophoneMode::Mono,
     ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf)
@@ -356,6 +359,10 @@ async fn main(spawner: Spawner) -> ! {
     let power_log = logging.register("Power");
     let time_log = logging.register("Time");
     let gps_log = logging.register("Gps");
+    #[cfg(not(feature = "fake-gps-time"))]
+    let pps_log = logging.register("Pps");
+    #[cfg(not(feature = "fake-gps-time"))]
+    let correlation_log = logging.register("GpsCorr");
     let audio_log = logging.register("Audio");
     log_identity(system_log);
     record_outcome(log_info!(
@@ -388,6 +395,11 @@ async fn main(spawner: Spawner) -> ! {
         info!("system log stream opened and flushed: /syslog.txt");
     }
     spawner.spawn(unwrap!(status_logger_task(power_log, time_log, gps_log)));
+    #[cfg(not(feature = "fake-gps-time"))]
+    {
+        spawner.spawn(unwrap!(pps_logger_task(pps_log)));
+        spawner.spawn(unwrap!(correlation_logger_task(correlation_log)));
+    }
     let microphone_driver = microphone_driver(pdm_mic_array);
     let resolved = microphone_driver.resolved_config();
     info!(
@@ -861,7 +873,7 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         match common::TIME_RESOURCES.current_utc() {
             Ok(utc) => record_outcome(log_info!(
                 time_log,
-                "UTC {} src={:?} first={:?} valid={} map_ppb={} cal_ppb={} cal_n={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
+                "UTC {} src={:?} first={:?} valid={} map_ppb={} cal_ppb={} cal_n={} cal_lock={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
                 utc.seconds,
                 time.active_time_source,
                 time.first_anchor_source,
@@ -869,6 +881,7 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
                 time.estimated_frequency_error_ppb,
                 time.calibrated_frequency_error_ppb,
                 time.frequency_calibration_samples,
+                time.frequency_calibration_locked,
                 time.phase_slew_ppb,
                 time.last_anchor_residual_us,
                 time.uncertainty_us,
@@ -879,12 +892,13 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             )),
             Err(_) => record_outcome(log_info!(
                 time_log,
-                "UTC unavailable src={:?} first={:?} valid=false map_ppb={} cal_ppb={} cal_n={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
+                "UTC unavailable src={:?} first={:?} valid=false map_ppb={} cal_ppb={} cal_n={} cal_lock={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
                 time.active_time_source,
                 time.first_anchor_source,
                 time.estimated_frequency_error_ppb,
                 time.calibrated_frequency_error_ppb,
                 time.frequency_calibration_samples,
+                time.frequency_calibration_locked,
                 time.phase_slew_ppb,
                 time.last_anchor_residual_us,
                 time.uncertainty_us,
@@ -894,6 +908,13 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
                 time.utc_second_corrections
             )),
         }
+        record_outcome(log_info!(
+            time_log,
+            "PPS_GATE active={} clean_intervals={} gate_rejections={}",
+            time.pps_reacquisition_active,
+            time.pps_reacquisition_clean_intervals,
+            time.pps_reacquisition_rejections
+        ));
         let gps = common::GPS_RESOURCES.stats();
         record_outcome(log_info!(
             gps_log,
@@ -991,6 +1012,78 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             .send(LedCommand::Off(leds::LedName::SysGpsGreen))
             .await;
         Timer::after_secs(10).await;
+    }
+}
+
+/// Persist every PPS edge, including edges for which no NMEA sentence is
+/// matched. These raw stamps permit offline oscillator and UTC reconstruction.
+#[embassy_executor::task]
+#[cfg(not(feature = "fake-gps-time"))]
+async fn pps_logger_task(pps_log: TestLogger) -> ! {
+    let mut events = unwrap!(common::GPS_RESOURCES.pps_event_subscriber());
+    loop {
+        let pps = match events.next_message().await {
+            WaitResult::Message(pps) => pps,
+            WaitResult::Lagged(missed) => {
+                record_outcome(log_info!(pps_log, "LOSS missed_edges={}", missed));
+                continue;
+            }
+        };
+        record_outcome(log_info!(
+            pps_log,
+            "EDGE count={} systime_us={} source={:?} capture_ticks={:?} delta_ticks={:?} capture_hz={:?} system_delta_us={:?}",
+            pps.pps_count,
+            pps.timestamp.as_micros(),
+            pps.timing_source,
+            pps.capture_ticks,
+            pps.capture_delta_ticks,
+            pps.capture_frequency_hz,
+            pps.delta_time.map(|delta| delta.as_micros())
+        ));
+    }
+}
+
+/// Persist every NMEA time correlation rather than only the ten-second status
+/// snapshot. Unmatched records are retained to diagnose second-label errors.
+#[embassy_executor::task]
+#[cfg(not(feature = "fake-gps-time"))]
+async fn correlation_logger_task(correlation_log: TestLogger) -> ! {
+    let mut correlations = unwrap!(common::GPS_RESOURCES.time_event_subscriber());
+    let mut sequence = 0u64;
+    loop {
+        let correlation = match correlations.next_message().await {
+            WaitResult::Message(correlation) => correlation,
+            WaitResult::Lagged(missed) => {
+                record_outcome(log_info!(
+                    correlation_log,
+                    "LOSS missed_correlations={}",
+                    missed
+                ));
+                continue;
+            }
+        };
+        sequence = sequence.saturating_add(1);
+        let pps_systime_us = correlation.pps_timestamp.map(|value| value.as_micros());
+        let offset_us = correlation
+            .pps_timestamp
+            .map(|pps| signed_instant_delta_us(correlation.local_timestamp, pps));
+        record_outcome(log_info!(
+            correlation_log,
+            "PAIR seq={} pps_count={:?} utc_date={:?} utc={}:{}:{} nmea_us={} pps_us={:?} offset_us={:?} source={:?} capture_ticks={:?} delta_ticks={:?} capture_hz={:?}",
+            sequence,
+            correlation.pps_count,
+            correlation.utc_time.date,
+            correlation.utc_time.time.hour,
+            correlation.utc_time.time.minute,
+            correlation.utc_time.time.second,
+            correlation.local_timestamp.as_micros(),
+            pps_systime_us,
+            offset_us,
+            correlation.pps_timing_source,
+            correlation.pps_capture_ticks,
+            correlation.pps_capture_delta_ticks,
+            correlation.pps_capture_frequency_hz
+        ));
     }
 }
 

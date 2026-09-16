@@ -69,19 +69,29 @@ each flash are retained under `.probe-rs-logs/`.
 - Oscillator calibration uses an allocation-free 11-point, ten-minute
   Theil-Sen regression over minute-spaced PPS samples. Pairwise slopes outside
   100 ppm are discarded, so an isolated timing or UTC-label outlier cannot
-  dominate the calibration.
+  dominate the calibration. The result is locked after the eleventh sample;
+  later duty-cycle reacquisitions cannot move the learned oscillator rate.
 - A PPS label approximately one second from the current mapping is corrected to
   the adjacent UTC second when that leaves a residual within 100 ms; larger
   discontinuities are rejected. Accepted phase error is removed by a bounded
   60-second rate slew, without stepping the existing UTC mapping.
 - Published uncertainty includes the full latest PPS residual plus capture
   uncertainty, then grows according to the holdover stability bound while GPS
-  is off.
+  is off. After 1.5 seconds without PPS, the temporary phase slew is removed
+  with a continuity-preserving rebase, so holdover runs only at the calibrated
+  oscillator rate. The gap edge and the next three qualifying intervals are
+  excluded; anchors resume only after three consecutive PPS intervals within
+  50 ms of one second.
 - The ten-second Time records include first/current anchor source, latest PPS
   residual, calibrated and slew frequency components, accepted/rejected anchor
   counts, UTC-second corrections, uncertainty, and holdover duration. Separate
   GPS records expose `Searching`, `Calibrating`, and `Reacquiring` state, PPS
   capture backend, and calibration/search/reacquisition counters.
+- `Pps: EDGE` records preserve every raw PPS monotonic/capture stamp and
+  interval. `GpsCorr: PAIR` records preserve every emitted NMEA/PPS pairing,
+  including the PPS sequence number and unmatched NMEA records, so UTC can be
+  reconstructed or corrected post-hoc. The streams are statically bounded and
+  emit explicit `LOSS` records if a logger ever falls behind.
 - Severe failures that make recording unsafe or impossible—including missing
   SD media, card/filesystem initialization failures, stream write failures,
   and unrecoverable recorder failures—latch recording off. Both red LEDs then

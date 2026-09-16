@@ -10,7 +10,7 @@ use core::task::Poll;
 
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::pubsub::PubSubChannel;
+use embassy_sync::pubsub::{ImmediatePublisher, PubSubChannel, Subscriber};
 use embassy_sync::watch::Watch;
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use embedded_io_async::{Read, Write};
@@ -34,8 +34,10 @@ pub struct GpsResources<
     serial_requests: Channel<GpsMutex, SerialRequest, COMMAND_DEPTH>,
     fixes: Watch<GpsMutex, GpsFix, WATCHERS>,
     pps: Watch<GpsMutex, PpsInfo, WATCHERS>,
+    pps_events: PubSubChannel<GpsMutex, PpsInfo, RAW_DEPTH, WATCHERS, 1>,
     stats: Watch<GpsMutex, GpsStats, WATCHERS>,
     time: Watch<GpsMutex, TimeCorrelation, WATCHERS>,
+    time_events: PubSubChannel<GpsMutex, TimeCorrelation, RAW_DEPTH, WATCHERS, 1>,
     raw_nmea: PubSubChannel<GpsMutex, RawNmeaLog<SENTENCE_LEN>, RAW_DEPTH, WATCHERS, 1>,
 }
 
@@ -53,8 +55,10 @@ impl<
             serial_requests: Channel::new(),
             fixes: Watch::new(),
             pps: Watch::new(),
+            pps_events: PubSubChannel::new(),
             stats: Watch::new(),
             time: Watch::new(),
+            time_events: PubSubChannel::new(),
             raw_nmea: PubSubChannel::new(),
         }
     }
@@ -75,6 +79,17 @@ impl<
         &self,
     ) -> Option<embassy_sync::watch::Receiver<'_, GpsMutex, PpsInfo, WATCHERS>> {
         self.pps.receiver()
+    }
+
+    /// Subscribe to every PPS event. Unlike `pps_receiver`, this bounded
+    /// stream retains individual edges when the consumer is briefly delayed.
+    pub fn pps_event_subscriber(
+        &self,
+    ) -> Result<
+        Subscriber<'_, GpsMutex, PpsInfo, RAW_DEPTH, WATCHERS, 1>,
+        embassy_sync::pubsub::Error,
+    > {
+        self.pps_events.subscriber()
     }
 
     pub fn stats_receiver(
@@ -112,6 +127,17 @@ impl<
         &self,
     ) -> Option<embassy_sync::watch::Receiver<'_, GpsMutex, TimeCorrelation, WATCHERS>> {
         self.time.receiver()
+    }
+
+    /// Subscribe to every emitted NMEA/PPS correlation for persistent
+    /// diagnostics and post-hoc clock reconstruction.
+    pub fn time_event_subscriber(
+        &self,
+    ) -> Result<
+        Subscriber<'_, GpsMutex, TimeCorrelation, RAW_DEPTH, WATCHERS, 1>,
+        embassy_sync::pubsub::Error,
+    > {
+        self.time_events.subscriber()
     }
 
     pub fn raw_nmea_subscriber(
@@ -475,6 +501,9 @@ struct PendingNmeaTime {
     local_timestamp: Instant,
 }
 
+type CorrelationEventPublisher<'a, const DEPTH: usize, const WATCHERS: usize> =
+    ImmediatePublisher<'a, GpsMutex, TimeCorrelation, DEPTH, WATCHERS, 1>;
+
 async fn wait_for_search_outcome<const COMMAND_DEPTH: usize>(
     commands: &embassy_sync::channel::Receiver<'_, GpsMutex, GpsCommand, COMMAND_DEPTH>,
     manager_events: &embassy_sync::channel::Receiver<'_, GpsMutex, ManagerEvent, COMMAND_DEPTH>,
@@ -670,6 +699,7 @@ where
     let fix_pub = resources.fixes.sender();
     let stats_pub = resources.stats.sender();
     let time_pub = resources.time.sender();
+    let time_event_pub = resources.time_events.immediate_publisher();
     let raw_pub = resources.raw_nmea.immediate_publisher();
 
     let mut parser = NmeaParser::new();
@@ -682,7 +712,13 @@ where
     loop {
         if let Some(rx) = pps_rx.as_mut() {
             while let Some(pps) = rx.try_changed() {
-                record_pps_update(&time_pub, &mut pending_time, &mut last_pps, pps);
+                record_pps_update(
+                    &time_pub,
+                    &time_event_pub,
+                    &mut pending_time,
+                    &mut last_pps,
+                    pps,
+                );
             }
         }
 
@@ -725,6 +761,7 @@ where
 
                                     record_nmea_time(
                                         &time_pub,
+                                        &time_event_pub,
                                         &mut pending_time,
                                         &mut last_pps,
                                         fix.utc_time,
@@ -734,6 +771,7 @@ where
                                 Ok(Some(NavigationEvent::Time(utc_time))) => {
                                     record_nmea_time(
                                         &time_pub,
+                                        &time_event_pub,
                                         &mut pending_time,
                                         &mut last_pps,
                                         utc_time,
@@ -770,16 +808,28 @@ where
 
         if let Some(rx) = pps_rx.as_mut() {
             while let Some(pps) = rx.try_changed() {
-                record_pps_update(&time_pub, &mut pending_time, &mut last_pps, pps);
+                record_pps_update(
+                    &time_pub,
+                    &time_event_pub,
+                    &mut pending_time,
+                    &mut last_pps,
+                    pps,
+                );
             }
         }
 
-        publish_expired_pending_time(&time_pub, &mut pending_time, Instant::now());
+        publish_expired_pending_time(
+            &time_pub,
+            &time_event_pub,
+            &mut pending_time,
+            Instant::now(),
+        );
     }
 }
 
-fn record_nmea_time<const WATCHERS: usize>(
+fn record_nmea_time<const WATCHERS: usize, const DEPTH: usize>(
     time_pub: &embassy_sync::watch::Sender<'_, GpsMutex, TimeCorrelation, WATCHERS>,
+    time_event_pub: &CorrelationEventPublisher<'_, DEPTH, WATCHERS>,
     pending_time: &mut Option<PendingNmeaTime>,
     last_pps: &mut Option<PpsInfo>,
     utc_time: UtcDateTime,
@@ -796,20 +846,26 @@ fn record_nmea_time<const WATCHERS: usize>(
             return;
         }
 
-        publish_pending_time(time_pub, pending_time, None);
+        publish_pending_time(time_pub, time_event_pub, pending_time, None);
     }
 
     if let Some(pps) = *last_pps {
         if pps_matches_nmea(pps, local_timestamp) {
             *last_pps = None;
-            publish_time_correlation(time_pub, utc_time, local_timestamp, Some(pps));
+            publish_time_correlation(
+                time_pub,
+                time_event_pub,
+                utc_time,
+                local_timestamp,
+                Some(pps),
+            );
             return;
         }
 
         if pps.timestamp <= local_timestamp {
             *last_pps = None;
         } else {
-            publish_time_correlation(time_pub, utc_time, local_timestamp, None);
+            publish_time_correlation(time_pub, time_event_pub, utc_time, local_timestamp, None);
             return;
         }
     }
@@ -828,8 +884,9 @@ fn select_utc_with_date(existing: UtcDateTime, new: UtcDateTime) -> UtcDateTime 
     }
 }
 
-fn record_pps_update<const WATCHERS: usize>(
+fn record_pps_update<const WATCHERS: usize, const DEPTH: usize>(
     time_pub: &embassy_sync::watch::Sender<'_, GpsMutex, TimeCorrelation, WATCHERS>,
+    time_event_pub: &CorrelationEventPublisher<'_, DEPTH, WATCHERS>,
     pending_time: &mut Option<PendingNmeaTime>,
     last_pps: &mut Option<PpsInfo>,
     pps: PpsInfo,
@@ -839,6 +896,7 @@ fn record_pps_update<const WATCHERS: usize>(
             *pending_time = None;
             publish_time_correlation(
                 time_pub,
+                time_event_pub,
                 pending.utc_time,
                 pending.local_timestamp,
                 Some(pps),
@@ -847,7 +905,7 @@ fn record_pps_update<const WATCHERS: usize>(
         }
 
         if pps.timestamp > pending.local_timestamp {
-            publish_pending_time(time_pub, pending_time, None);
+            publish_pending_time(time_pub, time_event_pub, pending_time, None);
             *last_pps = Some(pps);
             return;
         }
@@ -856,43 +914,55 @@ fn record_pps_update<const WATCHERS: usize>(
     *last_pps = Some(pps);
 }
 
-fn publish_expired_pending_time<const WATCHERS: usize>(
+fn publish_expired_pending_time<const WATCHERS: usize, const DEPTH: usize>(
     time_pub: &embassy_sync::watch::Sender<'_, GpsMutex, TimeCorrelation, WATCHERS>,
+    time_event_pub: &CorrelationEventPublisher<'_, DEPTH, WATCHERS>,
     pending_time: &mut Option<PendingNmeaTime>,
     now: Instant,
 ) {
     if let Some(pending) = *pending_time {
         if now.saturating_duration_since(pending.local_timestamp) > NMEA_MAX_DELAY_AFTER_PPS {
-            publish_pending_time(time_pub, pending_time, None);
+            publish_pending_time(time_pub, time_event_pub, pending_time, None);
         }
     }
 }
 
-fn publish_pending_time<const WATCHERS: usize>(
+fn publish_pending_time<const WATCHERS: usize, const DEPTH: usize>(
     time_pub: &embassy_sync::watch::Sender<'_, GpsMutex, TimeCorrelation, WATCHERS>,
+    time_event_pub: &CorrelationEventPublisher<'_, DEPTH, WATCHERS>,
     pending_time: &mut Option<PendingNmeaTime>,
     pps: Option<PpsInfo>,
 ) {
     if let Some(pending) = pending_time.take() {
-        publish_time_correlation(time_pub, pending.utc_time, pending.local_timestamp, pps);
+        publish_time_correlation(
+            time_pub,
+            time_event_pub,
+            pending.utc_time,
+            pending.local_timestamp,
+            pps,
+        );
     }
 }
 
-fn publish_time_correlation<const WATCHERS: usize>(
+fn publish_time_correlation<const WATCHERS: usize, const DEPTH: usize>(
     time_pub: &embassy_sync::watch::Sender<'_, GpsMutex, TimeCorrelation, WATCHERS>,
+    time_event_pub: &CorrelationEventPublisher<'_, DEPTH, WATCHERS>,
     utc_time: UtcDateTime,
     local_timestamp: Instant,
     pps: Option<PpsInfo>,
 ) {
-    time_pub.send(TimeCorrelation {
+    let correlation = TimeCorrelation {
         utc_time,
         local_timestamp,
         pps_timestamp: pps.map(|p| p.timestamp),
+        pps_count: pps.map(|p| p.pps_count),
         pps_capture_ticks: pps.and_then(|p| p.capture_ticks),
         pps_capture_delta_ticks: pps.and_then(|p| p.capture_delta_ticks),
         pps_capture_frequency_hz: pps.and_then(|p| p.capture_frequency_hz),
         pps_timing_source: pps.map(|p| p.timing_source),
-    });
+    };
+    time_pub.send(correlation);
+    time_event_pub.publish_immediate(correlation);
 }
 
 fn pps_matches_nmea(pps: PpsInfo, nmea_timestamp: Instant) -> bool {
@@ -954,6 +1024,7 @@ where
     PPS: PpsSource,
 {
     let pps_pub = resources.pps.sender();
+    let pps_event_pub = resources.pps_events.immediate_publisher();
     let stats_pub = resources.stats.sender();
     let mut count = 0u64;
     let mut previous: Option<Instant> = None;
@@ -979,6 +1050,7 @@ where
                 previous = Some(capture.timestamp);
                 previous_capture_ticks = capture.capture_ticks;
                 pps_pub.send(info);
+                pps_event_pub.publish_immediate(info);
                 modify_stats(&stats_pub, |stats| {
                     stats.num_pps_events = count;
                     stats.last_pps_timing_source = Some(capture.timing_source);

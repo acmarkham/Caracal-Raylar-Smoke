@@ -62,6 +62,13 @@ After GPS fix is acquired: Audio
    spanning this calibration interval. Correct unambiguous adjacent-second NMEA
    labels, reject remaining large residuals, slew smaller phase errors without
    stepping UTC, and include residual phase error in published uncertainty.
+   Once PPS is absent for 1.5 seconds, remove the temporary phase slew without
+   stepping UTC and use only the calibrated oscillator rate during holdover.
+   On PPS return, reject the gap edge and require three consecutive PPS
+   intervals within 50 ms of one second before accepting another time anchor.
+   Gap and qualification samples must not enter oscillator regression. Freeze
+   oscillator calibration after the initial eleven-point, ten-minute window so
+   later reacquisition artefacts cannot move the learned frequency.
 4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
 5. Save data to minute long wav files, in hourly folders. 
 6. Start on top-of-the minute boundary e.g. 00s
@@ -85,6 +92,17 @@ Every **10 seconds (0.1 Hz)**:
    anchor counts, and GPS calibration/reacquisition state and counters.
 3. Append the messages to the system log using the Logging Service.
 4. Briefly flash the SysGpsGreen LED as a hearbeat signal to show that it is correctly operating
+
+Continuously while GPS is active:
+
+1. Log every PPS edge with its monotonic timestamp, hardware capture timestamp,
+   capture interval, capture frequency, timing backend, and PPS sequence number.
+2. Log every emitted NMEA/PPS correlation, including unmatched NMEA time
+   records, with UTC label, NMEA arrival timestamp, matched PPS timestamp,
+   arrival offset, and hardware capture values. These records must be suitable
+   for reconstructing or correcting the UTC mapping after the deployment.
+3. Report any bounded diagnostic-stream lag explicitly in the log rather than
+   silently omitting records.
 
 
 Error:
@@ -143,6 +161,13 @@ The test should verify that:
 * Voltage measurements are updated correctly.
 * Charger state is reflected in the published `PowerState`.
 * Time state is reflected in the log message.
+* Holdover uses calibrated frequency only; phase slew is zero once PPS loss is
+  declared.
+* Reacquisition anchors are withheld until three clean one-second PPS intervals
+  have been observed, and the withheld samples do not alter calibration.
+* Frequency calibration locks after the initial ten-minute window.
+* Per-edge PPS and per-correlation records are present without unexplained
+  sequence gaps and contain enough raw timestamps for post-hoc correction.
 * Logging messages are correctly formatted.
 * Log sequence numbers remain contiguous.
 * Log timestamps increase monotonically.

@@ -90,6 +90,14 @@ pub struct TimeConfig {
     /// Time over which a PPS phase residual is removed without stepping UTC.
     pub phase_slew_duration: Duration,
     pub max_phase_slew_ppb: i64,
+    /// Declare PPS lost after this long without an accepted edge. Holdover
+    /// then runs on the calibrated oscillator rate without a phase slew.
+    pub pps_loss_timeout: Duration,
+    /// Maximum error from a nominal one-second PPS interval while qualifying
+    /// a reacquisition.
+    pub pps_interval_tolerance: Duration,
+    /// Consecutive clean one-second intervals required after a PPS gap.
+    pub pps_reacquisition_intervals: u8,
     /// Window around a one-second residual in which the NMEA UTC label is
     /// corrected to the adjacent second.
     pub utc_second_correction_tolerance_us: u64,
@@ -106,6 +114,9 @@ impl Default for TimeConfig {
             minimum_frequency_baseline: Duration::from_secs(60),
             phase_slew_duration: Duration::from_secs(60),
             max_phase_slew_ppb: 250_000,
+            pps_loss_timeout: Duration::from_millis(1_500),
+            pps_interval_tolerance: Duration::from_millis(50),
+            pps_reacquisition_intervals: 3,
             utc_second_correction_tolerance_us: 100_000,
             publish_interval: Duration::from_secs(1),
         }
@@ -130,6 +141,9 @@ pub struct TimeState {
     /// Long-baseline oscillator calibration, excluding phase slew.
     pub calibrated_frequency_error_ppb: i64,
     pub frequency_calibration_samples: u8,
+    /// True once the initial ten-minute (eleven sample) calibration window is
+    /// complete. Reacquisition data cannot then move the oscillator estimate.
+    pub frequency_calibration_locked: bool,
     pub phase_slew_ppb: i64,
     pub uncertainty_us: u64,
     pub last_anchor_system_time: Option<Instant>,
@@ -143,6 +157,9 @@ pub struct TimeState {
     pub utc_second_corrections: u32,
     pub accepted_anchors: u32,
     pub rejected_anchors: u32,
+    pub pps_reacquisition_active: bool,
+    pub pps_reacquisition_clean_intervals: u8,
+    pub pps_reacquisition_rejections: u32,
 }
 
 impl TimeState {
@@ -157,6 +174,7 @@ impl TimeState {
             estimated_frequency_error_ppb: 0,
             calibrated_frequency_error_ppb: 0,
             frequency_calibration_samples: 0,
+            frequency_calibration_locked: false,
             phase_slew_ppb: 0,
             uncertainty_us: u64::MAX,
             last_anchor_system_time: None,
@@ -168,6 +186,9 @@ impl TimeState {
             utc_second_corrections: 0,
             accepted_anchors: 0,
             rejected_anchors: 0,
+            pps_reacquisition_active: false,
+            pps_reacquisition_clean_intervals: 0,
+            pps_reacquisition_rejections: 0,
         }
     }
 

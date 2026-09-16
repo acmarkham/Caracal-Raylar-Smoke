@@ -172,6 +172,8 @@ pub struct TimeCorrelation {
     pub utc_time: UtcDateTime,
     pub local_timestamp: Instant,
     pub pps_timestamp: Option<Instant>,
+    /// PPS sequence number provides an unambiguous join to the raw edge log.
+    pub pps_count: Option<u64>,
     /// Fine PPS fields are forwarded unchanged for a future Time Service
     /// frequency estimator; the GPS driver does not interpret their drift.
     pub pps_capture_ticks: Option<u64>,

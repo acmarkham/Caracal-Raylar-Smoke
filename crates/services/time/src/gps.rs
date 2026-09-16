@@ -103,6 +103,7 @@ mod tests {
             },
             local_timestamp: Instant::from_ticks(1_100),
             pps_timestamp,
+            pps_count: pps_timestamp.map(|_| 1),
             pps_capture_ticks: None,
             pps_capture_delta_ticks: None,
             pps_capture_frequency_hz: None,

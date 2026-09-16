@@ -24,6 +24,7 @@ pub struct TimeEstimator {
     state: TimeState,
     frequency_samples: [FrequencySample; FREQUENCY_SAMPLE_CAPACITY],
     frequency_sample_count: usize,
+    last_observed_pps_system_time: Option<Instant>,
 }
 
 impl TimeEstimator {
@@ -33,6 +34,7 @@ impl TimeEstimator {
             state: TimeState::invalid(),
             frequency_samples: [EMPTY_FREQUENCY_SAMPLE; FREQUENCY_SAMPLE_CAPACITY],
             frequency_sample_count: 0,
+            last_observed_pps_system_time: None,
         }
     }
 
@@ -42,8 +44,17 @@ impl TimeEstimator {
 
     pub fn ingest(&mut self, mut anchor: Anchor) -> bool {
         if self.state.accepted_anchors == 0 {
+            if anchor.source == TimeSource::GpsPps {
+                self.last_observed_pps_system_time = Some(anchor.system_time);
+            }
             self.accept_first(anchor);
             return true;
+        }
+
+        if anchor.source == TimeSource::GpsPps && !self.pps_reacquisition_ready(anchor.system_time)
+        {
+            self.reject();
+            return false;
         }
 
         let Some(predicted_us) = mapping_utc_micros(&self.state, anchor.system_time) else {
@@ -201,6 +212,9 @@ impl TimeEstimator {
         );
         let base_uncertainty = self.state.uncertainty_us.saturating_sub(old_growth);
         self.state.holdover_duration = now.saturating_duration_since(last_anchor);
+        if self.state.holdover_duration >= self.config.pps_loss_timeout {
+            self.disable_phase_slew(now);
+        }
         let new_growth = uncertainty_growth(
             self.state.holdover_duration,
             self.config.holdover_stability_ppb,
@@ -242,6 +256,9 @@ impl TimeEstimator {
     }
 
     fn add_frequency_sample(&mut self, anchor: Anchor) {
+        if self.state.frequency_calibration_locked {
+            return;
+        }
         if self.frequency_sample_count != 0 {
             let last = self.frequency_samples[self.frequency_sample_count - 1];
             if last.source != anchor.source {
@@ -309,6 +326,11 @@ impl TimeEstimator {
             slopes[slope_count / 2]
         };
         self.state.calibrated_frequency_error_ppb = calibrated_ppb;
+        if self.frequency_sample_count == FREQUENCY_SAMPLE_CAPACITY {
+            self.state.frequency_calibration_locked = true;
+            #[cfg(feature = "defmt")]
+            defmt::info!("oscillator calibration locked at {}ppb", calibrated_ppb);
+        }
         #[cfg(feature = "defmt")]
         defmt::info!(
             "robust frequency regression: samples={} valid_slopes={} span_s={} calibrated_ppb={}",
@@ -320,6 +342,84 @@ impl TimeEstimator {
                 / TICK_HZ,
             calibrated_ppb
         );
+    }
+
+    /// Hold UTC continuous while removing the temporary phase correction.
+    /// Only the learned oscillator frequency is allowed to run in holdover.
+    fn disable_phase_slew(&mut self, at: Instant) {
+        if self.state.phase_slew_ppb == 0 {
+            return;
+        }
+        let Some(mapped_us) = mapping_utc_micros(&self.state, at) else {
+            return;
+        };
+        let Ok(mapped_us) = i64::try_from(mapped_us) else {
+            return;
+        };
+        self.state.reference_system_time = at;
+        self.state.reference_utc = UtcTimestamp::from_micros(mapped_us);
+        self.state.phase_slew_ppb = 0;
+        self.state.estimated_frequency_error_ppb = self.state.calibrated_frequency_error_ppb;
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "PPS holdover: phase slew removed at system_ticks={}, calibrated_ppb={}",
+            at.as_ticks(),
+            self.state.calibrated_frequency_error_ppb
+        );
+    }
+
+    /// Reject the gap edge and the first clean intervals after it. This keeps
+    /// standby gaps and timer restart artefacts out of phase control and the
+    /// oscillator regression.
+    fn pps_reacquisition_ready(&mut self, system_time: Instant) -> bool {
+        let previous = self.last_observed_pps_system_time.replace(system_time);
+        let Some(previous) = previous else {
+            return true;
+        };
+        let interval = system_time.saturating_duration_since(previous);
+        let nominal_ticks = TICK_HZ;
+        let interval_ticks = interval.as_ticks();
+        let error_ticks = interval_ticks.abs_diff(nominal_ticks);
+        let clean = error_ticks <= self.config.pps_interval_tolerance.as_ticks();
+
+        if interval >= self.config.pps_loss_timeout {
+            self.state.pps_reacquisition_active = true;
+            self.state.pps_reacquisition_clean_intervals = 0;
+            self.disable_phase_slew(system_time);
+        } else if self.state.pps_reacquisition_active {
+            self.state.pps_reacquisition_clean_intervals = if clean {
+                self.state
+                    .pps_reacquisition_clean_intervals
+                    .saturating_add(1)
+            } else {
+                0
+            };
+        } else {
+            return true;
+        }
+
+        if self.state.pps_reacquisition_clean_intervals < self.config.pps_reacquisition_intervals {
+            self.state.pps_reacquisition_rejections =
+                self.state.pps_reacquisition_rejections.saturating_add(1);
+            #[cfg(feature = "defmt")]
+            defmt::info!(
+                "PPS reacquisition gate: interval_ticks={} clean={} progress={}/{} rejected={}",
+                interval_ticks,
+                clean,
+                self.state.pps_reacquisition_clean_intervals,
+                self.config.pps_reacquisition_intervals,
+                self.state.pps_reacquisition_rejections
+            );
+            return false;
+        }
+
+        self.state.pps_reacquisition_active = false;
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "PPS reacquisition qualified after {} clean intervals",
+            self.state.pps_reacquisition_clean_intervals
+        );
+        true
     }
 }
 
@@ -391,6 +491,7 @@ mod tests {
     fn estimates_frequency_error_with_long_baseline_regression() {
         let mut config = TimeConfig::default();
         config.minimum_frequency_baseline = Duration::from_secs(1);
+        config.pps_loss_timeout = Duration::from_secs(1_000);
         let mut estimator = TimeEstimator::new(config);
         estimator.ingest(anchor(0, 1_700_000_000, 10));
         let mut second = anchor(100, 1_700_000_100, 10);
@@ -416,7 +517,9 @@ mod tests {
 
     #[test]
     fn frequency_regression_rejects_one_in_window_outlier() {
-        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        let mut config = TimeConfig::default();
+        config.pps_loss_timeout = Duration::from_secs(1_000);
+        let mut estimator = TimeEstimator::new(config);
         estimator.ingest(anchor(0, 1_700_000_000, 10));
         for minute in 1..=10u64 {
             let mut sample = anchor(minute * 60, 1_700_000_000 + (minute * 60) as i64, 10);
@@ -427,6 +530,7 @@ mod tests {
             assert!(estimator.ingest(sample));
         }
         assert_eq!(estimator.state().calibrated_frequency_error_ppb, 10_000);
+        assert!(estimator.state().frequency_calibration_locked);
     }
 
     #[test]
@@ -444,6 +548,7 @@ mod tests {
     fn hardware_scale_sample_handles_small_capture_quantization() {
         let mut config = TimeConfig::default();
         config.minimum_frequency_baseline = Duration::from_secs(10);
+        config.pps_loss_timeout = Duration::from_secs(1_000);
         let mut estimator = TimeEstimator::new(config);
         estimator.ingest(anchor(0, 1_700_000_000, 10));
         let noisy = Anchor {
@@ -489,5 +594,66 @@ mod tests {
         let state = estimator.update_holdover(Instant::from_ticks(10 * TICK_HZ));
         assert_eq!(state.uncertainty_us, 110);
         assert!(!state.utc_valid);
+    }
+
+    #[test]
+    fn holdover_removes_phase_slew_without_stepping_utc() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        estimator.ingest(anchor(0, 1_700_000_000, 10));
+        let mut next = anchor(1, 1_700_000_001, 10);
+        next.utc.microseconds = 1_000;
+        assert!(estimator.ingest(next));
+        assert_ne!(estimator.state().phase_slew_ppb, 0);
+
+        let holdover_time = Instant::from_ticks(3 * TICK_HZ);
+        let before = estimator.state().system_to_utc(holdover_time).unwrap();
+        let state = estimator.update_holdover(holdover_time);
+        let after = state.system_to_utc(holdover_time).unwrap();
+        assert_eq!(after, before);
+        assert_eq!(state.phase_slew_ppb, 0);
+        assert_eq!(
+            state.estimated_frequency_error_ppb,
+            state.calibrated_frequency_error_ppb
+        );
+    }
+
+    #[test]
+    fn reacquisition_requires_three_clean_pps_intervals() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
+
+        assert!(!estimator.ingest(anchor(30, 1_700_000_030, 10)));
+        assert!(!estimator.ingest(anchor(31, 1_700_000_031, 10)));
+        assert!(!estimator.ingest(anchor(32, 1_700_000_032, 10)));
+        assert!(estimator.ingest(anchor(33, 1_700_000_033, 10)));
+
+        let state = estimator.state();
+        assert!(!state.pps_reacquisition_active);
+        assert_eq!(state.pps_reacquisition_clean_intervals, 3);
+        assert_eq!(state.pps_reacquisition_rejections, 3);
+        assert_eq!(state.accepted_anchors, 2);
+        assert_eq!(state.rejected_anchors, 3);
+    }
+
+    #[test]
+    fn locked_frequency_calibration_ignores_later_samples() {
+        let mut config = TimeConfig::default();
+        config.minimum_frequency_baseline = Duration::from_secs(1);
+        config.pps_loss_timeout = Duration::from_secs(1_000);
+        let mut estimator = TimeEstimator::new(config);
+        assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
+        for second in 1..=10u64 {
+            let mut sample = anchor(second, 1_700_000_000 + second as i64, 10);
+            sample.utc.microseconds = second as u32 * 10;
+            assert!(estimator.ingest(sample));
+        }
+        let locked_ppb = estimator.state().calibrated_frequency_error_ppb;
+        assert!(estimator.state().frequency_calibration_locked);
+
+        let mut later = anchor(11, 1_700_000_011, 10);
+        later.utc.microseconds = 1_000;
+        assert!(estimator.ingest(later));
+        assert_eq!(estimator.state().calibrated_frequency_error_ppb, locked_ppb);
+        assert_eq!(estimator.state().frequency_calibration_samples, 11);
     }
 }
