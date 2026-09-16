@@ -28,6 +28,7 @@ use raylar_audio_recorder_service::{
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{AdcVoltages, Board, Leds, PdmMicArray, PdmMicDma, SensI2C, UsbCdc};
 use raylar_drivers::batterycharger::{ChargerConfig, ChargerDriver, ChargerResources};
+use raylar_drivers::identity;
 use raylar_drivers::mic_array::stm32::{Dma0TimestampHandler, MonoPins, Stm32MonoMicrophoneDriver};
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
@@ -356,22 +357,28 @@ async fn main(spawner: Spawner) -> ! {
     let time_log = logging.register("Time");
     let gps_log = logging.register("Gps");
     let audio_log = logging.register("Audio");
+    log_identity(system_log);
     record_outcome(log_info!(
         system_log,
         "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders",
         SAMPLE_RATE_HZ
     ));
-    // Commit one record before audio startup. This makes /syslog.txt visible
-    // even if GPS acquisition or microphone capture subsequently stalls.
-    match logging.process_one().await {
-        Ok(ProcessOutcome::Written) => {}
-        Ok(ProcessOutcome::Empty) => {
-            error!("system log startup record was not queued");
-            signal_severe_error();
-        }
-        Err(error) => {
-            error!("system log startup write failed: {}", error);
-            signal_severe_error();
+    // Commit startup records before audio startup. This makes /syslog.txt
+    // visible even if GPS acquisition or microphone capture subsequently
+    // stalls.
+    for _ in 0..2 {
+        match logging.process_one().await {
+            Ok(ProcessOutcome::Written) => {}
+            Ok(ProcessOutcome::Empty) => {
+                error!("system log startup record was not queued");
+                signal_severe_error();
+                break;
+            }
+            Err(error) => {
+                error!("system log startup write failed: {}", error);
+                signal_severe_error();
+                break;
+            }
         }
     }
     if let Err(error) = logging.flush().await {
@@ -413,6 +420,38 @@ async fn main(spawner: Spawner) -> ! {
         Err(error) => fail_forever("audio recorder creation failed", error).await,
     };
     run_services(logging, recorder).await
+}
+
+fn log_identity(system_log: TestLogger) {
+    let identity = identity::init();
+    let uid = identity.uid();
+    let serials = identity.serials();
+    match identity::calculate_firmware_crc32() {
+        Ok(crc32) => record_outcome(log_info!(
+            system_log,
+            "identity uuid={:08X}-{:08X}-{:08X} serial64={:016X} serial48={:012X} serial32={:08X} serial16={:04X} firmware_crc32={:08X}",
+            uid.word0,
+            uid.word1,
+            uid.word2,
+            serials.serial_64,
+            serials.serial_48,
+            serials.serial_32,
+            serials.serial_16,
+            crc32
+        )),
+        Err(error) => record_outcome(log_info!(
+            system_log,
+            "identity uuid={:08X}-{:08X}-{:08X} serial64={:016X} serial48={:012X} serial32={:08X} serial16={:04X} firmware_crc32_error={:?}",
+            uid.word0,
+            uid.word1,
+            uid.word2,
+            serials.serial_64,
+            serials.serial_48,
+            serials.serial_32,
+            serials.serial_16,
+            error
+        )),
+    }
 }
 
 async fn start_power(

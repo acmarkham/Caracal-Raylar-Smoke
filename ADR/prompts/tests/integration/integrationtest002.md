@@ -8,6 +8,7 @@ before planning and implementing
 ## Objective
 
 Validate the complete integration of the Power Management Service, Logging Service, Storage Service, Time Service, Audio Service
+and Identity Driver
 
 ---
 
@@ -20,6 +21,7 @@ Start the following services:
 * Logging Service
 * Power Management Service
 * Audio Service
+* Identity Driver
 
 The Storage Service should create the standard system log stream.
 
@@ -29,6 +31,9 @@ The Audio Service should write audio files to the storage stream in .wav format.
 
 The services should interface to the drivers, and not talk directly to hardware/bypass a driver.
 
+The Identity Driver should provide device and firmware traceability information
+for the system log.
+
 ---
 
 ## Test Operation
@@ -37,6 +42,14 @@ Startup:
 1. Enable lipo charger for 200mA limit
 2. Enable all services needed e.g. GPS, SD card, audio
 3. Beep 1000Hz for 0.25s on/0.25s off three times
+4. Open the standard system log and immediately record the device identity
+   before audio startup:
+   * raw STM32 96-bit UUID/UID
+   * derived 64-bit, 48-bit, 32-bit and 16-bit serial IDs
+   * runtime firmware CRC32 hash, or an explicit firmware-hash error if the
+     image range cannot be measured
+5. Flush the startup log records so `/syslog.txt` contains traceability
+   information even if GPS acquisition or microphone capture later stalls.
 
 After GPS fix is acquired: Audio
 1. Use only a GPS PPS-correlated timestamp as a Time Service anchor; never use
@@ -104,6 +117,10 @@ The test should run continuously.
 Example log messages:
 
 ```text
+00000122 1234.100 INFO  System: identity uuid=00112233-44556677-8899AABB serial64=0123456789ABCDEF serial48=456789ABCDEF serial32=9F34A102 serial16=A102 firmware_crc32=7C91D42E
+
+00000123 1234.200 INFO  System: integration002 monoaudiolog started; format=16000Hz mono, 60-second WAV files in hourly folders
+
 00000124 1234.567 INFO  Power: source=Usb batt=3722mV solar=39mV ext_dc=323mV charging=true percent=Some(44) health=Normal charger_state=FastCharge charger_fault=None
 
 00000125 1234.867 INFO Time: UTC 174829820 GPS ON
@@ -130,6 +147,8 @@ The test should verify that:
 * Log sequence numbers remain contiguous.
 * Log timestamps increase monotonically.
 * Messages are successfully written to the system log.
+* Startup system log records include raw device UUID/UID, derived serial IDs,
+  and runtime firmware CRC32 or an explicit firmware-hash error.
 * No memory allocation occurs during normal operation.
 * Audio is correctly recorded
 * Audio wav files correctly start and terminate at the correct time intervals
