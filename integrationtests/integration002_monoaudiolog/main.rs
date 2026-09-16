@@ -30,7 +30,6 @@ use raylar_audio_recorder_service::{
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{AdcVoltages, Board, Leds, PdmMicArray, PdmMicDma, SensI2C, UsbCdc};
 use raylar_drivers::batterycharger::{ChargerConfig, ChargerDriver, ChargerResources};
-use raylar_drivers::identity;
 use raylar_drivers::mic_array::stm32::{Dma0TimestampHandler, MonoPins, Stm32MonoMicrophoneDriver};
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
@@ -48,6 +47,9 @@ use raylar_storage_service::{
     StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, StreamKind,
 };
 use raylar_time_service::TimeResources;
+use raylar_versioning_service::{
+    IdentityConfig, IdentityField, IdentityResources, IdentityState, IdentityVersioningService,
+};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -86,6 +88,7 @@ static VOLTAGES: VoltageResources = VoltageResources::new();
 static CHARGER: ChargerResources = ChargerResources::new();
 static POWER: PowerResources = PowerResources::new();
 static LOCATION: LocationResources<4> = LocationResources::new();
+static VERSIONING: IdentityResources<4> = IdentityResources::new();
 static LOGGING: LoggingResources<MESSAGE_LENGTH, QUEUE_DEPTH> = LoggingResources::new();
 static MICROPHONES: MicrophoneResources<DMA_SAMPLES> = MicrophoneResources::new();
 static AUDIO: AudioSource<AUDIO_CAPACITY, 2> = AudioSource::new(AudioFormat::new(
@@ -386,6 +389,11 @@ async fn main(spawner: Spawner) -> ! {
         LocationConfig::default(),
     );
     spawner.spawn(unwrap!(location_service_task(location_service)));
+    let versioning_service = IdentityVersioningService::new(&VERSIONING, IdentityConfig::default());
+    // Make the complete startup snapshot available synchronously. The service
+    // task republishes it and owns future module/card identity updates.
+    versioning_service.publish();
+    spawner.spawn(unwrap!(identity_versioning_task(versioning_service)));
     start_power(spawner, adc_voltages, sens_i2c, usb_cdc).await;
     let mut buzzer_driver = buzzer::init(buzzer::BuzzerResources {
         timer: board_buzzer.tim,
@@ -435,7 +443,7 @@ async fn main(spawner: Spawner) -> ! {
     #[cfg(not(feature = "fake-gps-time"))]
     let correlation_log = logging.register("GpsCorr");
     let audio_log = logging.register("Audio");
-    log_identity(system_log);
+    log_versioning(system_log, VERSIONING.state());
     record_outcome(log_info!(
         system_log,
         "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders",
@@ -444,14 +452,10 @@ async fn main(spawner: Spawner) -> ! {
     // Commit startup records before audio startup. This makes /syslog.txt
     // visible even if GPS acquisition or microphone capture subsequently
     // stalls.
-    for _ in 0..2 {
+    loop {
         match logging.process_one().await {
             Ok(ProcessOutcome::Written) => {}
-            Ok(ProcessOutcome::Empty) => {
-                error!("system log startup record was not queued");
-                signal_severe_error();
-                break;
-            }
+            Ok(ProcessOutcome::Empty) => break,
             Err(error) => {
                 error!("system log startup write failed: {}", error);
                 signal_severe_error();
@@ -506,36 +510,73 @@ async fn main(spawner: Spawner) -> ! {
     run_services(logging, recorder).await
 }
 
-fn log_identity(system_log: TestLogger) {
-    let identity = identity::init();
-    let uid = identity.uid();
-    let serials = identity.serials();
-    match identity::calculate_firmware_crc32() {
-        Ok(crc32) => record_outcome(log_info!(
+fn log_versioning(system_log: TestLogger, state: IdentityState) {
+    match (
+        state.device.stm32_uid_96,
+        state.device.serial_64,
+        state.device.serial_48,
+        state.device.serial_32,
+        state.device.serial_16,
+    ) {
+        (
+            IdentityField::Known(uid),
+            IdentityField::Known(serial_64),
+            IdentityField::Known(serial_48),
+            IdentityField::Known(serial_32),
+            IdentityField::Known(serial_16),
+        ) => record_outcome(log_info!(
             system_log,
-            "identity uuid={:08X}-{:08X}-{:08X} serial64={:016X} serial48={:012X} serial32={:08X} serial16={:04X} firmware_crc32={:08X}",
+            "versioning device uuid={:08X}-{:08X}-{:08X} serial64={:016X} serial48={:012X} serial32={:08X} serial16={:04X} stm32={:?}",
             uid.word0,
             uid.word1,
             uid.word2,
-            serials.serial_64,
-            serials.serial_48,
-            serials.serial_32,
-            serials.serial_16,
-            crc32
+            serial_64,
+            serial_48,
+            serial_32,
+            serial_16,
+            state.device.stm32_device_code
         )),
-        Err(error) => record_outcome(log_info!(
+        _ => record_outcome(log_info!(
             system_log,
-            "identity uuid={:08X}-{:08X}-{:08X} serial64={:016X} serial48={:012X} serial32={:08X} serial16={:04X} firmware_crc32_error={:?}",
-            uid.word0,
-            uid.word1,
-            uid.word2,
-            serials.serial_64,
-            serials.serial_48,
-            serials.serial_32,
-            serials.serial_16,
-            error
+            "versioning device uid={:?} serial64={:?} serial48={:?} serial32={:?} serial16={:?} stm32={:?}",
+            state.device.stm32_uid_96,
+            state.device.serial_64,
+            state.device.serial_48,
+            state.device.serial_32,
+            state.device.serial_16,
+            state.device.stm32_device_code
         )),
     }
+    record_outcome(log_info!(
+        system_log,
+        "versioning firmware version={:?} git_hash={:?} build_timestamp={:?} profile={:?} runtime_crc32={:?} build_crc32={:?}",
+        state.firmware.version,
+        state.firmware.git_hash,
+        state.firmware.build_timestamp,
+        state.firmware.build_profile,
+        state.firmware.runtime_crc32,
+        state.firmware.build_crc32
+    ));
+    record_outcome(log_info!(
+        system_log,
+        "versioning board_revision={:?}",
+        state.hardware.board_revision
+    ));
+    record_outcome(log_info!(
+        system_log,
+        "versioning sd_card={:?}",
+        state.hardware.sd_card
+    ));
+    record_outcome(log_info!(
+        system_log,
+        "versioning gps_module={:?}",
+        state.hardware.gps_module
+    ));
+    record_outcome(log_info!(
+        system_log,
+        "versioning radio_module={:?}",
+        state.hardware.radio_module
+    ));
 }
 
 async fn start_power(
@@ -919,6 +960,11 @@ async fn drain_logging<B>(
 
 #[embassy_executor::task]
 async fn location_service_task(service: LocationService<4, LOCATION_HISTORY>) -> ! {
+    service.run().await
+}
+
+#[embassy_executor::task]
+async fn identity_versioning_task(service: IdentityVersioningService<4>) -> ! {
     service.run().await
 }
 

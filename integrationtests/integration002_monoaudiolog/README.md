@@ -2,9 +2,16 @@
 
 This firmware implements
 [`integrationtest002.md`](../../ADR/prompts/tests/integration/integrationtest002.md).
-It runs the time, storage, logging, power-management, and audio services against
-the Raylar v1.0 board drivers. Audio is captured as mono 16 kHz signed 32-bit
-PCM and rotated into 60-second WAV files in hourly directories.
+It runs the time, storage, logging, power-management, location, versioning, and
+audio services against the Raylar v1.0 board drivers. Audio is captured as mono
+16 kHz signed 32-bit PCM and rotated into 60-second WAV files in hourly
+directories.
+
+Startup traceability is supplied by the Identity and Versioning Service rather
+than direct calls to the low-level identity driver. Separate syslog records
+capture device IDs, firmware/build metadata, board revision, SD-card identity,
+and GPS/radio module identity and firmware fields. Sources that are not yet
+wired are retained explicitly as `Unknown` or `Unavailable`.
 
 ## Running it
 

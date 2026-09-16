@@ -21,6 +21,7 @@ raylar-time-service = { path = "../../crates/services/time", features = ["gps", 
 raylar-logging-service = { path = "../../crates/services/logging", features = ["defmt"] }
 raylar-location-service = { path = "../../crates/services/location", features = ["defmt"] }
 raylar-power-management-service = { path = "../../crates/services/powermanagement", features = ["defmt"] }
+raylar-versioning-service = { path = "../../crates/services/versioning", features = ["stm32", "defmt"] }
 embassy-stm32.workspace = true
 embassy-executor = { workspace = true, features = ["trace"] }
 embassy-time.workspace = true
@@ -34,7 +35,11 @@ cortex-m-rt.workspace = true
 static_cell.workspace = true
 
 [features]
-trustzone-secure = ["embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure"]
+trustzone-secure = [
+    "embassy-stm32/trustzone-secure",
+    "raylar-drivers/trustzone-secure",
+    "raylar-versioning-service/trustzone-secure",
+]
 # Indoor development only: inject a synthetic Laboratory time anchor and leave
 # the GPS hardware disabled. Production/default builds always require GPS time.
 fake-gps-time = []
