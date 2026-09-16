@@ -1,4 +1,4 @@
-use raylar_drivers::storage::BLOCK_BYTES;
+use raylar_drivers::storage::{BLOCK_BYTES, StorageDeviceIdentity};
 use raylar_time_service::{TimeResources, UtcTimestamp};
 
 use crate::backend::StorageBackend;
@@ -56,6 +56,11 @@ where
             .mount()
             .await
             .map_err(StorageServiceError::Backend)
+    }
+
+    /// Identity captured by the hardware storage driver during card startup.
+    pub fn device_identity(&self) -> Option<StorageDeviceIdentity> {
+        self.backend.device_identity()
     }
 
     pub fn into_inner(self) -> B {

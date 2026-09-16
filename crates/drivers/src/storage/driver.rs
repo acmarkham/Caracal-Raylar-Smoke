@@ -1,7 +1,9 @@
+use exfat_slim::asynchronous::BlockDevice;
 use exfat_slim::asynchronous::file::File;
 use exfat_slim::asynchronous::file_system::FileSystem;
-use exfat_slim::asynchronous::BlockDevice;
 use heapless::String;
+
+use super::StorageDeviceIdentity;
 
 pub const BLOCK_BYTES: usize = 512;
 pub const CACHE_BLOCKS: usize = 8;
@@ -21,6 +23,7 @@ pub struct StorageDriver<
     pub(crate) read_slot: Option<ReadSlot>,
     pub(crate) write_generations: [u8; MAX_WRITE_HANDLES],
     pub(crate) read_generation: u8,
+    pub(crate) device_identity: Option<StorageDeviceIdentity>,
 }
 
 pub(crate) struct WriteSlot<const SIZE: usize, const PATH_LEN: usize> {
@@ -46,13 +49,25 @@ where
     D: BlockDevice<SIZE>,
 {
     pub fn new(block_device: D) -> Self {
+        Self::new_with_device_identity(block_device, None)
+    }
+
+    pub fn new_with_device_identity(
+        block_device: D,
+        device_identity: Option<StorageDeviceIdentity>,
+    ) -> Self {
         Self {
             fs: FileSystem::new(block_device),
             write_slots: core::array::from_fn(|_| None),
             read_slot: None,
             write_generations: [0; MAX_WRITE_HANDLES],
             read_generation: 0,
+            device_identity,
         }
+    }
+
+    pub const fn device_identity(&self) -> Option<StorageDeviceIdentity> {
+        self.device_identity
     }
 
     pub fn into_inner(self) -> D {

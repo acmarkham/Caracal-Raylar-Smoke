@@ -54,7 +54,9 @@ Startup:
    * STM32 device code and board revision
    * firmware semantic version, Git hash, build timestamp/profile, runtime
      CRC32 and build CRC32, with explicit unknown/unavailable states
-   * SD-card identity
+   * SD-card manufacturer ID, OEM ID, product name/revision, serial number,
+     manufacture month/year and capacity, obtained through the Storage Driver
+     and Storage Service rather than direct SDMMC access
    * GPS module vendor/model and firmware/protocol/hardware versions
    * radio module vendor/model and firmware/protocol/hardware versions
    The integration firmware must consume these fields through the Versioning
@@ -164,7 +166,7 @@ Example log messages:
 
 00000123 1234.110 INFO  System: versioning firmware version=Known("0.1.0") git_hash=Known("...") build_timestamp=Known("...") profile=Known("release") runtime_crc32=Known(...) build_crc32=Unknown
 
-00000124 1234.120 INFO  System: versioning sd_card=Unknown
+00000124 1234.120 INFO  System: versioning sd_card=Known(SdCardIdentity { manufacturer_id: Known(3), oem_id: Known([83, 68]), product_name: Known([...]), product_revision: Known(33), serial_number: Known(...), manufacture_year: Known(2026), manufacture_month: Known(9), capacity_bytes: Known(128043712512) })
 
 00000125 1234.130 INFO  System: versioning gps_module=Unknown
 
@@ -214,6 +216,10 @@ The test should verify that:
   include device/firmware traceability plus explicit SD-card, GPS-module and
   radio-module identity states. The integration test does not call the
   lower-level Traceability Driver directly.
+* With a mounted SD card, the Versioning Service's SD identity is `Known` and
+  matches CID/CSD metadata exposed through the Storage Driver, including the
+  card serial number and capacity. Integration code does not access SDMMC
+  identity registers directly.
 * No memory allocation occurs during normal operation.
 * Audio is correctly recorded
 * Audio wav files correctly start and terminate at the correct time intervals

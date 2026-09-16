@@ -236,11 +236,20 @@ open_for_read(path)
 read(handle, &mut [u8])
 
 close_read(handle)
+
+device_identity()
 ```
 
 This is conceptual rather than a fixed API.
 
 The final interface should follow idiomatic Rust ownership. The storage driver owns all filesystem objects. Clients only hold opaque file handles (e.g. FileHandle(u8)). Handles are invalid after Close().
+
+`device_identity()` returns the immutable SD identity captured during SDMMC
+card initialization. For SD cards this is derived from CID/CSD and includes
+manufacturer ID, OEM ID, product name/revision, serial number, manufacture
+month/year, and capacity in bytes. The returned representation must not expose
+HAL-specific `Card`, CID, or CSD types. Invalid fixed-width CID text is reported
+as unavailable rather than fabricated or silently truncated.
 
 ---
 

@@ -1,7 +1,9 @@
-use aligned::{Aligned, A4};
-use embassy_stm32::sdmmc::sd::{Card, DataBlock, StorageDevice};
+use aligned::{A4, Aligned};
 use embassy_stm32::sdmmc::Error as SdError;
+use embassy_stm32::sdmmc::sd::{Card, DataBlock, StorageDevice};
 use exfat_slim::asynchronous::BlockDevice;
+
+use super::StorageDeviceIdentity;
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug)]
@@ -21,6 +23,31 @@ impl<'a, 'b> Stm32SdBlockDevice<'a, 'b> {
     pub fn into_inner(self) -> StorageDevice<'a, 'b, Card> {
         self.card
     }
+
+    pub fn device_identity(&self) -> StorageDeviceIdentity {
+        let card = self.card.card();
+        let (manufacture_month, manufacture_year) = card.cid.manufacturing_date();
+        StorageDeviceIdentity {
+            manufacturer_id: card.cid.manufacturer_id(),
+            oem_id: fixed_ascii(card.cid.oem_id()),
+            product_name: fixed_ascii(card.cid.product_name()),
+            product_revision: card.cid.product_revision(),
+            serial_number: card.cid.serial(),
+            manufacture_year,
+            manufacture_month,
+            capacity_bytes: card.csd.card_size(),
+        }
+    }
+}
+
+fn fixed_ascii<const N: usize>(value: &str) -> Option<[u8; N]> {
+    let bytes = value.as_bytes();
+    if bytes.len() != N {
+        return None;
+    }
+    let mut result = [0; N];
+    result.copy_from_slice(bytes);
+    Some(result)
 }
 
 impl BlockDevice<512> for Stm32SdBlockDevice<'_, '_> {

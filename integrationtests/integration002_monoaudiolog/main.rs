@@ -389,11 +389,6 @@ async fn main(spawner: Spawner) -> ! {
         LocationConfig::default(),
     );
     spawner.spawn(unwrap!(location_service_task(location_service)));
-    let versioning_service = IdentityVersioningService::new(&VERSIONING, IdentityConfig::default());
-    // Make the complete startup snapshot available synchronously. The service
-    // task republishes it and owns future module/card identity updates.
-    versioning_service.publish();
-    spawner.spawn(unwrap!(identity_versioning_task(versioning_service)));
     start_power(spawner, adc_voltages, sens_i2c, usb_cdc).await;
     let mut buzzer_driver = buzzer::init(buzzer::BuzzerResources {
         timer: board_buzzer.tim,
@@ -426,6 +421,17 @@ async fn main(spawner: Spawner) -> ! {
     if let Err(error) = storage.mount().await {
         fail_forever("storage mount failed", error).await;
     }
+    let mut versioning_service =
+        IdentityVersioningService::new(&VERSIONING, IdentityConfig::default());
+    let sd_card_identity = storage
+        .device_identity()
+        .map(|identity| IdentityField::Known(identity.into()))
+        .unwrap_or(IdentityField::Unavailable);
+    versioning_service.set_sd_card_identity(sd_card_identity);
+    // Publish the complete device/firmware/card snapshot before opening the
+    // system log. The service owns future GPS/radio/card identity updates.
+    versioning_service.publish();
+    spawner.spawn(unwrap!(identity_versioning_task(versioning_service)));
     let storage = SHARED_STORAGE.init(SharedStorage::new(storage));
     let sink = match SharedLogSink::open(storage).await {
         Ok(sink) => sink,

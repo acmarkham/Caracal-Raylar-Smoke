@@ -121,6 +121,11 @@ Each `begin_stream` request includes a layout such as `Flat`, `DailyFolders`, `H
 
 The producer never receives or constructs the resulting path. Filesystem organization can therefore evolve independently of producer lifecycle policy.
 
+The Storage Service also exposes the read-only physical-media identity captured
+by the Storage Driver. This accessor performs no new SD transaction and returns
+a small copied snapshot, allowing the Identity and Versioning Service to obtain
+card CID/CSD metadata without bypassing Storage's ownership of the driver.
+
 ---
 
 # Stream Archetypes

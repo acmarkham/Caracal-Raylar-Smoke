@@ -1,4 +1,6 @@
-use raylar_drivers::storage::{FileHandle, StorageBlockDevice, StorageDriver, StorageError};
+use raylar_drivers::storage::{
+    FileHandle, StorageBlockDevice, StorageDeviceIdentity, StorageDriver, StorageError,
+};
 
 /// Filesystem operations required by the storage service.
 ///
@@ -8,6 +10,10 @@ use raylar_drivers::storage::{FileHandle, StorageBlockDevice, StorageDriver, Sto
 #[allow(async_fn_in_trait)]
 pub trait StorageBackend<const BLOCK_SIZE: usize> {
     type Error;
+
+    fn device_identity(&self) -> Option<StorageDeviceIdentity> {
+        None
+    }
 
     async fn mount(&mut self) -> Result<(), Self::Error>;
     async fn create_directory(&mut self, path: &str) -> Result<(), Self::Error>;
@@ -27,6 +33,10 @@ where
     D: StorageBlockDevice<BLOCK_SIZE>,
 {
     type Error = StorageError<D::Error>;
+
+    fn device_identity(&self) -> Option<StorageDeviceIdentity> {
+        StorageDriver::device_identity(self)
+    }
 
     async fn mount(&mut self) -> Result<(), Self::Error> {
         StorageDriver::mount(self).await

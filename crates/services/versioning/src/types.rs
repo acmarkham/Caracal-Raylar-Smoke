@@ -1,5 +1,5 @@
 use heapless::String;
-use raylar_drivers::identity::DeviceUid;
+use raylar_drivers::{identity::DeviceUid, storage::StorageDeviceIdentity};
 
 pub const IDENTITY_STRING_CAPACITY: usize = 64;
 pub type FixedIdentityString = String<IDENTITY_STRING_CAPACITY>;
@@ -181,6 +181,27 @@ impl SdCardIdentity {
     }
 }
 
+impl From<StorageDeviceIdentity> for SdCardIdentity {
+    fn from(identity: StorageDeviceIdentity) -> Self {
+        Self {
+            manufacturer_id: IdentityField::Known(identity.manufacturer_id),
+            oem_id: identity
+                .oem_id
+                .map(IdentityField::Known)
+                .unwrap_or(IdentityField::Unavailable),
+            product_name: identity
+                .product_name
+                .map(IdentityField::Known)
+                .unwrap_or(IdentityField::Unavailable),
+            product_revision: IdentityField::Known(identity.product_revision),
+            serial_number: IdentityField::Known(identity.serial_number),
+            manufacture_year: IdentityField::Known(identity.manufacture_year),
+            manufacture_month: IdentityField::Known(identity.manufacture_month),
+            capacity_bytes: IdentityField::Known(identity.capacity_bytes),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GpsModuleIdentity {
     pub vendor: IdentityField<&'static str>,
@@ -220,5 +241,54 @@ impl RadioModuleIdentity {
             hardware_version: IdentityField::Unknown,
             protocol_version: IdentityField::Unknown,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storage_identity_maps_into_versioning_fields() {
+        let identity = StorageDeviceIdentity {
+            manufacturer_id: 0x03,
+            oem_id: Some(*b"SD"),
+            product_name: Some(*b"TEST1"),
+            product_revision: 0x21,
+            serial_number: 0x1234_5678,
+            manufacture_year: 2026,
+            manufacture_month: 9,
+            capacity_bytes: 128_000_000_000,
+        };
+
+        let card = SdCardIdentity::from(identity);
+
+        assert_eq!(card.manufacturer_id, IdentityField::Known(0x03));
+        assert_eq!(card.oem_id, IdentityField::Known(*b"SD"));
+        assert_eq!(card.product_name, IdentityField::Known(*b"TEST1"));
+        assert_eq!(card.product_revision, IdentityField::Known(0x21));
+        assert_eq!(card.serial_number, IdentityField::Known(0x1234_5678));
+        assert_eq!(card.manufacture_year, IdentityField::Known(2026));
+        assert_eq!(card.manufacture_month, IdentityField::Known(9));
+        assert_eq!(card.capacity_bytes, IdentityField::Known(128_000_000_000));
+    }
+
+    #[test]
+    fn invalid_card_text_is_explicitly_unavailable() {
+        let identity = StorageDeviceIdentity {
+            manufacturer_id: 1,
+            oem_id: None,
+            product_name: None,
+            product_revision: 0,
+            serial_number: 0,
+            manufacture_year: 2000,
+            manufacture_month: 0,
+            capacity_bytes: 0,
+        };
+
+        let card = SdCardIdentity::from(identity);
+
+        assert_eq!(card.oem_id, IdentityField::Unavailable);
+        assert_eq!(card.product_name, IdentityField::Unavailable);
     }
 }

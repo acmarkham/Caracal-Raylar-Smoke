@@ -13,6 +13,11 @@ capture device IDs, firmware/build metadata, board revision, SD-card identity,
 and GPS/radio module identity and firmware fields. Sources that are not yet
 wired are retained explicitly as `Unknown` or `Unavailable`.
 
+SD-card identity is captured once from CID/CSD by the STM32 storage driver and
+passed through the Storage Service to Versioning. The syslog snapshot includes
+manufacturer/OEM/product identifiers, revision, serial number, manufacture
+date, and physical capacity without integration code accessing SDMMC directly.
+
 ## Running it
 
 The default build requires a GPS PPS-correlated UTC anchor before it creates an

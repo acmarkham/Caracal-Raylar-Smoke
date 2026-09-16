@@ -7,6 +7,7 @@ mod directory;
 mod driver;
 mod error;
 mod handles;
+mod identity;
 mod mount;
 mod read;
 #[cfg(feature = "stm32")]
@@ -18,4 +19,5 @@ pub use driver::{StorageDriver, BLOCK_BYTES, CACHE_BLOCKS, MAX_WRITE_HANDLES};
 pub use error::{PartitionedDeviceError, StorageError, StorageResult, VolumeDetectError};
 pub use exfat_slim::asynchronous::BlockDevice as StorageBlockDevice;
 pub use handles::{FileHandle, ReadHandle};
+pub use identity::StorageDeviceIdentity;
 pub use volume::{detect_exfat_volume, ExfatVolume, PartitionedBlockDevice};

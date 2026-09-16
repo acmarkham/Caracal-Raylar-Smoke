@@ -13,7 +13,7 @@ use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
 use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources, PpsTimingSource};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
-    FileHandle, PartitionedBlockDevice, StorageDriver, detect_exfat_volume,
+    FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver, detect_exfat_volume,
 };
 use raylar_storage_service::StorageBackend;
 use raylar_time_service::gps::run_gps_time_source;
@@ -44,6 +44,10 @@ where
     B: StorageBackend<BLOCK_SIZE>,
 {
     type Error = B::Error;
+
+    fn device_identity(&self) -> Option<StorageDeviceIdentity> {
+        self.inner.device_identity()
+    }
 
     async fn mount(&mut self) -> Result<(), Self::Error> {
         self.inner.mount().await
@@ -256,6 +260,18 @@ async fn storage_driver_inner(
 
     info!("SD init phase 5: wrapping card as a 512-byte block device");
     let mut device = Stm32SdBlockDevice::new(card);
+    let device_identity = device.device_identity();
+    info!(
+        "SD card identity: mid={} oid={:?} product={:?} revision={} serial={} manufactured={}-{} capacity_bytes={}",
+        device_identity.manufacturer_id,
+        device_identity.oem_id,
+        device_identity.product_name,
+        device_identity.product_revision,
+        device_identity.serial_number,
+        device_identity.manufacture_year,
+        device_identity.manufacture_month,
+        device_identity.capacity_bytes,
+    );
     info!("SD init phase 5 complete: block device ready");
 
     info!("SD init phase 6: detecting raw or MBR-partitioned exFAT volume");
@@ -274,7 +290,10 @@ async fn storage_driver_inner(
         }
     };
     info!("SD init phase 7: constructing powered partitioned storage driver");
-    let inner = StorageDriver::<_>::new(PartitionedBlockDevice::new(device, volume));
+    let inner = StorageDriver::<_>::new_with_device_identity(
+        PartitionedBlockDevice::new(device, volume),
+        Some(device_identity),
+    );
     info!("SD init phase 7 complete: driver owns SD power pin and is ready to mount");
     PoweredStorage {
         inner,

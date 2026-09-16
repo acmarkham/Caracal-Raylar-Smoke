@@ -248,20 +248,29 @@ Useful fields may include:
 
 ```rust
 pub struct SdCardIdentity {
-    pub manufacturer_id: Option<u8>,
-    pub oem_id: Option<[u8; 2]>,
-    pub product_name: Option<[u8; 5]>,
-    pub product_revision: Option<u8>,
-    pub serial_number: Option<u32>,
-    pub manufacture_year: Option<u16>,
-    pub manufacture_month: Option<u8>,
-    pub capacity_bytes: Option<u64>,
+    pub manufacturer_id: IdentityField<u8>,
+    pub oem_id: IdentityField<[u8; 2]>,
+    pub product_name: IdentityField<[u8; 5]>,
+    pub product_revision: IdentityField<u8>,
+    pub serial_number: IdentityField<u32>,
+    pub manufacture_year: IdentityField<u16>,
+    pub manufacture_month: IdentityField<u8>,
+    pub capacity_bytes: IdentityField<u64>,
 }
 ```
 
+The Storage Driver captures these values from the SD CID and CSD registers
+during card initialization. The Storage Service exposes that copied snapshot;
+the Versioning Service converts it into `SdCardIdentity` and republishes it in
+`IdentityState`. Application code must not query SDMMC or the card object
+directly for identity.
+
 The exact fields should match what the SDMMC / SD card layer can reliably provide.
 
-If the SD card has not yet been initialised, this field should remain `None` or `Unknown`.
+If the SD card has not yet been initialised, the card field remains `Unknown`.
+If the active storage backend cannot provide physical-media identity, it is
+`Unavailable`. Individual malformed/unreadable CID text fields are likewise
+`Unavailable`, while the remaining valid CID/CSD fields stay `Known`.
 
 ---
 
