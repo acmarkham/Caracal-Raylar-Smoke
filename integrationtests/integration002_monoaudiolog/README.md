@@ -94,8 +94,11 @@ each flash are retained under `.probe-rs-logs/`.
   service queues, and DMA buffers are statically bounded. The exFAT library
   itself still uses the configured fixed 64 KiB embedded heap for filesystem
   metadata operations; application steady-state buffers do not allocate.
-- Log records are drained and flushed every ten seconds even while waiting for
-  UTC. Queue drops or storage write failures latch the red system LED.
+- Log records are drained and checkpointed every ten seconds even while
+  waiting for UTC. A checkpoint commits all complete 512-byte sectors without
+  closing and reopening the file; at most the final 511 bytes remain buffered
+  in RAM. Startup still performs a full flush so the initial record is durable.
+  Queue drops or storage write failures latch the red system LED.
 
 ## Hardware validation (2026-09-14)
 

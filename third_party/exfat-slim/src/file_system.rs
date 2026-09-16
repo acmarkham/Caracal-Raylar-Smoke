@@ -726,17 +726,17 @@ where
             return Ok(file_details.first_cluster);
         }
 
-        let num_clusters = (cursor / self.fs.cluster_length as u64) as u32;
+        let steps_to_last_cluster = steps_to_last_cluster(cursor, self.fs.cluster_length);
 
         if file_details
             .flags
             .contains(GeneralSecondaryFlags::NoFatChain)
         {
-            let cluster_id = file_details.first_cluster + num_clusters;
+            let cluster_id = file_details.first_cluster + steps_to_last_cluster;
             Ok(cluster_id)
         } else {
             let mut cluster_id = file_details.first_cluster;
-            for _i in 0..num_clusters - 1 {
+            for _ in 0..steps_to_last_cluster {
                 if let Some(x) = self
                     .fat
                     .next_cluster_in_fat_chain(cluster_id, &mut self.dev)
@@ -1016,6 +1016,53 @@ where
         }
 
         Ok(())
+    }
+}
+
+fn steps_to_last_cluster(cursor: u64, cluster_length: u32) -> u32 {
+    debug_assert!(cursor > 0);
+    ((cursor - 1) / u64::from(cluster_length)) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::steps_to_last_cluster;
+
+    #[test]
+    fn eof_cluster_steps_handle_exact_boundaries() {
+        const CLUSTER_LENGTH: u32 = 131_072;
+
+        assert_eq!(steps_to_last_cluster(1, CLUSTER_LENGTH), 0);
+        assert_eq!(
+            steps_to_last_cluster(u64::from(CLUSTER_LENGTH), CLUSTER_LENGTH),
+            0
+        );
+        assert_eq!(
+            steps_to_last_cluster(u64::from(CLUSTER_LENGTH) + 1, CLUSTER_LENGTH),
+            1
+        );
+        assert_eq!(
+            steps_to_last_cluster(u64::from(CLUSTER_LENGTH) * 2, CLUSTER_LENGTH),
+            1
+        );
+    }
+
+    #[test]
+    fn fragmented_reopen_selects_true_last_cluster() {
+        const CLUSTER_LENGTH: u32 = 131_072;
+        let chain = [6u32, 139, 205];
+        let cursor = u64::from(CLUSTER_LENGTH) * 2 + 93_849;
+        let mut cluster = chain[0];
+
+        for next in chain
+            .iter()
+            .skip(1)
+            .take(steps_to_last_cluster(cursor, CLUSTER_LENGTH) as usize)
+        {
+            cluster = *next;
+        }
+
+        assert_eq!(cluster, 205);
     }
 }
 

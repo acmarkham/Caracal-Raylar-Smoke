@@ -146,6 +146,25 @@ where
         Ok(())
     }
 
+    /// Commits complete backend blocks without closing and reopening the file.
+    ///
+    /// At most one partial service block remains buffered in RAM. Use `flush`
+    /// when that final partial block must also be durable.
+    pub async fn checkpoint(
+        &mut self,
+        stream: StreamHandle,
+    ) -> Result<(), StorageServiceError<B::Error>> {
+        let index = self.validate(stream)?;
+        let slot = self.slots[index]
+            .as_ref()
+            .ok_or(StorageServiceError::InvalidStream)?;
+        let handle = slot.file.ok_or(StorageServiceError::InvalidStream)?;
+        self.backend
+            .flush(handle)
+            .await
+            .map_err(StorageServiceError::Backend)
+    }
+
     pub async fn finish(
         &mut self,
         stream: StreamHandle,

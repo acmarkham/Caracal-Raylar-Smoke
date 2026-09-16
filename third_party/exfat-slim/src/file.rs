@@ -233,7 +233,7 @@ impl<const NUM_SECTORS: usize> Touched for FileDirty<NUM_SECTORS> {
 
         self.sectors.clear();
         self.overflowed = false;
-        self.is_dir_entry_dirty = true;
+        self.is_dir_entry_dirty = false;
         Ok(())
     }
 }

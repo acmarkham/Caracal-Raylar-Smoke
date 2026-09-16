@@ -199,6 +199,14 @@ where
     async fn flush(&self, stream: StreamHandle) -> Result<(), StorageServiceError<B::Error>> {
         self.inner.lock().await.borrow_mut().flush(stream).await
     }
+    async fn checkpoint(&self, stream: StreamHandle) -> Result<(), StorageServiceError<B::Error>> {
+        self.inner
+            .lock()
+            .await
+            .borrow_mut()
+            .checkpoint(stream)
+            .await
+    }
     async fn finish(&self, stream: StreamHandle) -> Result<(), StorageServiceError<B::Error>> {
         self.inner.lock().await.borrow_mut().finish(stream).await
     }
@@ -256,6 +264,9 @@ where
     }
     async fn flush(&mut self) -> Result<(), Self::Error> {
         self.storage.flush(self.stream).await
+    }
+    async fn checkpoint(&mut self) -> Result<(), Self::Error> {
+        self.storage.checkpoint(self.stream).await
     }
 }
 
@@ -667,7 +678,7 @@ where
     B: StorageBackend<512> + 'static,
     B::Error: defmt::Format,
 {
-    let mut next_flush = Instant::now() + Duration::from_secs(10);
+    let mut next_checkpoint = Instant::now() + Duration::from_secs(10);
     loop {
         if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
             common::pending_forever().await;
@@ -676,9 +687,9 @@ where
             Ok(()) => break,
             Err(AudioRecorderError::TimeUnavailable) => {
                 drain_logging(&mut logging).await;
-                if Instant::now() >= next_flush {
-                    flush_logging(&mut logging).await;
-                    next_flush = Instant::now() + Duration::from_secs(10);
+                if Instant::now() >= next_checkpoint {
+                    checkpoint_logging(&mut logging).await;
+                    next_checkpoint = Instant::now() + Duration::from_secs(10);
                 }
                 Timer::after_millis(100).await
             }
@@ -717,14 +728,14 @@ where
             Err(error) => fail_forever("audio recorder failed", error).await,
         }
         drain_logging(&mut logging).await;
-        if Instant::now() >= next_flush {
-            flush_logging(&mut logging).await;
-            next_flush = Instant::now() + Duration::from_secs(10);
+        if Instant::now() >= next_checkpoint {
+            checkpoint_logging(&mut logging).await;
+            next_checkpoint = Instant::now() + Duration::from_secs(10);
         }
     }
 }
 
-async fn flush_logging<B>(
+async fn checkpoint_logging<B>(
     logging: &mut LoggingService<
         'static,
         SharedLogSink<B>,
@@ -736,8 +747,8 @@ async fn flush_logging<B>(
     B: StorageBackend<512> + 'static,
     B::Error: defmt::Format,
 {
-    if let Err(error) = logging.flush().await {
-        error!("system log flush failed: {}", error);
+    if let Err(error) = logging.checkpoint().await {
+        error!("system log checkpoint failed: {}", error);
         signal_severe_error();
     }
     let stats = logging.stats();

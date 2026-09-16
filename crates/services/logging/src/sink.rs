@@ -9,6 +9,9 @@ pub trait LogSink {
 
     async fn append(&mut self, data: &[u8]) -> Result<(), Self::Error>;
     async fn flush(&mut self) -> Result<(), Self::Error>;
+    async fn checkpoint(&mut self) -> Result<(), Self::Error> {
+        self.flush().await
+    }
 }
 
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -68,6 +71,13 @@ where
     async fn flush(&mut self) -> Result<(), Self::Error> {
         self.storage
             .flush(self.stream)
+            .await
+            .map_err(StorageLogSinkError::Storage)
+    }
+
+    async fn checkpoint(&mut self) -> Result<(), Self::Error> {
+        self.storage
+            .checkpoint(self.stream)
             .await
             .map_err(StorageLogSinkError::Storage)
     }

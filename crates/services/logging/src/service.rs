@@ -64,6 +64,14 @@ where
         Ok(())
     }
 
+    pub async fn checkpoint(&mut self) -> Result<(), S::Error> {
+        if let Err(error) = self.sink.checkpoint().await {
+            self.resources.record_write_failure();
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub async fn run(mut self) -> ! {
         loop {
             let record = self.resources.next_record().await;
