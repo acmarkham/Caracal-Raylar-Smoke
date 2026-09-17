@@ -1,13 +1,18 @@
 //! STM32U595 MDF1/GPDMA implementation.
 
+use core::marker::PhantomPinned;
+use core::pin::{pin, Pin};
 use core::ptr;
 use core::sync::atomic::{fence, AtomicU32, Ordering};
 
-use embassy_stm32::dma::{Channel, ReadableRingBuffer, TransferOptions};
+use embassy_stm32::dma::linked_list::{RunMode, Table};
+use embassy_stm32::dma::{Channel, Dir, ReadableRingBuffer, TransferOptions};
 use embassy_stm32::gpio::{AfType, AnyPin, Flex, OutputType, Pull, Speed};
 use embassy_stm32::pac::{self, rcc::vals::Mdfsel};
 use embassy_stm32::peripherals::{PB8, PC2, PD3, PD6, PE4, PE7};
 use embassy_stm32::Peri;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
 use embassy_time::{Instant, TICK_HZ};
 
 use super::stm32_config::*;
@@ -63,6 +68,89 @@ impl InterruptTimestamp {
 
 static DMA0_INTERRUPT_TICKS: InterruptTimestamp = InterruptTimestamp::new();
 static DMA5_INTERRUPT_TICKS: InterruptTimestamp = InterruptTimestamp::new();
+static DMA0_COMPLETION: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Owns the mono GPDMA channel and its circular descriptors. The table must
+/// stay at a fixed address for as long as GPDMA follows its linked-list links.
+struct MonoDmaTransfer<'d> {
+    _channel: Channel<'d>,
+    table: Table<2>,
+    _pin: PhantomPinned,
+}
+
+impl<'d> MonoDmaTransfer<'d> {
+    unsafe fn new(channel: Channel<'d>, buffer: &'static mut [u32]) -> Self {
+        let table = unsafe {
+            Table::<2>::new_ping_pong(
+                DMA_REQUESTS[0],
+                dfltdr_ptr(0),
+                buffer,
+                Dir::PeripheralToMemory,
+            )
+        };
+        Self {
+            _channel: channel,
+            table,
+            _pin: PhantomPinned,
+        }
+    }
+
+    /// Configure channel 0 after `self` has been pinned, so LBAR and all
+    /// circular next-item addresses refer to their permanent locations.
+    unsafe fn start(self: Pin<&mut Self>) {
+        let this = unsafe { self.get_unchecked_mut() };
+        let channel = pac::GPDMA1.ch(0);
+        let options = TransferOptions::default();
+
+        // Linking stores addresses relative to the table's current location,
+        // so it must happen only after the owner has reached its pinned home.
+        this.table.link(RunMode::Circular);
+        fence(Ordering::SeqCst);
+        channel.cr().write(|w| w.set_reset(true));
+        channel.fcr().write(|w| {
+            w.set_dtef(true);
+            w.set_htf(true);
+            w.set_suspf(true);
+            w.set_tcf(true);
+            w.set_tof(true);
+            w.set_ulef(true);
+            w.set_usef(true);
+        });
+        channel
+            .lbar()
+            .write(|register| register.set_lba(this.table.base_address()));
+        channel.br1().write(|register| register.set_bndt(0));
+        channel.llr().write(|register| {
+            register.set_ut1(true);
+            register.set_ut2(true);
+            register.set_ub1(true);
+            register.set_usa(true);
+            register.set_uda(true);
+            register.set_ull(true);
+            register.set_la(this.table.offset_address(0) >> 2);
+        });
+        channel.tr3().write(|_| {});
+        channel.cr().write(|register| {
+            register.set_prio(options.priority.into());
+            register.set_htie(options.half_transfer_ir);
+            register.set_tcie(options.complete_transfer_ir);
+            register.set_useie(true);
+            register.set_uleie(true);
+            register.set_dteie(true);
+            register.set_suspie(true);
+        });
+        channel.cr().modify(|register| register.set_en(true));
+    }
+}
+
+impl Drop for MonoDmaTransfer<'_> {
+    fn drop(&mut self) {
+        pac::GPDMA1
+            .ch(0)
+            .cr()
+            .modify(|register| register.set_reset(true));
+    }
+}
 
 /// Add this handler alongside Embassy's DMA channel 0 handler in `bind_interrupts!`.
 pub struct Dma0TimestampHandler;
@@ -74,6 +162,7 @@ impl
 {
     unsafe fn on_interrupt() {
         DMA0_INTERRUPT_TICKS.write(Instant::now().as_ticks());
+        DMA0_COMPLETION.signal(());
     }
 }
 
@@ -325,33 +414,42 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
     }
 
     pub async fn run(self) -> ! {
-        configure_mono_pins(self.pins);
-        configure_mdf(self.config);
+        let Self {
+            pins,
+            dma,
+            resources,
+            config,
+        } = self;
+        configure_mono_pins(pins);
+        configure_mdf(config);
 
         let half = BUFFER / 2;
-        let buffers = self.resources.buffers.get().cast::<[u32; BUFFER]>();
-        let sync = unsafe { &mut *self.resources.sync.get() };
-        let mut mic = make_ring(self.dma, 0, unsafe { &mut *buffers.add(0) });
-        mic.set_alignment(half);
-        mic.start();
+        let buffers = resources.buffers.get().cast::<[u32; BUFFER]>();
+        let dma_buffer = unsafe { &mut *buffers.add(0) };
+        // Consumers already read the completed half directly from this DMA
+        // buffer. Waiting through ReadableRingBuffer::read_exact copied all
+        // 1,600 samples into an otherwise-unused sync buffer on every IRQ.
+        let mut transfer = pin!(unsafe { MonoDmaTransfer::new(dma, dma_buffer) });
+        unsafe { transfer.as_mut().start() };
 
         let started_at_ticks = Instant::now().as_ticks();
         enable_filters(MicrophoneMode::Mono);
         #[cfg(feature = "defmt")]
         defmt::info!(
             "mono microphone DMA started: requested={}Hz actual={}Hz clock={}Hz decimation={} total_decimation={} buffer_samples={} half_samples={} buffer_bytes={} half_bytes={}",
-            self.config.requested.sample_rate.hz(),
-            self.config.actual_sample_rate_hz,
-            self.config.microphone_clock_hz,
-            self.config.decimation,
-            self.config.total_decimation,
+            config.requested.sample_rate.hz(),
+            config.actual_sample_rate_hz,
+            config.microphone_clock_hz,
+            config.decimation,
+            config.total_decimation,
             BUFFER,
             half,
             BUFFER * core::mem::size_of::<u32>(),
             half * core::mem::size_of::<u32>(),
         );
-        let publisher = self.resources.state.sender();
+        let publisher = resources.state.sender();
         let mut sequence = 0u64;
+        let mut previous_interrupt_count = DMA0_INTERRUPT_TICKS.count();
         #[cfg(feature = "defmt")]
         let mut dma_error_count = 0u32;
         publisher.send(CaptureState {
@@ -362,12 +460,14 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
         });
 
         loop {
-            let result = mic.read_exact(&mut sync[..half]).await.map(|_| ());
+            DMA0_COMPLETION.wait().await;
             let completed_at_ticks = DMA0_INTERRUPT_TICKS.read();
             let dma_interrupt_count = DMA0_INTERRUPT_TICKS.count();
+            let interrupt_delta = dma_interrupt_count.wrapping_sub(previous_interrupt_count);
+            previous_interrupt_count = dma_interrupt_count;
             let filter_status = filter_status(0);
-            match result {
-                Ok(()) => {
+            match interrupt_delta {
+                1 => {
                     sequence = sequence.wrapping_add(1);
                     fence(Ordering::Acquire);
                     publisher.send(CaptureState {
@@ -382,17 +482,18 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
                         error: None,
                     });
                 }
-                Err(error) => {
+                missed => {
                     #[cfg(feature = "defmt")]
                     {
                         dma_error_count = dma_error_count.wrapping_add(1);
                         let now_ticks = Instant::now().as_ticks();
                         let irq_age_ticks = now_ticks.saturating_sub(completed_at_ticks);
                         let expected_half_ticks =
-                            (half as u64 * TICK_HZ) / u64::from(self.config.actual_sample_rate_hz);
+                            (half as u64 * TICK_HZ) / u64::from(config.actual_sample_rate_hz);
                         defmt::warn!(
-                            "mono microphone DMA ring error: {:?} count={} sequence={} half={} buffer_samples={} half_samples={} buffer_bytes={} half_bytes={} last_irq_ticks={} now_ticks={} irq_age_ticks={} expected_half_ticks={}",
-                            error,
+                            "mono microphone DMA notification gap: interrupt_delta={} missed={} count={} sequence={} half={} buffer_samples={} half_samples={} buffer_bytes={} half_bytes={} last_irq_ticks={} now_ticks={} irq_age_ticks={} expected_half_ticks={}",
+                            missed,
+                            missed.saturating_sub(1),
                             dma_error_count,
                             sequence,
                             (sequence & 1) as u8,
@@ -415,7 +516,6 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
                             (filter_status & RFOVRF) != 0,
                         );
                     }
-                    mic.clear();
                     publisher.send(CaptureState {
                         running: true,
                         sequence,

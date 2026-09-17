@@ -16,6 +16,10 @@ use super::{
     utils::split_path,
 };
 
+// A modest fixed batch bounds async-future storage while reducing the SDMMC
+// command/readiness overhead of sequential recording writes by up to 8x.
+const WRITE_BATCH_BLOCKS: usize = 8;
+
 #[derive(Clone, Debug, Default)]
 pub struct OpenOptions {
     pub read: bool,
@@ -662,18 +666,33 @@ impl File {
         // if there are still more bytes to write
         if len < buf.len() {
             let start_index = len;
-            let mut aligned = Aligned([0u8; SIZE]);
             let (blocks, remainder) = buf[start_index..].as_chunks::<SIZE>();
 
-            // write full sectors
-            for block in blocks {
-                aligned.copy_from_slice(block);
-                self.next_cluster_if_required(fs).await?;
-                let sector_id = self.get_current_sector_id(fs)?;
+            // Stage adjacent full sectors in aligned storage and submit each
+            // physically contiguous run as one block-device transaction.
+            let mut staging: [Aligned<D::Align, [u8; SIZE]>; WRITE_BATCH_BLOCKS] =
+                core::array::from_fn(|_| Aligned([0u8; SIZE]));
+            let mut block_index = 0;
+            while block_index < blocks.len() {
+                let mut batch_len = 0;
+                let mut first_sector_id = 0;
+                while block_index < blocks.len() && batch_len < WRITE_BATCH_BLOCKS {
+                    self.next_cluster_if_required(fs).await?;
+                    let sector_id = self.get_current_sector_id(fs)?;
+                    if batch_len != 0 && sector_id != first_sector_id + batch_len as u32 {
+                        break;
+                    }
+                    if batch_len == 0 {
+                        first_sector_id = sector_id;
+                    }
+                    staging[batch_len].copy_from_slice(&blocks[block_index]);
+                    self.move_file_cursor::<D, SIZE>(SIZE).await?;
+                    batch_len += 1;
+                    block_index += 1;
+                }
                 fs.data_blocks
-                    .write(&mut fs.dev, sector_id, &aligned)
+                    .write_blocks(&mut fs.dev, first_sector_id, &staging[..batch_len])
                     .await?;
-                self.move_file_cursor::<D, SIZE>(block.len()).await?;
             }
 
             // A preceding partial or full-sector write may have ended exactly

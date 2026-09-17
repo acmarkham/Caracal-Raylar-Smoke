@@ -60,6 +60,10 @@ each flash are retained under `.probe-rs-logs/`.
   kernel clock. Each DMA half is 1,600 samples (100 ms, 6,400 bytes).
 - Mono mode owns only MDF filter 0, its two pins, and GPDMA channel 0. The five
   unused microphone filters and DMA channels are not started.
+- Mono capture pins its circular GPDMA descriptor table for the lifetime of the
+  task and publishes completed halves directly from the DMA buffer. The DMA
+  interrupt signal replaces the former `read_exact` call that copied every
+  1,600-sample half into an unused synchronization buffer.
 - DMA completion is distributed as latest-state data through an
   `embassy_sync::watch`. The audio source retains eight seconds so filesystem
   latency during rotation does not lose samples.
@@ -138,6 +142,9 @@ each flash are retained under `.probe-rs-logs/`.
   service queues, and DMA buffers are statically bounded. The exFAT library
   itself still uses the configured fixed 64 KiB embedded heap for filesystem
   metadata operations; application steady-state buffers do not allocate.
+- exFAT stages up to eight aligned, physically contiguous sectors and submits
+  them as one block-device write. This preserves cache coherence and bounded
+  memory while avoiding a separate SDMMC command/readiness cycle per sector.
 - Log records are drained and checkpointed every ten seconds even while
   waiting for UTC. A checkpoint commits all complete 512-byte sectors without
   closing and reopening the file; at most the final 511 bytes remain buffered
@@ -146,7 +153,7 @@ each flash are retained under `.probe-rs-logs/`.
   queue drops are counted and reported at the next checkpoint but are not
   fatal.
 
-## Hardware validation (2026-09-14)
+## Hardware validation (2026-09-17)
 
 The fake-time build was flashed and observed through one complete rotation:
 
@@ -154,16 +161,19 @@ The fake-time build was flashed and observed through one complete rotation:
 | --- | --- |
 | Time gate | Recording started with `source=Laboratory`; GPS ignored |
 | Capture rate | 16,000 Hz measured in 100 ms DMA halves |
-| DMA overrun | `DOVRF=false` through IRQ count 871 |
+| DMA overrun | `DOVRF=false` through IRQ count 601 at rotation |
 | DMA errors/gaps | None observed |
 | Audio drops | None observed |
-| Logging | 825 records, 0 dropped, 0 truncated, 0 write failures |
-| CPU while recording | Approximately 21–26% |
-| Rotation | Completed at 60 seconds of PCM |
-| Final WAV | 3,840,512 bytes (512-byte header + 3,840,000 PCM bytes) |
-| WAV format fields | PCM, mono, 16,000 Hz, 64,000 byte/s, 32 bit |
+| Logging | 100 records at last pre-rotation checkpoint; 0 dropped, 0 truncated, 0 write failures |
+| CPU while recording | 7.7–8.5%; 8.0% mean across eleven steady five-second windows |
+| Storage polling | 114–120 polls/5 s, down from 642 |
+| Rotation | 60 seconds; close 7.3 ms, successor open 6.7 ms, header append 44 us |
+| Final WAV | 3,840,512 bytes |
+| WAV format | PCM, mono, 16,000 Hz, 64,000 byte/s, 32 bit |
 
 The read-only card report found the finalized file at
-`/1789380000/aud_1789380248_2.wav`. The following zero-length file is the open
-successor interrupted when probe-rs reset the board to flash the inspector; it
-is expected for this forced test termination, not a rotation failure.
+`/1789635600/aud_1789638801_2.wav`, containing exactly a 512-byte header and
+60 x 16,000 x 4 bytes of PCM. The following zero-length file,
+`/1789635600/aud_1789638861_3.wav`, is the open successor interrupted when
+probe-rs reset the board to flash the inspector; it is expected for this forced
+test termination, not a rotation failure.

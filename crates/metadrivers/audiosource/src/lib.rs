@@ -227,9 +227,20 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
             let skipped = original_len - retained;
             let retained_start = state.write_position - retained as u64;
 
-            for offset in 0..retained {
-                state.samples[(retained_start as usize + offset) % CAPACITY] =
-                    sample_at(skipped + offset);
+            // Split once at the physical ring boundary. The previous form did
+            // a modulo operation for every sample in this hot 16 kHz path.
+            let start = retained_start as usize % CAPACITY;
+            let first_len = retained.min(CAPACITY - start);
+            for (offset, destination) in state.samples[start..start + first_len]
+                .iter_mut()
+                .enumerate()
+            {
+                *destination = sample_at(skipped + offset);
+            }
+            for (offset, destination) in
+                state.samples[..retained - first_len].iter_mut().enumerate()
+            {
+                *destination = sample_at(skipped + first_len + offset);
             }
 
             let oldest = state.write_position.saturating_sub(CAPACITY as u64);
