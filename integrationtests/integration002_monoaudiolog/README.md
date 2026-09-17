@@ -155,6 +155,8 @@ each flash are retained under `.probe-rs-logs/`.
 
 ## Hardware validation (2026-09-17)
 
+### Synthetic-time release variant
+
 The fake-time build was flashed and observed through one complete rotation:
 
 | Check | Result |
@@ -177,3 +179,42 @@ The read-only card report found the finalized file at
 `/1789635600/aud_1789638861_3.wav`, is the open successor interrupted when
 probe-rs reset the board to flash the inspector; it is expected for this forced
 test termination, not a rotation failure.
+
+### GPS-enabled release variant
+
+The default-feature release build was then flashed and observed with the GPS
+hardware, PPS capture, NMEA processing, Time Service, and Location Service all
+enabled. The first GPS/PPS anchor was accepted after 3.7 seconds and recording
+started with `source=GpsPps` after 3.9 seconds.
+
+| Check | Result |
+| --- | --- |
+| CPU while recording | 8.3–9.4%; 8.84% mean across 25 steady five-second windows |
+| Mean attribution | `mic_dma` 0.00%, `audio_forward` 0.20%, `audio_recorder` 5.29%, `logging` 0.34%, `other` 2.81% |
+| Mean nested storage | Audio 3.32%; logging 0.31% |
+| Capture rate | 16,000 Hz through IRQ count 1,281 |
+| DMA errors/gaps | None observed; `DOVRF=false` |
+| Audio drops/write failures | None observed |
+| Rotations | Two completed at 60-second intervals |
+| First rotation | Close 15.7 ms, successor open 22.6 ms, header append 43 us |
+| Second rotation | Close 14.5 ms, successor open 25.0 ms, header append 44 us |
+
+The first profile window included startup and filesystem initialization and was
+21.1%, with 19.3% attributed to `other`; it is excluded from the steady-state
+mean. This GPS-enabled result was produced by the release profile. Unoptimized
+development builds must not be compared directly with it.
+
+One run exposed an approximately 590 ms residual after accepting the initial
+GPS/PPS epoch, causing subsequent anchors to be rejected. A clean release
+reflash after reconnecting the ST-Link did not reproduce it: GPS/PPS anchors
+were accepted continuously with sub-millisecond residuals and zero rejected
+anchors throughout the 56-second verification capture. The fault was traced to
+TIM4 wrap extension using the delayed executor observation time to choose the
+number of 65.536 ms counter wraps. A storage or logging stall could therefore
+add several false wraps permanently even though the captured PPS cadence was
+still one second. Wrap extension now chooses the candidate consistent with the
+periodic PPS cadence while retaining the hardware-measured oscillator drift.
+Synthetic 343 ms and 590 ms delayed-wake regressions pass, and the patched
+release accepted 65 consecutive hardware anchors with zero rejections and
+sub-millisecond residuals through an audio rotation and the first 60-second
+frequency-calibration sample.

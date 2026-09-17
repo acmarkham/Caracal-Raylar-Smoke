@@ -10,7 +10,10 @@ use embassy_stm32::timer::low_level::CountingMode;
 use embassy_stm32::timer::{CaptureCompareInterruptHandler, Channel, GeneralInstance1Channel};
 use embassy_time::Instant;
 
-use crate::gps::{GpsConfig, GpsPowerControl, PpsCapture, PpsSource, PpsTimingSource};
+use crate::gps::{
+    resolve_periodic_capture_delta, GpsConfig, GpsPowerControl, PpsCapture, PpsSource,
+    PpsTimingSource,
+};
 
 pub const TIM4_PPS_CAPTURE_FREQUENCY_HZ: u32 = 1_000_000;
 const TIM4_COUNTER_MODULUS: u64 = 1 << 16;
@@ -132,12 +135,12 @@ impl Tim4Pps {
                         .min(u64::MAX as u128) as u64
                 })
                 .unwrap_or(modulo_delta);
-            let whole_wraps = approximate_delta
-                .saturating_sub(modulo_delta)
-                .saturating_add(TIM4_COUNTER_MODULUS / 2)
-                / TIM4_COUNTER_MODULUS;
-            let capture_delta =
-                modulo_delta.saturating_add(whole_wraps.saturating_mul(TIM4_COUNTER_MODULUS));
+            let capture_delta = resolve_periodic_capture_delta(
+                modulo_delta,
+                approximate_delta,
+                TIM4_COUNTER_MODULUS,
+                TIM4_PPS_CAPTURE_FREQUENCY_HZ as u64,
+            );
             self.extended_ticks = self.extended_ticks.saturating_add(capture_delta);
         } else {
             self.extended_ticks = raw as u64;

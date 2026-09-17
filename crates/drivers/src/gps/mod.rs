@@ -1,3 +1,4 @@
+mod capture_counter;
 mod framer;
 pub mod nmea;
 #[cfg(feature = "stm32")]
@@ -18,6 +19,9 @@ use framer::{FramerEvent, NmeaFramer};
 use nmea::{NavigationEvent, NmeaParser};
 
 pub use types::*;
+
+#[cfg(feature = "stm32")]
+pub(crate) use capture_counter::resolve_periodic_capture_delta;
 
 pub type GpsMutex = CriticalSectionRawMutex;
 const MANAGER_COMMAND_POLL: Duration = Duration::from_secs(1);
