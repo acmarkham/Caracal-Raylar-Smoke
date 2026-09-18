@@ -44,10 +44,13 @@ not-yet-populated sources must be represented explicitly as `Unknown` or
 ## Test Operation
 
 Startup:
-1. Enable lipo charger for 200mA limit
-2. Enable all services needed e.g. GPS, SD card, audio
-3. Beep 1000Hz for 0.25s on/0.25s off three times
-4. Start the Identity and Versioning Service, open the standard system log and
+1. Configure the STM32 core regulator through the STM32 Core Driver. Select
+   SMPS by default for the SMPS-capable STM32U595 Q package and fitted Raylar
+   v1.0 inductor; retain an explicit LDO diagnostic build option.
+2. Enable lipo charger for 200mA limit
+3. Enable all services needed e.g. GPS, SD card, audio
+4. Beep 1000Hz for 0.25s on/0.25s off three times
+5. Start the Identity and Versioning Service, open the standard system log and
    immediately record its complete startup snapshot before audio startup:
    * raw STM32 96-bit UUID/UID
    * derived 64-bit, 48-bit, 32-bit and 16-bit serial IDs
@@ -61,7 +64,7 @@ Startup:
    * radio module vendor/model and firmware/protocol/hardware versions
    The integration firmware must consume these fields through the Versioning
    Service and must not call the lower-level Traceability Driver directly.
-5. Flush the startup log records so `/syslog.txt` contains traceability
+6. Flush the startup log records so `/syslog.txt` contains traceability
    information even if GPS acquisition or microphone capture later stalls.
 
 After GPS fix is acquired: Audio
@@ -195,6 +198,10 @@ The precise formatting may evolve, but the log should remain human-readable.
 
 The test should verify that:
 
+* The default build reports that the STM32 core supply transitioned to SMPS
+  before board peripherals and services start.
+* The no-default-features diagnostic build retains LDO through the same STM32
+  Core Driver API.
 * Voltage measurements are updated correctly.
 * Charger state is reflected in the published `PowerState`.
 * Time state is reflected in the log message.

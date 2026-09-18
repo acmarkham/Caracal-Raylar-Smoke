@@ -37,6 +37,8 @@ use raylar_drivers::mic_array::stm32::{Dma0TimestampHandler, MonoPins, Stm32Mono
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
 };
+use raylar_drivers::stm32_core::stm32::Stm32CoreDriver;
+use raylar_drivers::stm32_core::{CoreConfig, CoreSupply, CoreSupplyControl};
 use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use raylar_drivers::{buzzer, leds};
@@ -458,6 +460,19 @@ async fn main(spawner: Spawner) -> ! {
     unsafe {
         embedded_alloc::init!(HEAP, HEAP_BYTES);
     }
+    let peripherals = embassy_stm32::init(common::mcu_config());
+    let core_supply = if cfg!(feature = "core-smps") {
+        CoreSupply::Smps
+    } else {
+        CoreSupply::Ldo
+    };
+    let core_driver = unwrap!(Stm32CoreDriver::init(CoreConfig {
+        supply: core_supply,
+    }));
+    info!(
+        "STM32 core supply selected: {:?}",
+        core_driver.selected_supply()
+    );
     let Board {
         leds: board_leds,
         buzzer: board_buzzer,
@@ -468,7 +483,7 @@ async fn main(spawner: Spawner) -> ! {
         usb_cdc,
         pdm_mic_array,
         ..
-    } = Board::new(embassy_stm32::init(common::mcu_config()));
+    } = Board::new(peripherals);
     let Leds {
         sys_gps_green,
         sys_gps_red,

@@ -21,12 +21,21 @@ date, and physical capacity without integration code accessing SDMMC directly.
 ## Running it
 
 The default build requires a GPS PPS-correlated UTC anchor before it creates an
-audio file. NMEA arrival timestamps are never used as time anchors:
+audio file. It also selects the STM32U595's internal SMPS, matching the Q-package
+Raylar v1.0 hardware and its fitted inductor. NMEA arrival timestamps are never
+used as time anchors:
 
 ```powershell
 rtk powershell -NoProfile -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
   -Package integration-test-002-monoaudiolog -MonitorSeconds 180 `
   -QuietTargetOutput -ProbeArgs --preverify
+```
+
+For a diagnostic build that retains the reset-default LDO, disable default
+features (and explicitly restore any other desired features):
+
+```powershell
+rtk cargo build -p integration-test-002-monoaudiolog --release --no-default-features
 ```
 
 For indoor audio development, enable the explicit test-only time source:
@@ -56,6 +65,10 @@ each flash are retained under `.probe-rs-logs/`.
 
 ## Implementation notes
 
+- Core-supply selection runs immediately after `embassy_stm32::init`, because
+  Embassy resets the PWR block during MCU initialization. The default
+  `core-smps` feature selects SMPS and waits for the hardware status to confirm
+  the transition before any board peripherals are constructed.
 - The microphone uses the high-performance SINC5 preset with a 96 MHz PLL3_Q
   kernel clock. Each DMA half is 1,600 samples (100 ms, 6,400 bytes).
 - Mono mode owns only MDF filter 0, its two pins, and GPDMA channel 0. The five

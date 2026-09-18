@@ -35,6 +35,10 @@ cortex-m-rt.workspace = true
 static_cell.workspace = true
 
 [features]
+default = ["core-smps"]
+# Raylar v1.0 fits the SMPS inductor and uses the STM32U595 Q package. Disable
+# default features to retain the internal LDO for comparison or diagnosis.
+core-smps = []
 trustzone-secure = [
     "embassy-stm32/trustzone-secure",
     "raylar-drivers/trustzone-secure",
