@@ -11,6 +11,7 @@ pub mod identity;
 pub mod leds;
 pub mod mic_array;
 pub mod sensor_acc;
+pub mod sensor_mag;
 pub mod stm32_core;
 pub mod storage;
 pub mod voltagemonitor;
