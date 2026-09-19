@@ -1,0 +1,20 @@
+[package]
+name = "raylar-sensor-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raylar_sensor_service"
+path = "src/lib.rs"
+
+[features]
+default = []
+defmt = ["dep:defmt", "embassy-sync/defmt"]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+embassy-sync = "0.7.2"
+embassy-time.workspace = true
+heapless = "0.8.0"
+libm = "0.2.15"
