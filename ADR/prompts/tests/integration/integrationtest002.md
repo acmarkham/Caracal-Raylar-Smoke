@@ -8,8 +8,8 @@ before planning and implementing
 ## Objective
 
 Validate the complete integration of the Power Management Service, Logging
-Service, Storage Service, Time Service, Location Service, Audio Service and
-Identity and Versioning Service.
+Service, Storage Service, Time Service, Location Service, Audio Service, Sensor
+Service and Identity and Versioning Service.
 
 ---
 
@@ -23,6 +23,7 @@ Start the following services:
 * Power Management Service
 * Location Service
 * Audio Service
+* Sensor Service
 * Identity and Versioning Service
 
 The Storage Service should create the standard system log stream.
@@ -66,6 +67,13 @@ Startup:
    Service and must not call the lower-level Traceability Driver directly.
 6. Flush the startup log records so `/syslog.txt` contains traceability
    information even if GPS acquisition or microphone capture later stalls.
+7. Initialize the LIS2HH12 accelerometer and LIS2MDL magnetometer through their
+   drivers, register their raw measurements with the Sensor Service, and share
+   the sensor I2C bus with the battery charger without bypassing any driver.
+   Register acceleration and magnetic field with 10-second polling intervals,
+   and each sensor's die temperature with a 30-second polling interval. Do not
+   register composite sensors, thresholds, or delta-change events in this
+   integration test.
 
 After GPS fix is acquired: Audio
 1. Use only a GPS PPS-correlated timestamp as a Time Service anchor; never use
@@ -122,6 +130,26 @@ Every **10 seconds (0.1 Hz)**:
    anchor counts, and GPS calibration/reacquisition state and counters.
 3. Append the messages to the system log using the Logging Service.
 4. Briefly flash the SysGpsGreen LED as a hearbeat signal to show that it is correctly operating
+
+Every **10 seconds (0.1 Hz)**: Raw motion sensors
+
+1. Let the Sensor Service poll the LIS2HH12 acceleration source and retain the
+   latest X/Y/Z reading in milli-g.
+2. Let the Sensor Service poll the LIS2MDL magnetic-field source and retain the
+   latest X/Y/Z reading in nanotesla.
+3. Append a human-readable `Sensor` record for each new raw acceleration and
+   magnetic-field reading to `/syslog.txt` through the Logging Service.
+4. If a poll fails, retain the last valid value and log the source status and
+   error counters rather than substituting zero.
+
+Every **30 seconds**: Sensor die temperatures
+
+1. Let the Sensor Service poll the LIS2HH12 and LIS2MDL die-temperature
+   sources independently.
+2. Append one human-readable `Sensor` record per source to `/syslog.txt`, in
+   milli-degrees Celsius and with the source origin identified.
+3. Do not calculate or log tilt, heading, e-compass, VeDBA, ODBA, absolute
+   thresholds, or delta thresholds in this integration test.
 
 Continuously while GPS is active:
 
@@ -188,6 +216,14 @@ Example log messages:
 00000128 1254.567 INFO  Power: source=Usb batt=3722mV solar=39mV ext_dc=323mV charging=true percent=Some(44) health=Normal charger_state=FastCharge charger_fault=None
 
 00000129 1255.100 INFO  Location: event=acquired valid=true source=Gps lat_e7=520000010 lon_e7=-10000010 fix_age_us=125000 fixes_used=3 fixes_seen=3 sats=Some(8) hdop_centi=Some(120) uncertainty_m=Some(6) fix_utc=Some(...)
+
+00000130 1264.600 INFO  Sensor: raw acceleration x_mg=2 y_mg=-4 z_mg=998 sample_ticks=1264600000
+
+00000131 1264.610 INFO  Sensor: raw magnetic_field x_nt=24750 y_nt=-1200 z_nt=43100 sample_ticks=1264610000
+
+00000132 1284.600 INFO  Sensor: die_temperature origin=Lis2hh12 milli_celsius=26125 sample_ticks=1284600000
+
+00000133 1284.610 INFO  Sensor: die_temperature origin=Lis2mdl milli_celsius=26750 sample_ticks=1284610000
 ```
 
 The precise formatting may evolve, but the log should remain human-readable.
@@ -208,6 +244,16 @@ The test should verify that:
 * The Location Service publishes a filtered GPS-derived estimate after its
   acceptance threshold, logs it immediately, and logs the latest estimate at
   one-minute intervals thereafter.
+* The Sensor Service polls and publishes LIS2HH12 acceleration and LIS2MDL
+  magnetic field independently every 10 seconds.
+* The Sensor Service polls and publishes the two die-temperature sources
+  independently every 30 seconds, retaining their distinct sensor IDs and
+  origins.
+* Every new raw sensor reading is written through the Logging Service to
+  `/syslog.txt`; failures retain the previous valid value and expose stale or
+  fault state without generating a zero reading.
+* No composite sensor or sensor threshold is registered by Integration Test
+  002.
 * Holdover uses calibrated frequency only; phase slew is zero once PPS loss is
   declared.
 * Reacquisition anchors are withheld until three clean one-second PPS intervals

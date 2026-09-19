@@ -21,11 +21,13 @@ raylar-time-service = { path = "../../crates/services/time", features = ["gps", 
 raylar-logging-service = { path = "../../crates/services/logging", features = ["defmt"] }
 raylar-location-service = { path = "../../crates/services/location", features = ["defmt"] }
 raylar-power-management-service = { path = "../../crates/services/powermanagement", features = ["defmt"] }
+raylar-sensor-service = { path = "../../crates/services/sensors", features = ["defmt"] }
 raylar-versioning-service = { path = "../../crates/services/versioning", features = ["stm32", "defmt"] }
 embassy-stm32.workspace = true
 embassy-executor = { workspace = true, features = ["trace"] }
 embassy-time.workspace = true
 embassy-sync = "0.7.2"
+embedded-hal = "1.0.0"
 embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"] }
 defmt.workspace = true
 defmt-rtt.workspace = true

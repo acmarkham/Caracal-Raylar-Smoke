@@ -20,7 +20,8 @@ use embassy_stm32::mode::Blocking;
 use embassy_stm32::peripherals::{PA0, PA1, PB1};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, peripherals};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::mutex::Mutex;
 #[cfg(not(feature = "fake-gps-time"))]
@@ -32,7 +33,7 @@ use raylar_audio_recorder_service::{
 };
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{AdcVoltages, Board, Leds, PdmMicArray, PdmMicDma, SensI2C, UsbCdc};
-use raylar_drivers::batterycharger::{ChargerConfig, ChargerDriver, ChargerResources};
+use raylar_drivers::batterycharger::{ChargerBus, ChargerConfig, ChargerDriver, ChargerResources};
 use raylar_drivers::mic_array::stm32::{Dma0TimestampHandler, MonoPins, Stm32MonoMicrophoneDriver};
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
@@ -42,12 +43,17 @@ use raylar_drivers::stm32_core::{CoreConfig, CoreSupply, CoreSupplyControl};
 use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use raylar_drivers::{buzzer, leds};
+use raylar_drivers::{sensor_acc, sensor_mag};
 use raylar_location_service::{LocationConfig, LocationResources, LocationService, LocationState};
 use raylar_logging_service::{
     info as log_info, LogOutcome, LogSink, LoggerHandle, LoggingResources, LoggingService,
     ProcessOutcome,
 };
 use raylar_power_management_service::{PowerConfig, PowerManagementService, PowerResources};
+use raylar_sensor_service::{
+    ReadingStatus, SensorDescriptor, SensorId, SensorKind, SensorOrigin, SensorRegistration,
+    SensorResources, SensorService, SensorSource, SensorSourceError, SensorValue,
+};
 use raylar_storage_service::{
     StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, StreamKind,
 };
@@ -86,14 +92,26 @@ type BoardVoltageMonitor = Stm32VoltageMonitor<
     Input<'static>,
 >;
 type BoardVoltageDriver = VoltageMonitorDriver<BoardVoltageMonitor>;
-type BoardChargerDriver = ChargerDriver<I2c<'static, Blocking, Master>>;
+type BoardSensorI2c = I2c<'static, Blocking, Master>;
+type SensorBusMutex = BlockingMutex<NoopRawMutex, RefCell<BoardSensorI2c>>;
+type AccelerometerDriver = sensor_acc::Lis2hh12<SharedSensorI2c>;
+type MagnetometerDriver = sensor_mag::Lis2mdl<SharedSensorI2c>;
+type AccelerometerMutex = BlockingMutex<NoopRawMutex, RefCell<AccelerometerDriver>>;
+type MagnetometerMutex = BlockingMutex<NoopRawMutex, RefCell<MagnetometerDriver>>;
+type BoardChargerDriver = ChargerDriver<SharedSensorI2c>;
 type MicDriver = Stm32MonoMicrophoneDriver<'static, DMA_SAMPLES>;
+
+const ACCELERATION_SENSOR: SensorId = SensorId(1);
+const MAGNETIC_FIELD_SENSOR: SensorId = SensorId(2);
+const ACCELEROMETER_TEMPERATURE_SENSOR: SensorId = SensorId(3);
+const MAGNETOMETER_TEMPERATURE_SENSOR: SensorId = SensorId(4);
 
 static VOLTAGES: VoltageResources = VoltageResources::new();
 static CHARGER: ChargerResources = ChargerResources::new();
 static POWER: PowerResources = PowerResources::new();
 static LOCATION: LocationResources<4> = LocationResources::new();
 static VERSIONING: IdentityResources<4> = IdentityResources::new();
+static SENSORS: SensorResources = SensorResources::new();
 static LOGGING: LoggingResources<MESSAGE_LENGTH, QUEUE_DEPTH> = LoggingResources::new();
 static MICROPHONES: MicrophoneResources<DMA_SAMPLES> = MicrophoneResources::new();
 static AUDIO: AudioSource<AUDIO_CAPACITY, 2> = AudioSource::new(AudioFormat::new(
@@ -120,6 +138,13 @@ static LOG_STORAGE_PROFILE: CpuProfile = CpuProfile::new();
 // must not turn storage latency at a recording boundary into a fatal error.
 static DROPPED_INFO_DIAGNOSTICS: AtomicU32 = AtomicU32::new(0);
 static SHARED_STORAGE: StaticCell<SharedStorage<common::BoardStorageBackend>> = StaticCell::new();
+static SENSOR_BUS: StaticCell<SensorBusMutex> = StaticCell::new();
+static ACCELEROMETER: StaticCell<AccelerometerMutex> = StaticCell::new();
+static MAGNETOMETER: StaticCell<MagnetometerMutex> = StaticCell::new();
+static ACCELERATION_SOURCE: StaticCell<AccelerometerSource> = StaticCell::new();
+static ACCELEROMETER_TEMPERATURE_SOURCE: StaticCell<AccelerometerSource> = StaticCell::new();
+static MAGNETIC_FIELD_SOURCE: StaticCell<MagnetometerSource> = StaticCell::new();
+static MAGNETOMETER_TEMPERATURE_SOURCE: StaticCell<MagnetometerSource> = StaticCell::new();
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -270,6 +295,119 @@ fn signal_severe_error() {
     if !SEVERE_ERROR_ACTIVE.swap(true, Ordering::AcqRel) {
         AUDIO_RECORDING_ACTIVE.store(false, Ordering::Release);
         ERROR_SIGNAL.signal(());
+    }
+}
+
+/// Synchronous shared access is sufficient here because all clients run on
+/// the same thread-mode executor and no I2C operation yields. Interrupts do
+/// not access this bus, so the no-op raw mutex avoids masking audio DMA IRQs.
+#[derive(Clone, Copy)]
+struct SharedSensorI2c {
+    bus: &'static SensorBusMutex,
+}
+
+impl embedded_hal::i2c::ErrorType for SharedSensorI2c {
+    type Error = embassy_stm32::i2c::Error;
+}
+
+impl embedded_hal::i2c::I2c for SharedSensorI2c {
+    fn transaction(
+        &mut self,
+        address: u8,
+        operations: &mut [embedded_hal::i2c::Operation<'_>],
+    ) -> Result<(), Self::Error> {
+        self.bus.lock(|bus| {
+            embedded_hal::i2c::I2c::transaction(&mut *bus.borrow_mut(), address, operations)
+        })
+    }
+}
+
+impl ChargerBus for SharedSensorI2c {
+    type Error = embassy_stm32::i2c::Error;
+
+    fn read_register(&mut self, register: u8) -> Result<u8, Self::Error> {
+        let mut value = [0];
+        embedded_hal::i2c::I2c::write_read(
+            self,
+            raylar_drivers::batterycharger::BQ25186_ADDRESS,
+            &[register],
+            &mut value,
+        )?;
+        Ok(value[0])
+    }
+
+    fn write_register(&mut self, register: u8, value: u8) -> Result<(), Self::Error> {
+        embedded_hal::i2c::I2c::write(
+            self,
+            raylar_drivers::batterycharger::BQ25186_ADDRESS,
+            &[register, value],
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AccelerometerMeasurement {
+    Acceleration,
+    Temperature,
+}
+
+struct AccelerometerSource {
+    driver: &'static AccelerometerMutex,
+    measurement: AccelerometerMeasurement,
+}
+
+impl SensorSource for AccelerometerSource {
+    fn sample(&mut self) -> Result<SensorValue, SensorSourceError> {
+        self.driver.lock(|driver| {
+            let mut driver = driver.borrow_mut();
+            match self.measurement {
+                AccelerometerMeasurement::Acceleration => driver
+                    .read_acceleration()
+                    .map(|value| SensorValue::AccelerationMg {
+                        x: value.x_mg,
+                        y: value.y_mg,
+                        z: value.z_mg,
+                    })
+                    .map_err(|_| SensorSourceError::new(0x0101)),
+                AccelerometerMeasurement::Temperature => driver
+                    .read_die_temperature()
+                    .map(|value| SensorValue::TemperatureMilliCelsius(value.milli_celsius))
+                    .map_err(|_| SensorSourceError::new(0x0102)),
+            }
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MagnetometerMeasurement {
+    MagneticField,
+    Temperature,
+}
+
+struct MagnetometerSource {
+    driver: &'static MagnetometerMutex,
+    measurement: MagnetometerMeasurement,
+}
+
+impl SensorSource for MagnetometerSource {
+    fn sample(&mut self) -> Result<SensorValue, SensorSourceError> {
+        self.driver.lock(|driver| {
+            let mut driver = driver.borrow_mut();
+            match self.measurement {
+                MagnetometerMeasurement::MagneticField => driver
+                    .read_magnetic_field()
+                    .map(|value| SensorValue::MagneticFieldNt {
+                        x: value.x_nanotesla,
+                        y: value.y_nanotesla,
+                        z: value.z_nanotesla,
+                    })
+                    .map_err(|_| SensorSourceError::new(0x0201)),
+                MagnetometerMeasurement::Temperature => driver
+                    .read_die_temperature()
+                    .map(|value| SensorValue::TemperatureMilliCelsius(value.milli_celsius))
+                    .map_err(|_| SensorSourceError::new(0x0202)),
+            }
+        })
     }
 }
 
@@ -516,7 +654,9 @@ async fn main(spawner: Spawner) -> ! {
         LocationConfig::default(),
     );
     spawner.spawn(unwrap!(location_service_task(location_service)));
-    start_power(spawner, adc_voltages, sens_i2c, usb_cdc).await;
+    let sensor_bus = build_sensor_bus(sens_i2c);
+    let sensor_service = build_sensor_service(sensor_bus).await;
+    start_power(spawner, adc_voltages, sensor_bus, usb_cdc).await;
     let mut buzzer_driver = buzzer::init(buzzer::BuzzerResources {
         timer: board_buzzer.tim,
         pin: board_buzzer.pin,
@@ -571,6 +711,7 @@ async fn main(spawner: Spawner) -> ! {
     let time_log = logging.register("Time");
     let gps_log = logging.register("Gps");
     let location_log = logging.register("Location");
+    let sensor_log = logging.register("Sensor");
     #[cfg(not(feature = "fake-gps-time"))]
     let pps_log = logging.register("Pps");
     #[cfg(not(feature = "fake-gps-time"))]
@@ -604,6 +745,8 @@ async fn main(spawner: Spawner) -> ! {
     }
     spawner.spawn(unwrap!(status_logger_task(power_log, time_log, gps_log)));
     spawner.spawn(unwrap!(location_logger_task(location_log)));
+    spawner.spawn(unwrap!(sensor_logger_task(sensor_log)));
+    spawner.spawn(unwrap!(sensor_service_task(sensor_service)));
     #[cfg(not(feature = "fake-gps-time"))]
     {
         spawner.spawn(unwrap!(pps_logger_task(pps_log)));
@@ -715,7 +858,7 @@ fn log_versioning(system_log: TestLogger, state: IdentityState) {
 async fn start_power(
     spawner: Spawner,
     adc: AdcVoltages<'static>,
-    sens: SensI2C<'static>,
+    sensor_bus: SharedSensorI2c,
     usb: UsbCdc<'static>,
 ) {
     let service = PowerManagementService::new(
@@ -725,8 +868,109 @@ async fn start_power(
         PowerConfig::default(),
     );
     spawner.spawn(unwrap!(voltage_task(build_voltage_driver(adc, usb))));
-    spawner.spawn(unwrap!(charger_task(build_charger_driver(sens))));
+    spawner.spawn(unwrap!(charger_task(build_charger_driver(sensor_bus))));
     spawner.spawn(unwrap!(power_service_task(service)));
+}
+
+fn build_sensor_bus(sens: SensI2C<'static>) -> SharedSensorI2c {
+    let SensI2C { i2c, scl, sda } = sens;
+    let mut config = I2cConfig::default();
+    config.frequency = Hertz(100_000);
+    let bus = SENSOR_BUS.init(BlockingMutex::new(RefCell::new(I2c::new_blocking(
+        i2c, scl, sda, config,
+    ))));
+    SharedSensorI2c { bus }
+}
+
+async fn build_sensor_service(sensor_bus: SharedSensorI2c) -> SensorService<'static> {
+    let mut accelerometer = match sensor_acc::Lis2hh12::new(sensor_bus) {
+        Ok(driver) => driver,
+        Err(error) => fail_forever("LIS2HH12 initialization failed", error).await,
+    };
+    if let Err(error) = accelerometer.turn_on() {
+        fail_forever("LIS2HH12 enable failed", error).await;
+    }
+    let mut magnetometer = match sensor_mag::Lis2mdl::new(sensor_bus) {
+        Ok(driver) => driver,
+        Err(error) => fail_forever("LIS2MDL initialization failed", error).await,
+    };
+    if let Err(error) = magnetometer.turn_on() {
+        fail_forever("LIS2MDL enable failed", error).await;
+    }
+
+    let accelerometer = ACCELEROMETER.init(BlockingMutex::new(RefCell::new(accelerometer)));
+    let magnetometer = MAGNETOMETER.init(BlockingMutex::new(RefCell::new(magnetometer)));
+    let acceleration = ACCELERATION_SOURCE.init(AccelerometerSource {
+        driver: accelerometer,
+        measurement: AccelerometerMeasurement::Acceleration,
+    });
+    let accelerometer_temperature = ACCELEROMETER_TEMPERATURE_SOURCE.init(AccelerometerSource {
+        driver: accelerometer,
+        measurement: AccelerometerMeasurement::Temperature,
+    });
+    let magnetic_field = MAGNETIC_FIELD_SOURCE.init(MagnetometerSource {
+        driver: magnetometer,
+        measurement: MagnetometerMeasurement::MagneticField,
+    });
+    let magnetometer_temperature = MAGNETOMETER_TEMPERATURE_SOURCE.init(MagnetometerSource {
+        driver: magnetometer,
+        measurement: MagnetometerMeasurement::Temperature,
+    });
+
+    let mut service: SensorService<'static> = SensorService::new(&SENSORS);
+    assert!(service
+        .register_source(
+            SensorRegistration::new(
+                SensorDescriptor {
+                    id: ACCELERATION_SENSOR,
+                    kind: SensorKind::Acceleration,
+                    origin: SensorOrigin::Lis2hh12,
+                },
+                acceleration,
+            )
+            .with_interval(Duration::from_secs(10)),
+        )
+        .is_ok());
+    assert!(service
+        .register_source(
+            SensorRegistration::new(
+                SensorDescriptor {
+                    id: MAGNETIC_FIELD_SENSOR,
+                    kind: SensorKind::MagneticField,
+                    origin: SensorOrigin::Lis2mdl,
+                },
+                magnetic_field,
+            )
+            .with_interval(Duration::from_secs(10)),
+        )
+        .is_ok());
+    assert!(service
+        .register_source(
+            SensorRegistration::new(
+                SensorDescriptor {
+                    id: ACCELEROMETER_TEMPERATURE_SENSOR,
+                    kind: SensorKind::Temperature,
+                    origin: SensorOrigin::Lis2hh12,
+                },
+                accelerometer_temperature,
+            )
+            .with_interval(Duration::from_secs(30)),
+        )
+        .is_ok());
+    assert!(service
+        .register_source(
+            SensorRegistration::new(
+                SensorDescriptor {
+                    id: MAGNETOMETER_TEMPERATURE_SENSOR,
+                    kind: SensorKind::Temperature,
+                    origin: SensorOrigin::Lis2mdl,
+                },
+                magnetometer_temperature,
+            )
+            .with_interval(Duration::from_secs(30)),
+        )
+        .is_ok());
+    service
 }
 
 fn build_voltage_driver(adc: AdcVoltages<'static>, usb: UsbCdc<'static>) -> BoardVoltageDriver {
@@ -752,18 +996,11 @@ fn build_voltage_driver(adc: AdcVoltages<'static>, usb: UsbCdc<'static>) -> Boar
     )
 }
 
-fn build_charger_driver(sens: SensI2C<'static>) -> BoardChargerDriver {
-    let SensI2C { i2c, scl, sda } = sens;
-    let mut config = I2cConfig::default();
-    config.frequency = Hertz(100_000);
+fn build_charger_driver(sensor_bus: SharedSensorI2c) -> BoardChargerDriver {
     let mut charger_config = ChargerConfig::default();
     charger_config.default_charge_current_ma = 200;
     charger_config.default_input_current_limit_ma = 200;
-    ChargerDriver::new(
-        I2c::new_blocking(i2c, scl, sda, config),
-        &CHARGER,
-        charger_config,
-    )
+    ChargerDriver::new(sensor_bus, &CHARGER, charger_config)
 }
 
 fn microphone_driver(pdm: PdmMicArray<'static>) -> MicDriver {
@@ -1176,6 +1413,81 @@ async fn location_service_task(service: LocationService<4, LOCATION_HISTORY>) ->
 #[embassy_executor::task]
 async fn identity_versioning_task(service: IdentityVersioningService<4>) -> ! {
     service.run().await
+}
+
+#[embassy_executor::task]
+async fn sensor_service_task(service: SensorService<'static>) -> ! {
+    service.run().await
+}
+
+#[embassy_executor::task]
+async fn sensor_logger_task(sensor_log: TestLogger) -> ! {
+    let mut snapshots = unwrap!(SENSORS.state_receiver());
+    let ids = [
+        ACCELERATION_SENSOR,
+        MAGNETIC_FIELD_SENSOR,
+        ACCELEROMETER_TEMPERATURE_SENSOR,
+        MAGNETOMETER_TEMPERATURE_SENSOR,
+    ];
+    let mut observed_attempts = [0u64; 4];
+    loop {
+        let snapshot = snapshots.changed().await;
+        for (index, id) in ids.iter().enumerate() {
+            let Some(reading) = snapshot.reading(*id) else {
+                continue;
+            };
+            let attempts = reading.sequence.saturating_add(reading.total_errors);
+            if attempts == observed_attempts[index] {
+                continue;
+            }
+            observed_attempts[index] = attempts;
+            match (reading.status, reading.value) {
+                (
+                    ReadingStatus::Current,
+                    Some(SensorValue::AccelerationMg { x, y, z }),
+                ) => record_outcome(log_info!(
+                    sensor_log,
+                    "raw acceleration x_mg={} y_mg={} z_mg={} sample_ticks={}",
+                    x,
+                    y,
+                    z,
+                    reading.last_attempt.as_ticks()
+                )),
+                (
+                    ReadingStatus::Current,
+                    Some(SensorValue::MagneticFieldNt { x, y, z }),
+                ) => record_outcome(log_info!(
+                    sensor_log,
+                    "raw magnetic_field x_nt={} y_nt={} z_nt={} sample_ticks={}",
+                    x,
+                    y,
+                    z,
+                    reading.last_attempt.as_ticks()
+                )),
+                (ReadingStatus::Current, Some(SensorValue::TemperatureMilliCelsius(value))) => {
+                    record_outcome(log_info!(
+                        sensor_log,
+                        "die_temperature origin={:?} milli_celsius={} sample_ticks={}",
+                        reading.descriptor.origin,
+                        value,
+                        reading.last_attempt.as_ticks()
+                    ));
+                }
+                _ => record_outcome(log_info!(
+                    sensor_log,
+                    "sample_failed id={} origin={:?} kind={:?} status={:?} consecutive_errors={} total_errors={} last_error={:?} sample_ticks={}",
+                    reading.descriptor.id.0,
+                    reading.descriptor.origin,
+                    reading.descriptor.kind,
+                    reading.status,
+                    reading.consecutive_errors,
+                    reading.total_errors,
+                    reading.last_error,
+                    reading.last_attempt.as_ticks()
+                )),
+            }
+        }
+    }
 }
 
 #[embassy_executor::task]

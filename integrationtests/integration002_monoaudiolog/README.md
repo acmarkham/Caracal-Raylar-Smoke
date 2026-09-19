@@ -2,10 +2,10 @@
 
 This firmware implements
 [`integrationtest002.md`](../../ADR/prompts/tests/integration/integrationtest002.md).
-It runs the time, storage, logging, power-management, location, versioning, and
-audio services against the Raylar v1.0 board drivers. Audio is captured as mono
-16 kHz signed 32-bit PCM and rotated into 60-second WAV files in hourly
-directories.
+It runs the time, storage, logging, power-management, location, sensor,
+versioning, and audio services against the Raylar v1.0 board drivers. Audio is
+captured as mono 16 kHz signed 32-bit PCM and rotated into 60-second WAV files
+in hourly directories.
 
 Startup traceability is supplied by the Identity and Versioning Service rather
 than direct calls to the low-level identity driver. Separate syslog records
@@ -108,6 +108,14 @@ each flash are retained under `.probe-rs-logs/`.
   every 60 seconds with coordinates in signed degrees times 10^7, fix age,
   source quality, and uncertainty metadata. Synthetic-time mode has no GPS
   location and therefore emits no location records.
+- The battery charger, LIS2HH12, and LIS2MDL share the blocking sensor I2C bus
+  through a single-executor adapter. Its transactions never yield and do not
+  mask interrupts, so the audio DMA interrupt remains responsive.
+- The Sensor Service polls raw acceleration and magnetic field every 10
+  seconds, and the LIS2HH12 and LIS2MDL die temperatures every 30 seconds.
+  Each new sample is written to the `Sensor` component of `/syslog.txt` with
+  explicit fixed-point units and source identity. This integration deliberately
+  registers no composite sensors or threshold rules.
 - After the first fix, GPS remains continuously powered for ten minutes so the
   Time Service can calibrate its oscillator frequency from PPS. Only after this
   one-time calibration period does the normal 30-second on/30-second off duty
