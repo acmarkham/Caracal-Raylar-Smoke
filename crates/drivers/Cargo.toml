@@ -21,5 +21,6 @@ embassy-stm32 = { workspace = true, optional = true }
 embassy-sync = "0.7.2"
 embassy-time.workspace = true
 embedded-io-async = "0.7.0"
+embedded-hal = "1.0.0"
 exfat-slim = { version = "0.5.0", default-features = false }
 heapless = "0.8.0"
