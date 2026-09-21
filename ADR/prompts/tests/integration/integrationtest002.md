@@ -99,6 +99,9 @@ After GPS fix is acquired: Audio
    references are DS13633 Rev 3 section 3.44 Table 19 (p. 80/385), section
    3.44.2 (p. 81/385), and the RM0456 general-purpose TIM2-TIM5 chapter plus
    its `TIMx_ARR` and `TIMx_CCR4` register definitions.
+   Explicitly program `TIM4_ARR = 0xFFFF_FFFF` during capture initialization;
+   the RM0456 reset value is `0x0000_FFFF`, and configuring only the prescaler
+   would leave even this 32-bit timer wrapping every 65.536 ms.
 4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
 5. Save data to minute long wav files, in hourly folders. 
 6. Start on top-of-the minute boundary e.g. 00s

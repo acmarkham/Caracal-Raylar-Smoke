@@ -80,6 +80,11 @@ families. The authoritative device references are:
 At the configured 1 MHz capture rate, TIM4 wraps every 2^32 microseconds
 (approximately 71 minutes 35 seconds), rather than every 65.536 ms. Software
 must use 32-bit wrapping arithmetic and must not mask captured values to 16 bits.
+The Embassy input-capture constructor configures the timer prescaler but does
+not replace the `TIM4_ARR` reset value. Because RM0456 specifies that reset
+value as `0x0000_FFFF`, initialization must explicitly program
+`TIM4_ARR = 0xFFFF_FFFF` and issue an update event before accepting PPS edges.
+The 32-bit peripheral width alone does not select the 32-bit counting period.
 
 Responsibilities:
 

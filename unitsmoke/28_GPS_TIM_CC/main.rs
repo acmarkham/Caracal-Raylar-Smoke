@@ -97,6 +97,7 @@ async fn main(spawner: Spawner) -> ! {
         hz(1_000_000),
         CountingMode::EdgeAlignedUp,
     );
+    configure_tim4_32_bit_period();
 
     tim4_capture.set_input_ti_selection(Channel::Ch4, InputTISelection::Normal);
     tim4_capture.set_input_capture_mode(Channel::Ch4, InputCaptureMode::Rising);
@@ -156,4 +157,18 @@ fn clear_tim4_ch4_capture_flag() {
         unsafe { embassy_stm32::pac::timer::TimGp32::from_ptr(<TIM4 as CoreInstance>::regs()) };
     regs.sr()
         .modify(|w| w.set_ccif(Channel::Ch4.index(), false));
+}
+
+fn configure_tim4_32_bit_period() {
+    // InputCapture sets PSC but not ARR. RM0456 documents TIMx_ARR's reset
+    // value as 0x0000_FFFF, so explicitly select the STM32U59xxx TIM4 full
+    // 32-bit period or the counter will still wrap every 65.536 ms.
+    let regs =
+        unsafe { embassy_stm32::pac::timer::TimGp32::from_ptr(<TIM4 as CoreInstance>::regs()) };
+    regs.cr1().modify(|r| r.set_cen(false));
+    regs.arr().write_value(u32::MAX);
+    regs.egr().write(|r| r.set_ug(true));
+    regs.sr().modify(|r| r.set_uif(false));
+    regs.cr1().modify(|r| r.set_cen(true));
+    debug_assert_eq!(regs.arr().read(), u32::MAX);
 }

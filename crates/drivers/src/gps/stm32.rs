@@ -7,7 +7,9 @@ use embassy_stm32::peripherals::{EXTI9, PB9, TIM4};
 use embassy_stm32::time::hz;
 use embassy_stm32::timer::input_capture::{CapturePin, Ch1, Ch2, Ch3, Ch4, InputCapture};
 use embassy_stm32::timer::low_level::CountingMode;
-use embassy_stm32::timer::{CaptureCompareInterruptHandler, Channel, GeneralInstance1Channel};
+use embassy_stm32::timer::{
+    CaptureCompareInterruptHandler, Channel, CoreInstance, GeneralInstance1Channel,
+};
 use embassy_time::Instant;
 
 use crate::gps::{
@@ -23,6 +25,24 @@ pub const TIM4_PPS_CAPTURE_FREQUENCY_HZ: u32 = 1_000_000;
 // register definitions. At 1 MHz the counter wraps every 2^32 us, or about
 // 71 minutes 35 seconds.
 const TIM4_COUNTER_MODULUS: u64 = 1u64 << 32;
+
+fn configure_tim4_32_bit_period() {
+    // Embassy InputCapture configures the timer tick prescaler but leaves ARR
+    // at its reset value. RM0456's TIMx_ARR definition gives that reset value
+    // as 0x0000_FFFF even for this 32-bit timer, which would still make TIM4
+    // wrap every 65.536 ms. Program the full period explicitly before any PPS
+    // capture is awaited. InputCapture remains the sole owner of TIM4; this
+    // narrowly scoped PAC access only completes its hardware initialization.
+    let regs = unsafe {
+        embassy_stm32::pac::timer::TimGp32::from_ptr(<TIM4 as CoreInstance>::regs())
+    };
+    regs.cr1().modify(|r| r.set_cen(false));
+    regs.arr().write_value(u32::MAX);
+    regs.egr().write(|r| r.set_ug(true));
+    regs.sr().modify(|r| r.set_uif(false));
+    regs.cr1().modify(|r| r.set_cen(true));
+    debug_assert_eq!(regs.arr().read(), u32::MAX);
+}
 
 pub struct Stm32GpsPower {
     en: Output<'static>,
@@ -110,6 +130,7 @@ impl Tim4Pps {
             hz(TIM4_PPS_CAPTURE_FREQUENCY_HZ),
             CountingMode::EdgeAlignedUp,
         );
+        configure_tim4_32_bit_period();
         Self {
             capture,
             previous_raw: None,

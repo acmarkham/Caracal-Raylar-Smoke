@@ -130,6 +130,9 @@ each flash are retained under `.probe-rs-logs/`.
   by DS13633 Rev 3 section 3.44 Table 19 (p. 80/385), section 3.44.2
   (p. 81/385), and the RM0456 TIM2-TIM5 general-purpose-timer chapter and
   `TIMx_ARR`/`TIMx_CCR4` register definitions.
+  Capture initialization explicitly changes `TIM4_ARR` from its RM0456 reset
+  value of `0x0000_FFFF` to `0xFFFF_FFFF`; setting the 1 MHz prescaler alone
+  would otherwise retain a 65.536 ms counting period on the 32-bit peripheral.
 - Oscillator calibration uses an allocation-free 11-point, ten-minute
   Theil-Sen regression over minute-spaced PPS samples. Pairwise slopes outside
   100 ppm are discarded, so an isolated timing or UTC-label outlier cannot
@@ -242,6 +245,8 @@ incorrectly treated STM32U595 TIM4 as a 16-bit timer and attempted to infer
 65.536 ms wraps. DS13633 Rev 3 section 3.44 Table 19 instead specifies TIM4 as
 32-bit, which is also represented by the RM0456 TIM2-TIM5 register definitions.
 The driver now consumes the complete 32-bit TIM4_CH4 capture and has no wrap
-ambiguity during ordinary PPS intervals or 30-second GPS standby cycles. The
-next hardware endurance run supersedes conclusions drawn from the former
-16-bit wrap-extension model.
+ambiguity during ordinary PPS intervals or 30-second GPS standby cycles. It
+also explicitly programs `TIM4_ARR = 0xFFFF_FFFF`; Embassy's input-capture
+constructor configures the prescaler but otherwise leaves ARR at its
+`0x0000_FFFF` reset value. The next hardware endurance run supersedes
+conclusions drawn from the former 16-bit wrap-extension model.
