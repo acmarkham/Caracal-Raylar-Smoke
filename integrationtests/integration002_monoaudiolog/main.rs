@@ -637,7 +637,8 @@ async fn main(spawner: Spawner) -> ! {
         sys_sd_blue
     }))));
     spawner.spawn(unwrap!(severe_error_task()));
-    spawner.spawn(unwrap!(cpu_usage_task()));
+    let cpu_log = LOGGING.register("Cpu");
+    spawner.spawn(unwrap!(cpu_usage_task(cpu_log)));
     #[cfg(not(feature = "fake-gps-time"))]
     common::start_time(spawner, gps).await;
     #[cfg(feature = "fake-gps-time")]
@@ -1164,7 +1165,7 @@ async fn play_severe_error_signal(buzzer: &mut buzzer::BuzzerDriver<'static>) {
 }
 
 #[embassy_executor::task]
-async fn cpu_usage_task() -> ! {
+async fn cpu_usage_task(cpu_log: TestLogger) -> ! {
     // Discard startup idle time so the first report describes a complete
     // one-second window after the task has been scheduled.
     let _ = CPU_IDLE_TICKS.swap(0, Ordering::AcqRel);
@@ -1195,7 +1196,7 @@ async fn cpu_usage_task() -> ! {
         report_elapsed_ticks = report_elapsed_ticks.saturating_add(elapsed_ticks);
         report_active_ticks = report_active_ticks.saturating_add(active_ticks);
         if report_windows == 5 {
-            report_cpu_profiles(report_elapsed_ticks, report_active_ticks);
+            report_cpu_profiles(cpu_log, report_elapsed_ticks, report_active_ticks);
             report_windows = 0;
             report_elapsed_ticks = 0;
             report_active_ticks = 0;
@@ -1204,7 +1205,7 @@ async fn cpu_usage_task() -> ! {
     }
 }
 
-fn report_cpu_profiles(elapsed_ticks: u32, active_ticks: u32) {
+fn report_cpu_profiles(cpu_log: TestLogger, elapsed_ticks: u32, active_ticks: u32) {
     let mic = MIC_CAPTURE_PROFILE.take();
     let forward = AUDIO_FORWARD_PROFILE.take();
     let recorder = AUDIO_RECORDER_PROFILE.take();
@@ -1252,6 +1253,39 @@ fn report_cpu_profiles(elapsed_ticks: u32, active_ticks: u32) {
         log_storage.completions,
         log_storage.polls,
     );
+    record_outcome(log_info!(
+        cpu_log,
+        "profile window_ms={} active={}.{}% mic_dma={}.{}%/{}/{} audio_forward={}.{}%/{}/{} audio_recorder={}.{}%/{}/{} logging={}.{}%/{}/{} other={}.{}% nested_audio_storage={}.{}%/{}/{} nested_log_storage={}.{}%/{}/{} units=percent/calls/polls",
+        ticks_to_millis(elapsed_ticks),
+        tenths_percent(active_ticks, elapsed_ticks) / 10,
+        tenths_percent(active_ticks, elapsed_ticks) % 10,
+        tenths_percent(mic.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(mic.active_ticks, elapsed_ticks) % 10,
+        mic.completions,
+        mic.polls,
+        tenths_percent(forward.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(forward.active_ticks, elapsed_ticks) % 10,
+        forward.completions,
+        forward.polls,
+        tenths_percent(recorder.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(recorder.active_ticks, elapsed_ticks) % 10,
+        recorder.completions,
+        recorder.polls,
+        tenths_percent(logging.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(logging.active_ticks, elapsed_ticks) % 10,
+        logging.completions,
+        logging.polls,
+        tenths_percent(other_ticks, elapsed_ticks) / 10,
+        tenths_percent(other_ticks, elapsed_ticks) % 10,
+        tenths_percent(audio_storage.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(audio_storage.active_ticks, elapsed_ticks) % 10,
+        audio_storage.completions,
+        audio_storage.polls,
+        tenths_percent(log_storage.active_ticks, elapsed_ticks) / 10,
+        tenths_percent(log_storage.active_ticks, elapsed_ticks) % 10,
+        log_storage.completions,
+        log_storage.polls,
+    ));
 }
 
 fn tenths_percent(ticks: u32, elapsed_ticks: u32) -> u32 {

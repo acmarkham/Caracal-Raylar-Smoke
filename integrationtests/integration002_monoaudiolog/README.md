@@ -87,8 +87,9 @@ each flash are retained under `.probe-rs-logs/`.
 - RTT emits start, completion/failure, and elapsed-time markers while closing
   each WAV, opening its successor, and appending the new WAV header. These
   markers do not depend on the SD-backed system-log queue.
-- RTT reports total CPU use once per second and an attributed CPU profile every
-  five seconds. `mic_dma`, `audio_forward`, `audio_recorder`, and `logging` are
+- RTT reports total CPU use once per second. The attributed CPU profile is
+  emitted to both RTT and the `Cpu` component of `/syslog.txt` every five
+  seconds. `mic_dma`, `audio_forward`, `audio_recorder`, and `logging` are
   disjoint executor work; `other` is the active time not covered by those
   points. `nested_audio_storage` and `nested_log_storage` are subsets of their
   callers and show whether filesystem/SD polling, rather than PCM conversion or
