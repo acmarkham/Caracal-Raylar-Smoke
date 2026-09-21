@@ -482,15 +482,16 @@ async fn power_time_logger_task(
             match TIME_RESOURCES.current_utc() {
                 Ok(utc) => record_outcome(log_info!(
                     time_log,
-                    "UTC {} GPS ON valid={} source={:?} uncertainty_us={}",
+                    "UTC {} GPS ON status={:?} source={:?} uncertainty_us={}",
                     utc.seconds,
-                    time.utc_valid,
+                    time.utc_status,
                     time.active_time_source,
                     time.uncertainty_us
                 )),
                 Err(_) => record_outcome(log_info!(
                     time_log,
-                    "UTC unavailable GPS ON valid=false source={:?} uncertainty_us={}",
+                    "UTC unavailable GPS ON status={:?} source={:?} uncertainty_us={}",
+                    time.utc_status,
                     time.active_time_source,
                     time.uncertainty_us
                 )),

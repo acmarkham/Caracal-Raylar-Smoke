@@ -136,12 +136,15 @@ each flash are retained under `.probe-rs-logs/`.
   60-second rate slew, without stepping the existing UTC mapping.
 - Published uncertainty includes the full latest PPS residual plus capture
   uncertainty, then grows according to the holdover stability bound while GPS
-  is off. After 1.5 seconds without PPS, the temporary phase slew is removed
-  with a continuity-preserving rebase, so holdover runs only at the calibrated
-  oscillator rate. The gap edge and the next three qualifying intervals are
-  excluded; anchors resume only after three consecutive PPS intervals within
-  50 ms of one second.
-- The ten-second Time records include first/current anchor source, latest PPS
+  is off. UTC is `Invalid` only before the first accepted anchor. Above 1 ms it
+  becomes `Degraded`, while the previously synchronized mapping remains
+  available. A one-shot holdover warning is raised after 90 seconds.
+- After 1.5 seconds without PPS, the temporary phase slew is removed with a
+  continuity-preserving rebase. Reacquisition discards the gap edge and
+  requires three clean raw PPS intervals within 50 ms of one second. Raw edge
+  intervals, rather than the spacing between NMEA-correlated anchors, qualify
+  the gate, so a missed NMEA pairing cannot permanently block recovery.
+- The ten-second Time records include UTC status, first/current anchor source, latest PPS
   residual, calibrated and slew frequency components, accepted/rejected anchor
   counts, UTC-second corrections, uncertainty, and holdover duration. Separate
   GPS records expose `Searching`, `Calibrating`, and `Reacquiring` state, PPS

@@ -12,6 +12,6 @@ mod types;
 pub use estimator::TimeEstimator;
 pub use service::{AnchorSender, TimeResources, TimeService, TimeStateReceiver};
 pub use types::{
-    Anchor, AnchorQuality, TimeConfig, TimeError, TimeSource, TimeState, UtcTimestamp,
+    Anchor, AnchorQuality, TimeConfig, TimeError, TimeSource, TimeState, UtcStatus, UtcTimestamp,
     DEFAULT_ANCHOR_DEPTH, DEFAULT_WATCHERS,
 };

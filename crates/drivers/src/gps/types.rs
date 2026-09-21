@@ -179,6 +179,9 @@ pub struct TimeCorrelation {
     pub pps_capture_ticks: Option<u64>,
     pub pps_capture_delta_ticks: Option<u64>,
     pub pps_capture_frequency_hz: Option<u32>,
+    /// Coarse monotonic interval from the preceding raw PPS edge. Unlike
+    /// correlations, the raw edge stream is continuous while GPS is awake.
+    pub pps_delta_time: Option<Duration>,
     pub pps_timing_source: Option<PpsTimingSource>,
 }
 

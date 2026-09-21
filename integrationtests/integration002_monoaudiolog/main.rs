@@ -1570,11 +1570,11 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         match common::TIME_RESOURCES.current_utc() {
             Ok(utc) => record_outcome(log_info!(
                 time_log,
-                "UTC {} src={:?} first={:?} valid={} map_ppb={} cal_ppb={} cal_n={} cal_lock={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
+                "UTC {} src={:?} first={:?} status={:?} map_ppb={} cal_ppb={} cal_n={} cal_lock={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} holdover_warn={} anchors={}/{} utc_fix={}",
                 utc.seconds,
                 time.active_time_source,
                 time.first_anchor_source,
-                time.utc_valid,
+                time.utc_status,
                 time.estimated_frequency_error_ppb,
                 time.calibrated_frequency_error_ppb,
                 time.frequency_calibration_samples,
@@ -1583,15 +1583,17 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
                 time.last_anchor_residual_us,
                 time.uncertainty_us,
                 time.holdover_duration.as_micros(),
+                time.holdover_warning,
                 time.accepted_anchors,
                 time.rejected_anchors,
                 time.utc_second_corrections
             )),
             Err(_) => record_outcome(log_info!(
                 time_log,
-                "UTC unavailable src={:?} first={:?} valid=false map_ppb={} cal_ppb={} cal_n={} cal_lock={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} anchors={}/{} utc_fix={}",
+                "UTC unavailable src={:?} first={:?} status={:?} map_ppb={} cal_ppb={} cal_n={} cal_lock={} slew_ppb={} residual_us={:?} uncertainty_us={} holdover_us={} holdover_warn={} anchors={}/{} utc_fix={}",
                 time.active_time_source,
                 time.first_anchor_source,
+                time.utc_status,
                 time.estimated_frequency_error_ppb,
                 time.calibrated_frequency_error_ppb,
                 time.frequency_calibration_samples,
@@ -1600,6 +1602,7 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
                 time.last_anchor_residual_us,
                 time.uncertainty_us,
                 time.holdover_duration.as_micros(),
+                time.holdover_warning,
                 time.accepted_anchors,
                 time.rejected_anchors,
                 time.utc_second_corrections

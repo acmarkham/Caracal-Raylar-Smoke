@@ -963,6 +963,7 @@ fn publish_time_correlation<const WATCHERS: usize, const DEPTH: usize>(
         pps_capture_ticks: pps.and_then(|p| p.capture_ticks),
         pps_capture_delta_ticks: pps.and_then(|p| p.capture_delta_ticks),
         pps_capture_frequency_hz: pps.and_then(|p| p.capture_frequency_hz),
+        pps_delta_time: pps.and_then(|p| p.delta_time),
         pps_timing_source: pps.map(|p| p.timing_source),
     };
     time_pub.send(correlation);

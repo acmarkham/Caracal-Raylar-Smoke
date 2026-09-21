@@ -124,21 +124,23 @@ async fn time_observer_task() -> ! {
         let state = TIME_RESOURCES.time_state();
         match TIME_RESOURCES.system_to_utc(now) {
             Ok(utc) => info!(
-                "time: system_us={} utc={}s+{}us valid={} drift_ppb={} uncertainty_us={} holdover_ms={} source={} accepted={} rejected={}",
+                "time: system_us={} utc={}s+{}us status={} drift_ppb={} uncertainty_us={} holdover_ms={} holdover_warn={} source={} accepted={} rejected={}",
                 now.as_micros(),
                 utc.seconds,
                 utc.microseconds,
-                state.utc_valid,
+                state.utc_status,
                 state.estimated_frequency_error_ppb,
                 state.uncertainty_us,
                 state.holdover_duration.as_millis(),
+                state.holdover_warning,
                 state.active_time_source,
                 state.accepted_anchors,
                 state.rejected_anchors,
             ),
             Err(_) => info!(
-                "time: system_us={} utc=unavailable valid=false uncertainty_us={} accepted={} rejected={}",
+                "time: system_us={} utc=unavailable status={} uncertainty_us={} accepted={} rejected={}",
                 now.as_micros(),
+                state.utc_status,
                 state.uncertainty_us,
                 state.accepted_anchors,
                 state.rejected_anchors,

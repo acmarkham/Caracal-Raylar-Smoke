@@ -175,6 +175,8 @@ pub async fn start_fake_time(spawner: Spawner, _gps: Gps<'static>, utc_seconds: 
             quality: AnchorQuality::new(1),
             source: TimeSource::Laboratory,
             capture_ticks: None,
+            pps_sequence: None,
+            pps_interval: None,
         })
         .await;
     info!(

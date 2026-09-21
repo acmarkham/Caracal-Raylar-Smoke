@@ -1,6 +1,6 @@
 use embassy_time::{Duration, Instant, TICK_HZ};
 
-use crate::{Anchor, TimeConfig, TimeSource, TimeState, UtcTimestamp};
+use crate::{Anchor, TimeConfig, TimeSource, TimeState, UtcStatus, UtcTimestamp};
 
 const FREQUENCY_SAMPLE_CAPACITY: usize = 11;
 const FREQUENCY_SLOPE_CAPACITY: usize =
@@ -25,6 +25,7 @@ pub struct TimeEstimator {
     frequency_samples: [FrequencySample; FREQUENCY_SAMPLE_CAPACITY],
     frequency_sample_count: usize,
     last_observed_pps_system_time: Option<Instant>,
+    last_observed_pps_sequence: Option<u64>,
 }
 
 impl TimeEstimator {
@@ -35,6 +36,7 @@ impl TimeEstimator {
             frequency_samples: [EMPTY_FREQUENCY_SAMPLE; FREQUENCY_SAMPLE_CAPACITY],
             frequency_sample_count: 0,
             last_observed_pps_system_time: None,
+            last_observed_pps_sequence: None,
         }
     }
 
@@ -46,12 +48,18 @@ impl TimeEstimator {
         if self.state.accepted_anchors == 0 {
             if anchor.source == TimeSource::GpsPps {
                 self.last_observed_pps_system_time = Some(anchor.system_time);
+                self.last_observed_pps_sequence = anchor.pps_sequence;
             }
             self.accept_first(anchor);
             return true;
         }
 
-        if anchor.source == TimeSource::GpsPps && !self.pps_reacquisition_ready(anchor.system_time)
+        if anchor.source == TimeSource::GpsPps
+            && !self.pps_reacquisition_ready(
+                anchor.system_time,
+                anchor.pps_sequence,
+                anchor.pps_interval,
+            )
         {
             self.reject();
             return false;
@@ -164,7 +172,8 @@ impl TimeEstimator {
         self.state.holdover_duration = Duration::from_ticks(0);
         self.state.active_time_source = anchor.source;
         self.state.accepted_anchors = self.state.accepted_anchors.saturating_add(1);
-        self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
+        self.state.holdover_warning = false;
+        self.refresh_utc_status();
         #[cfg(feature = "defmt")]
         defmt::info!(
             "mapping epoch rebased: system_ticks={} utc={}s+{}us source={:?} quality_us={} residual_us={} calibrated_ppb={} phase_slew_ppb={} mapping_scale_ppb={} accepted={}",
@@ -181,7 +190,7 @@ impl TimeEstimator {
         );
         #[cfg(feature = "defmt")]
         defmt::info!(
-            "mapping state: reference_system_ticks={} reference_utc={}s+{}us last_anchor_system_ticks={:?} last_anchor_utc={:?} holdover_duration_ms={} uncertainty_us={} utc_valid={} active_time_source={:?} calibrated_ppb={} calibration_samples={} phase_slew_ppb={} accepted_anchors={} rejected_anchors={} utc_second_corrections={}",
+            "mapping state: reference_system_ticks={} reference_utc={}s+{}us last_anchor_system_ticks={:?} last_anchor_utc={:?} holdover_duration_ms={} uncertainty_us={} utc_status={:?} active_time_source={:?} calibrated_ppb={} calibration_samples={} phase_slew_ppb={} accepted_anchors={} rejected_anchors={} utc_second_corrections={}",
             self.state.reference_system_time.as_ticks(),
             self.state.reference_utc.seconds,
             self.state.reference_utc.microseconds,
@@ -189,7 +198,7 @@ impl TimeEstimator {
             self.state.last_anchor_utc,
             self.state.holdover_duration.as_millis(),
             self.state.uncertainty_us,
-            self.state.utc_valid,
+            self.state.utc_status,
             self.state.active_time_source,
             self.state.calibrated_frequency_error_ppb,
             self.state.frequency_calibration_samples,
@@ -203,7 +212,7 @@ impl TimeEstimator {
 
     pub fn update_holdover(&mut self, now: Instant) -> TimeState {
         let Some(last_anchor) = self.state.last_anchor_system_time else {
-            self.state.utc_valid = false;
+            self.state.utc_status = UtcStatus::Invalid;
             return self.state;
         };
         let old_growth = uncertainty_growth(
@@ -220,7 +229,19 @@ impl TimeEstimator {
             self.config.holdover_stability_ppb,
         );
         self.state.uncertainty_us = base_uncertainty.saturating_add(new_growth);
-        self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
+        self.refresh_utc_status();
+        if !self.state.holdover_warning
+            && self.state.holdover_duration >= self.config.holdover_warning_threshold
+        {
+            self.state.holdover_warning = true;
+            #[cfg(feature = "defmt")]
+            defmt::warn!(
+                "UTC holdover warning: duration_ms={} uncertainty_us={} status={:?}",
+                self.state.holdover_duration.as_millis(),
+                self.state.uncertainty_us,
+                self.state.utc_status
+            );
+        }
         self.state
     }
 
@@ -234,11 +255,12 @@ impl TimeEstimator {
         self.state.last_anchor_system_time = Some(anchor.system_time);
         self.state.last_anchor_utc = Some(anchor.utc);
         self.state.holdover_duration = Duration::from_ticks(0);
+        self.state.holdover_warning = false;
         self.state.active_time_source = anchor.source;
         self.state.first_anchor_source = anchor.source;
         self.state.last_anchor_residual_us = None;
         self.state.accepted_anchors = 1;
-        self.state.utc_valid = self.state.uncertainty_us <= self.config.max_uncertainty_us;
+        self.refresh_utc_status();
         self.add_frequency_sample(anchor);
         #[cfg(feature = "defmt")]
         defmt::info!(
@@ -371,18 +393,40 @@ impl TimeEstimator {
     /// Reject the gap edge and the first clean intervals after it. This keeps
     /// standby gaps and timer restart artefacts out of phase control and the
     /// oscillator regression.
-    fn pps_reacquisition_ready(&mut self, system_time: Instant) -> bool {
+    fn pps_reacquisition_ready(
+        &mut self,
+        system_time: Instant,
+        pps_sequence: Option<u64>,
+        raw_pps_interval: Option<Duration>,
+    ) -> bool {
         let previous = self.last_observed_pps_system_time.replace(system_time);
+        let previous_sequence = self.last_observed_pps_sequence;
+        self.last_observed_pps_sequence = pps_sequence;
         let Some(previous) = previous else {
             return true;
         };
-        let interval = system_time.saturating_duration_since(previous);
+        // Prefer the raw edge-to-edge interval carried by the GPS driver.
+        // Correlated anchors can be skipped when an NMEA label is late, so
+        // their spacing is not evidence that the PPS stream was interrupted.
+        let interval =
+            raw_pps_interval.unwrap_or_else(|| system_time.saturating_duration_since(previous));
         let nominal_ticks = TICK_HZ;
         let interval_ticks = interval.as_ticks();
         let error_ticks = interval_ticks.abs_diff(nominal_ticks);
         let clean = error_ticks <= self.config.pps_interval_tolerance.as_ticks();
+        let correlation_elapsed_ticks = system_time.saturating_duration_since(previous).as_ticks();
+        let sequence_gap = match (previous_sequence, pps_sequence) {
+            (Some(previous_sequence), Some(pps_sequence)) => {
+                let edge_count = pps_sequence.saturating_sub(previous_sequence);
+                correlation_elapsed_ticks
+                    > edge_count
+                        .saturating_mul(nominal_ticks)
+                        .saturating_add(self.config.pps_interval_tolerance.as_ticks())
+            }
+            _ => false,
+        };
 
-        if interval >= self.config.pps_loss_timeout {
+        if interval >= self.config.pps_loss_timeout || sequence_gap {
             self.state.pps_reacquisition_active = true;
             self.state.pps_reacquisition_clean_intervals = 0;
             self.disable_phase_slew(system_time);
@@ -420,6 +464,26 @@ impl TimeEstimator {
             self.state.pps_reacquisition_clean_intervals
         );
         true
+    }
+
+    fn refresh_utc_status(&mut self) {
+        let _previous_status = self.state.utc_status;
+        self.state.utc_status = if self.state.accepted_anchors == 0 {
+            UtcStatus::Invalid
+        } else if self.state.uncertainty_us > self.config.degraded_uncertainty_us {
+            UtcStatus::Degraded
+        } else {
+            UtcStatus::Synchronized
+        };
+        #[cfg(feature = "defmt")]
+        if _previous_status != self.state.utc_status {
+            defmt::warn!(
+                "UTC status changed: {:?} -> {:?}, uncertainty_us={}",
+                _previous_status,
+                self.state.utc_status,
+                self.state.uncertainty_us
+            );
+        }
     }
 }
 
@@ -465,6 +529,8 @@ mod tests {
             quality: AnchorQuality::new(uncertainty_us),
             source: TimeSource::GpsPps,
             capture_ticks: None,
+            pps_sequence: None,
+            pps_interval: None,
         }
     }
 
@@ -585,15 +651,18 @@ mod tests {
     }
 
     #[test]
-    fn uncertainty_invalidates_during_holdover() {
+    fn uncertainty_degrades_during_holdover_but_mapping_remains_available() {
         let mut config = TimeConfig::default();
-        config.max_uncertainty_us = 100;
+        config.degraded_uncertainty_us = 100;
         config.holdover_stability_ppb = 10_000;
         let mut estimator = TimeEstimator::new(config);
         estimator.ingest(anchor(0, 1_700_000_000, 10));
         let state = estimator.update_holdover(Instant::from_ticks(10 * TICK_HZ));
         assert_eq!(state.uncertainty_us, 110);
-        assert!(!state.utc_valid);
+        assert_eq!(state.utc_status, UtcStatus::Degraded);
+        assert!(state
+            .system_to_utc(Instant::from_ticks(10 * TICK_HZ))
+            .is_ok());
     }
 
     #[test]
@@ -633,6 +702,72 @@ mod tests {
         assert_eq!(state.pps_reacquisition_rejections, 3);
         assert_eq!(state.accepted_anchors, 2);
         assert_eq!(state.rejected_anchors, 3);
+    }
+
+    #[test]
+    fn reacquisition_uses_raw_pps_intervals_when_correlations_are_skipped() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
+
+        let mut gap = anchor(30, 1_700_000_030, 10);
+        gap.pps_interval = Some(Duration::from_secs(30));
+        assert!(!estimator.ingest(gap));
+
+        // Correlated anchors are two seconds apart, but each reports that its
+        // immediately preceding raw PPS interval was a clean one second.
+        for second in [32u64, 34] {
+            let mut clean = anchor(second, 1_700_000_000 + second as i64, 10);
+            clean.pps_interval = Some(Duration::from_secs(1));
+            assert!(!estimator.ingest(clean));
+        }
+        let mut qualified = anchor(36, 1_700_000_036, 10);
+        qualified.pps_interval = Some(Duration::from_secs(1));
+        assert!(estimator.ingest(qualified));
+
+        let state = estimator.state();
+        assert!(!state.pps_reacquisition_active);
+        assert_eq!(state.pps_reacquisition_clean_intervals, 3);
+        assert_eq!(state.accepted_anchors, 2);
+    }
+
+    #[test]
+    fn pps_sequence_rearms_gate_across_a_power_cycle() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        let mut first = anchor(0, 1_700_000_000, 10);
+        first.pps_sequence = Some(1);
+        assert!(estimator.ingest(first));
+
+        // Four edges arrived across thirty elapsed seconds: the PPS stream was
+        // stopped between sessions even though this latest raw interval is
+        // already clean. Discard this first correlated post-wake anchor.
+        let mut resumed = anchor(30, 1_700_000_030, 10);
+        resumed.pps_sequence = Some(5);
+        resumed.pps_interval = Some(Duration::from_secs(1));
+        assert!(!estimator.ingest(resumed));
+        assert!(estimator.state().pps_reacquisition_active);
+        assert_eq!(estimator.state().pps_reacquisition_clean_intervals, 0);
+    }
+
+    #[test]
+    fn holdover_warning_is_one_way_until_an_anchor_is_accepted() {
+        let mut config = TimeConfig::default();
+        config.holdover_warning_threshold = Duration::from_secs(90);
+        config.pps_loss_timeout = Duration::from_secs(1_000);
+        let mut estimator = TimeEstimator::new(config);
+        assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
+
+        assert!(
+            !estimator
+                .update_holdover(Instant::from_ticks(89 * TICK_HZ))
+                .holdover_warning
+        );
+        assert!(
+            estimator
+                .update_holdover(Instant::from_ticks(90 * TICK_HZ))
+                .holdover_warning
+        );
+        assert!(estimator.ingest(anchor(90, 1_700_000_090, 10)));
+        assert!(!estimator.state().holdover_warning);
     }
 
     #[test]

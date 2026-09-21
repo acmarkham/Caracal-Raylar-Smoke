@@ -78,11 +78,32 @@ pub struct Anchor {
     pub quality: AnchorQuality,
     pub source: TimeSource,
     pub capture_ticks: Option<u64>,
+    /// Monotonic raw PPS sequence number, used to distinguish a powered-off
+    /// gap from merely skipped NMEA correlations.
+    pub pps_sequence: Option<u64>,
+    /// Raw interval from the preceding PPS edge. This is independent of
+    /// whether every edge received a matching UTC label.
+    pub pps_interval: Option<Duration>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum UtcStatus {
+    /// No time anchor has ever been accepted.
+    #[default]
+    Invalid,
+    /// UTC has been synchronized and remains within the configured accuracy.
+    Synchronized,
+    /// UTC was synchronized, but its uncertainty now exceeds the accuracy
+    /// target. The mapping remains available for timestamps.
+    Degraded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimeConfig {
-    pub max_uncertainty_us: u64,
+    /// UTC becomes degraded above this uncertainty; it does not become
+    /// invalid because a previously synchronized mapping still exists.
+    pub degraded_uncertainty_us: u64,
     pub holdover_stability_ppb: u64,
     pub max_frequency_error_ppb: i64,
     pub max_anchor_residual_us: u64,
@@ -98,6 +119,8 @@ pub struct TimeConfig {
     pub pps_interval_tolerance: Duration,
     /// Consecutive clean one-second intervals required after a PPS gap.
     pub pps_reacquisition_intervals: u8,
+    /// Emit a one-shot warning once holdover reaches this duration.
+    pub holdover_warning_threshold: Duration,
     /// Window around a one-second residual in which the NMEA UTC label is
     /// corrected to the adjacent second.
     pub utc_second_correction_tolerance_us: u64,
@@ -107,7 +130,7 @@ pub struct TimeConfig {
 impl Default for TimeConfig {
     fn default() -> Self {
         Self {
-            max_uncertainty_us: 5_000_000,
+            degraded_uncertainty_us: 1_000,
             holdover_stability_ppb: 10_000,
             max_frequency_error_ppb: 100_000,
             max_anchor_residual_us: 100_000,
@@ -117,6 +140,7 @@ impl Default for TimeConfig {
             pps_loss_timeout: Duration::from_millis(1_500),
             pps_interval_tolerance: Duration::from_millis(50),
             pps_reacquisition_intervals: 3,
+            holdover_warning_threshold: Duration::from_secs(90),
             utc_second_correction_tolerance_us: 100_000,
             publish_interval: Duration::from_secs(1),
         }
@@ -133,7 +157,7 @@ pub enum TimeError {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TimeState {
-    pub utc_valid: bool,
+    pub utc_status: UtcStatus,
     pub reference_system_time: Instant,
     pub reference_utc: UtcTimestamp,
     /// Total mapping scale correction, including temporary phase slew.
@@ -149,6 +173,7 @@ pub struct TimeState {
     pub last_anchor_system_time: Option<Instant>,
     pub last_anchor_utc: Option<UtcTimestamp>,
     pub holdover_duration: Duration,
+    pub holdover_warning: bool,
     pub active_time_source: TimeSource,
     pub first_anchor_source: TimeSource,
     /// Residual of the most recently evaluated post-initial anchor, expressed
@@ -165,7 +190,7 @@ pub struct TimeState {
 impl TimeState {
     pub const fn invalid() -> Self {
         Self {
-            utc_valid: false,
+            utc_status: UtcStatus::Invalid,
             reference_system_time: Instant::from_ticks(0),
             reference_utc: UtcTimestamp {
                 seconds: 0,
@@ -180,6 +205,7 @@ impl TimeState {
             last_anchor_system_time: None,
             last_anchor_utc: None,
             holdover_duration: Duration::from_ticks(0),
+            holdover_warning: false,
             active_time_source: TimeSource::None,
             first_anchor_source: TimeSource::None,
             last_anchor_residual_us: None,
@@ -193,7 +219,7 @@ impl TimeState {
     }
 
     pub fn system_to_utc(&self, system_time: Instant) -> Result<UtcTimestamp, TimeError> {
-        if !self.utc_valid {
+        if self.utc_status == UtcStatus::Invalid {
             return Err(TimeError::NotValid);
         }
         let delta_ticks =
@@ -213,7 +239,7 @@ impl TimeState {
     }
 
     pub fn utc_to_system(&self, utc: UtcTimestamp) -> Result<Instant, TimeError> {
-        if !self.utc_valid {
+        if self.utc_status == UtcStatus::Invalid {
             return Err(TimeError::NotValid);
         }
         let scale = NANOS_PER_SECOND + self.estimated_frequency_error_ppb as i128;

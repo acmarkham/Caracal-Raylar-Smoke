@@ -39,6 +39,8 @@ pub fn correlation_to_anchor(correlation: TimeCorrelation) -> Option<Anchor> {
         ),
         source: TimeSource::GpsPps,
         capture_ticks: correlation.pps_capture_ticks,
+        pps_sequence: correlation.pps_count,
+        pps_interval: correlation.pps_delta_time,
     })
 }
 
@@ -107,6 +109,7 @@ mod tests {
             pps_capture_ticks: None,
             pps_capture_delta_ticks: None,
             pps_capture_frequency_hz: None,
+            pps_delta_time: None,
             pps_timing_source: Some(PpsTimingSource::EmbassyInstant),
         }
     }
@@ -123,6 +126,8 @@ mod tests {
         assert_eq!(anchor.system_time, pps);
         assert_eq!(anchor.source, TimeSource::GpsPps);
         assert_eq!(anchor.quality.uncertainty_us, 100);
+        assert_eq!(anchor.pps_sequence, Some(1));
+        assert_eq!(anchor.pps_interval, None);
     }
 
     #[test]
