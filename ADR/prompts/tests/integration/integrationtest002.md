@@ -93,6 +93,12 @@ After GPS fix is acquired: Audio
    Gap and qualification samples must not enter oscillator regression. Freeze
    oscillator calibration after the initial eleven-point, ten-minute window so
    later reacquisition artefacts cannot move the learned frequency.
+   The PPS capture is the STM32U59xxx **32-bit TIM4_CH4** counter at 1 MHz.
+   Preserve all 32 capture bits and use a 2^32-tick modulus; do not apply the
+   16-bit TIM4 assumption used by many other STM32 families. Authoritative
+   references are DS13633 Rev 3 section 3.44 Table 19 (p. 80/385), section
+   3.44.2 (p. 81/385), and the RM0456 general-purpose TIM2-TIM5 chapter plus
+   its `TIMx_ARR` and `TIMx_CCR4` register definitions.
 4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
 5. Save data to minute long wav files, in hourly folders. 
 6. Start on top-of-the minute boundary e.g. 00s

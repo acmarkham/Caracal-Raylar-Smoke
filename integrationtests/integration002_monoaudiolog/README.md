@@ -123,9 +123,13 @@ each flash are retained under `.probe-rs-logs/`.
   cycle begin.
 - PPS edges use TIM4 channel 4 hardware input capture at 1 MHz. After the first
   cross-clock epoch is established, edge timestamps are reconstructed from the
-  capture counter rather than interrupt wake-up time. TIM4 is 16-bit, so its
-  multiple wraps between 1 Hz edges are resolved using coarse monotonic elapsed
-  time while the captured sub-wrap phase retains 1 us resolution.
+  capture counter rather than interrupt wake-up time. STM32U59xxx TIM4 is
+  32-bit, so it wraps every 2^32 us (about 71 minutes 35 seconds), not between
+  1 Hz PPS edges. The driver preserves the full TIM4_CH4 value and uses coarse
+  monotonic elapsed time only to extend a rare full 32-bit wrap. This is defined
+  by DS13633 Rev 3 section 3.44 Table 19 (p. 80/385), section 3.44.2
+  (p. 81/385), and the RM0456 TIM2-TIM5 general-purpose-timer chapter and
+  `TIMx_ARR`/`TIMx_CCR4` register definitions.
 - Oscillator calibration uses an allocation-free 11-point, ten-minute
   Theil-Sen regression over minute-spaced PPS samples. Pairwise slopes outside
   100 ppm are discarded, so an isolated timing or UTC-label outlier cannot
@@ -233,13 +237,11 @@ One run exposed an approximately 590 ms residual after accepting the initial
 GPS/PPS epoch, causing subsequent anchors to be rejected. A clean release
 reflash after reconnecting the ST-Link did not reproduce it: GPS/PPS anchors
 were accepted continuously with sub-millisecond residuals and zero rejected
-anchors throughout the 56-second verification capture. The fault was traced to
-TIM4 wrap extension using the delayed executor observation time to choose the
-number of 65.536 ms counter wraps. A storage or logging stall could therefore
-add several false wraps permanently even though the captured PPS cadence was
-still one second. Wrap extension now chooses the candidate consistent with the
-periodic PPS cadence while retaining the hardware-measured oscillator drift.
-Synthetic 343 ms and 590 ms delayed-wake regressions pass, and the patched
-release accepted 65 consecutive hardware anchors with zero rejections and
-sub-millisecond residuals through an audio rotation and the first 60-second
-frequency-calibration sample.
+anchors throughout the 56-second verification capture. The earlier analysis
+incorrectly treated STM32U595 TIM4 as a 16-bit timer and attempted to infer
+65.536 ms wraps. DS13633 Rev 3 section 3.44 Table 19 instead specifies TIM4 as
+32-bit, which is also represented by the RM0456 TIM2-TIM5 register definitions.
+The driver now consumes the complete 32-bit TIM4_CH4 capture and has no wrap
+ambiguity during ordinary PPS intervals or 30-second GPS standby cycles. The
+next hardware endurance run supersedes conclusions drawn from the former
+16-bit wrap-extension model.

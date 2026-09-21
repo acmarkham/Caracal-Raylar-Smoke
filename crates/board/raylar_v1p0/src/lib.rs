@@ -192,8 +192,9 @@ pub struct Gps<'d> {
     pub usart: Peri<'d, USART2>,
     pub tx: Peri<'d, PA2>,
     pub rx: Peri<'d, PA3>,
-    /// Raw PPS pin. The application must configure this as either EXTI or
-    /// TIM4_CH4, but never construct both GPIO owners for it.
+    /// Raw PPS pin. The application must configure this as either EXTI or the
+    /// STM32U59xxx 32-bit TIM4_CH4 input capture (DS13633 Rev 3, section 3.44,
+    /// table 19), but never construct both GPIO owners for it.
     pub pps: Peri<'d, PB9>,
     pub pps_exti: Peri<'d, EXTI9>,
     pub pps_capture_timer: Peri<'d, TIM4>,

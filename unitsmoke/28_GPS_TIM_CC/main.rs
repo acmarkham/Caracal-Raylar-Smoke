@@ -7,10 +7,11 @@
 //
 // Clock check: HSE=16 MHz, PLL1_R = 16 MHz / 1 * 10 / 2 = 80 MHz SYSCLK.
 // APB1 defaults to DIV1, so TIM4 is clocked at 80 MHz. The input-capture
-// driver sets TIM4 to 1 MHz, so each TIM4 tick is 1 us. TIM4 is a 16-bit
-// general-purpose timer on STM32U595 and therefore wraps about fifteen times
-// between PPS edges; production code resolves those wraps against coarse
-// monotonic elapsed time.
+// driver sets TIM4 to 1 MHz, so each TIM4 tick is 1 us. STM32U59xxx TIM4 is a
+// 32-bit general-purpose timer and wraps after 2^32 us (about 71 minutes
+// 35 seconds), not between PPS edges. See DS13633 Rev 3 section 3.44 table 19
+// (p. 80/385) and section 3.44.2 (p. 81/385), plus the RM0456 TIM2-TIM5
+// general-purpose-timer and TIMx_ARR/TIMx_CCR4 register definitions.
 
 #![no_std]
 #![no_main]
@@ -72,7 +73,7 @@ async fn main(spawner: Spawner) -> ! {
     let led = Output::new(PD7, Level::Low, Speed::Medium);
 
     info!("GPS PPS TIM4 capture smoke test started");
-    info!("TIM4_CH4 input capture on PB9 AF2 at 1000000 Hz");
+    info!("TIM4_CH4 32-bit input capture on PB9 AF2 at 1000000 Hz");
 
     gps_en.set_high();
     gps_rst.set_high();
@@ -149,8 +150,10 @@ async fn pps_capture_task(
 }
 
 fn clear_tim4_ch4_capture_flag() {
+    // TIM4 on STM32U59xxx uses the 32-bit GP timer register layout (DS13633
+    // Rev 3, section 3.44, table 19), so use TimGp32 rather than TimGp16.
     let regs =
-        unsafe { embassy_stm32::pac::timer::TimGp16::from_ptr(<TIM4 as CoreInstance>::regs()) };
+        unsafe { embassy_stm32::pac::timer::TimGp32::from_ptr(<TIM4 as CoreInstance>::regs()) };
     regs.sr()
         .modify(|w| w.set_ccif(Channel::Ch4.index(), false));
 }

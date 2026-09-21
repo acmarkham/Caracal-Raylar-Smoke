@@ -16,7 +16,13 @@ use crate::gps::{
 };
 
 pub const TIM4_PPS_CAPTURE_FREQUENCY_HZ: u32 = 1_000_000;
-const TIM4_COUNTER_MODULUS: u64 = 1 << 16;
+// STM32U59xxx TIM4 is a 32-bit general-purpose timer, unlike TIM4 on many
+// other STM32 families. Authoritative sources: DS13633 Rev 3, section 3.44,
+// table 19 (p. 80/385), and section 3.44.2 (p. 81/385); RM0456,
+// "General-purpose timers (TIM2/TIM3/TIM4/TIM5)" and the TIMx_ARR/TIMx_CCR4
+// register definitions. At 1 MHz the counter wraps every 2^32 us, or about
+// 71 minutes 35 seconds.
+const TIM4_COUNTER_MODULUS: u64 = 1u64 << 32;
 
 pub struct Stm32GpsPower {
     en: Output<'static>,
@@ -115,14 +121,13 @@ impl Tim4Pps {
     }
 
     fn extend_ticks(&mut self, raw: u32, observation_time: Instant) -> u64 {
-        // TIM4 on STM32U595 is a 16-bit timer even though Embassy exposes its
-        // capture value as u32. At 1 MHz it wraps about fifteen times between
-        // 1 Hz PPS edges. Use the coarse monotonic elapsed time only to resolve
-        // that integer wrap ambiguity; the sub-wrap phase still comes directly
-        // from the hardware capture register.
-        let raw = raw & 0xffff;
+        // TIM4_CH4 captures the full STM32U595 32-bit counter (DS13633 Rev 3,
+        // section 3.44, table 19). A normal PPS interval or GPS standby cycle
+        // is far shorter than its approximately 71-minute wrap period. Use the
+        // coarse monotonic elapsed time only to extend the rare full 32-bit
+        // wrap; fine timing remains entirely from the capture register.
         if let Some(previous_raw) = self.previous_raw {
-            let modulo_delta = raw.wrapping_sub(previous_raw) as u64 & 0xffff;
+            let modulo_delta = raw.wrapping_sub(previous_raw) as u64;
             let approximate_delta = self
                 .previous_observation_time
                 .map(|previous_time| {

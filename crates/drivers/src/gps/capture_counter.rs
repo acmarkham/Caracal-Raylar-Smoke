@@ -55,7 +55,9 @@ mod tests {
 
     #[test]
     fn ignores_delayed_executor_wake() {
-        let modulus = 1 << 16;
+        // STM32U59xxx TIM4 is 32-bit: DS13633 Rev 3, section 3.44,
+        // table 19 (p. 80/385).
+        let modulus = 1u64 << 32;
         let nominal_period = 1_000_000;
         let modulo_delta = nominal_period % modulus;
 
@@ -71,7 +73,7 @@ mod tests {
 
     #[test]
     fn preserves_counter_measured_drift() {
-        let modulus = 1 << 16;
+        let modulus = 1u64 << 32;
         let measured_period = 999_989;
 
         assert_eq!(
@@ -86,12 +88,28 @@ mod tests {
     }
 
     #[test]
-    fn resolves_wraps_across_a_power_cycle_gap() {
-        let modulus = 1 << 16;
+    fn preserves_power_cycle_gap_without_a_32_bit_wrap() {
+        let modulus = 1u64 << 32;
         let measured_gap = 30_000_270;
 
         assert_eq!(
             resolve_periodic_capture_delta(measured_gap % modulus, 30_590_000, modulus, 1_000_000),
+            measured_gap
+        );
+    }
+
+    #[test]
+    fn extends_a_full_32_bit_tim4_wrap() {
+        let modulus = 1u64 << 32;
+        let measured_gap = modulus + 30_000_270;
+
+        assert_eq!(
+            resolve_periodic_capture_delta(
+                measured_gap % modulus,
+                measured_gap + 300_000,
+                modulus,
+                1_000_000,
+            ),
             measured_gap
         );
     }

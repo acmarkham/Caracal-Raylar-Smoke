@@ -66,6 +66,21 @@ The UART task should not contain business logic relating to GPS operating modes,
 
 This task owns the timer input capture peripheral connected to the GPS PPS output.
 
+On STM32U59xxx, use the full **32-bit TIM4 counter and TIM4_CH4 capture
+register**. Do not apply the 16-bit TIM4 assumption found on many other STM32
+families. The authoritative device references are:
+
+* **DS13633 Rev 3, section 3.44, Table 19, p. 80/385**: TIM2, TIM3, TIM4 and
+  TIM5 have 32-bit counter resolution and four capture/compare channels.
+* **DS13633 Rev 3, section 3.44.2, p. 81/385**: TIM2-TIM5 have a 32-bit
+  auto-reload up/downcounter and four independent capture/compare channels.
+* **RM0456, General-purpose timers (TIM2/TIM3/TIM4/TIM5)**: use the 32-bit
+  `TIMx_ARR` counter range and complete `TIMx_CCR4` capture value.
+
+At the configured 1 MHz capture rate, TIM4 wraps every 2^32 microseconds
+(approximately 71 minutes 35 seconds), rather than every 65.536 ms. Software
+must use 32-bit wrapping arithmetic and must not mask captured values to 16 bits.
+
 Responsibilities:
 
 * Timestamp every PPS pulse using hardware input capture
