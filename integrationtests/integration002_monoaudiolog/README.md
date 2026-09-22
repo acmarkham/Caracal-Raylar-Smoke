@@ -102,7 +102,13 @@ each flash are retained under `.probe-rs-logs/`.
   expected GPS wait from appearing as an audio overrun.
 - The first real GPS fix plays a short alternating success trill followed by a
   high resolving note once its first PPS anchor has been accepted. The
-  synthetic-time feature does not play this signal.
+  frequency-calibration lock later plays a distinct rising major-arpeggio
+  jingle with an octave resolve. The synthetic-time feature plays neither
+  signal.
+- The green GPS LED is off while the receiver is off or in standby, solid while
+  it is searching or reacquiring a navigation fix, and pulses for 50 ms for
+  each GPS PPS anchor admitted by the Time Service. Raw PPS edges rejected by
+  the settling/cadence gate do not flash the LED.
 - GPS fixes also feed the Location Service's nine-sample median filter. The
   first valid estimate (after three accepted fixes) is written immediately to
   the `Location` syslog component; the latest retained estimate is then logged
@@ -178,7 +184,8 @@ each flash are retained under `.probe-rs-logs/`.
   SD media, card/filesystem initialization failures, stream write failures,
   and unrecoverable recorder failures—latch recording off. Both red LEDs then
   flash together at 1 Hz and a three-note descending alarm repeats every ten
-  seconds. Green heartbeats stop until the board is reset.
+  seconds. The main green heartbeat and GPS status indication stop until the
+  board is reset.
 - `MDF_DFLTISR.DOVRF` (bit 1) is the data-overrun flag. The observed sticky
   `CKABF` bit (bit 10) is reported separately as `clock_absent`; it is not a DMA
   or data overrun.

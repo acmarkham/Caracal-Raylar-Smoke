@@ -34,6 +34,8 @@ use raylar_audio_recorder_service::{
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{AdcVoltages, Board, Leds, PdmMicArray, PdmMicDma, SensI2C, UsbCdc};
 use raylar_drivers::batterycharger::{ChargerBus, ChargerConfig, ChargerDriver, ChargerResources};
+#[cfg(not(feature = "fake-gps-time"))]
+use raylar_drivers::gps::OperatingState;
 use raylar_drivers::mic_array::stm32::{Dma0TimestampHandler, MonoPins, Stm32MonoMicrophoneDriver};
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
@@ -288,6 +290,8 @@ enum LedCommand {
 enum BuzzerCommand {
     #[cfg(not(feature = "fake-gps-time"))]
     GpsPpsAcquired,
+    #[cfg(not(feature = "fake-gps-time"))]
+    GpsCalibrationAcquired,
     SevereError,
 }
 
@@ -593,7 +597,6 @@ where
     }
 }
 
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     unsafe {
@@ -612,7 +615,7 @@ async fn main(spawner: Spawner) -> ! {
         "STM32 core supply selected: {:?}",
         core_driver.selected_supply()
     );
-    let Board { 
+    let Board {
         leds: board_leds,
         buzzer: board_buzzer,
         gps,
@@ -641,7 +644,10 @@ async fn main(spawner: Spawner) -> ! {
     let cpu_log = LOGGING.register("Cpu");
     spawner.spawn(unwrap!(cpu_usage_task(cpu_log)));
     #[cfg(not(feature = "fake-gps-time"))]
-    common::start_time(spawner, gps).await;
+    {
+        common::start_time(spawner, gps).await;
+        spawner.spawn(unwrap!(gps_led_task()));
+    }
     #[cfg(feature = "fake-gps-time")]
     {
         let fake_utc = env!("INTEGRATION002_FAKE_UTC_SECONDS")
@@ -681,7 +687,7 @@ async fn main(spawner: Spawner) -> ! {
         common::pending_forever().await;
     }
     #[cfg(not(feature = "fake-gps-time"))]
-    spawner.spawn(unwrap!(gps_pps_trill_task()));
+    spawner.spawn(unwrap!(gps_notification_task()));
     let backend = common::storage_driver_with_fatal_handler(sd, signal_severe_error).await;
     let mut storage = match StorageService::new(backend, &common::TIME_RESOURCES) {
         Ok(storage) => storage,
@@ -1031,6 +1037,85 @@ async fn led_task(mut driver: leds::LedDriver<'static>) -> ! {
     }
 }
 
+#[cfg(not(feature = "fake-gps-time"))]
+fn gps_is_looking_for_fix(state: OperatingState) -> bool {
+    matches!(
+        state,
+        OperatingState::PoweringOn | OperatingState::Searching | OperatingState::Reacquiring
+    )
+}
+
+#[cfg(not(feature = "fake-gps-time"))]
+fn gps_receiver_is_active(state: OperatingState) -> bool {
+    !matches!(
+        state,
+        OperatingState::Off
+            | OperatingState::Standby
+            | OperatingState::PoweringOff
+            | OperatingState::Error
+    )
+}
+
+#[cfg(not(feature = "fake-gps-time"))]
+async fn set_gps_green_led(last_on: &mut Option<bool>, on: bool) {
+    if *last_on == Some(on) {
+        return;
+    }
+    LED_COMMANDS
+        .send(if on {
+            LedCommand::On(leds::LedName::SysGpsGreen)
+        } else {
+            LedCommand::Off(leds::LedName::SysGpsGreen)
+        })
+        .await;
+    *last_on = Some(on);
+}
+
+/// Give the GPS green LED one unambiguous owner:
+///
+/// - off while the receiver is off or in standby;
+/// - solid while searching for a navigation fix;
+/// - a 50 ms pulse whenever the Time Service admits a gated GPS PPS anchor.
+///
+/// Acceptance is detected from `accepted_anchors`, rather than from the raw
+/// PPS stream, so settling and out-of-tolerance receiver edges cannot flash
+/// the LED. The task reacts to Time Service publications and performs no LED
+/// I/O unless the requested state changes.
+#[embassy_executor::task]
+#[cfg(not(feature = "fake-gps-time"))]
+async fn gps_led_task() -> ! {
+    let mut states = unwrap!(common::TIME_RESOURCES.state_receiver());
+    let mut last_on = None;
+    let mut observed_accepted_anchors = common::TIME_RESOURCES.time_state().accepted_anchors;
+
+    loop {
+        let time = states.changed().await;
+        if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+            set_gps_green_led(&mut last_on, false).await;
+            common::pending_forever().await;
+        }
+
+        let gps = common::GPS_RESOURCES.stats();
+        let receiver_active = gps.powered && gps_receiver_is_active(gps.operating_state);
+        let accepted_gps_pps = receiver_active
+            && time.active_time_source == raylar_time_service::TimeSource::GpsPps
+            && time.accepted_anchors != observed_accepted_anchors;
+        observed_accepted_anchors = time.accepted_anchors;
+
+        if accepted_gps_pps {
+            set_gps_green_led(&mut last_on, true).await;
+            Timer::after_millis(50).await;
+
+            let gps = common::GPS_RESOURCES.stats();
+            let solid = gps.powered && gps_is_looking_for_fix(gps.operating_state);
+            set_gps_green_led(&mut last_on, solid).await;
+        } else {
+            let solid = receiver_active && gps_is_looking_for_fix(gps.operating_state);
+            set_gps_green_led(&mut last_on, solid).await;
+        }
+    }
+}
+
 #[embassy_executor::task]
 async fn severe_error_task() -> ! {
     ERROR_SIGNAL.wait().await;
@@ -1095,7 +1180,7 @@ async fn capture_task(driver: MicDriver) -> ! {
 
 #[embassy_executor::task]
 #[cfg(not(feature = "fake-gps-time"))]
-async fn gps_pps_trill_task() {
+async fn gps_notification_task() {
     let mut states = unwrap!(common::TIME_RESOURCES.state_receiver());
     let state = loop {
         let state = states.changed().await;
@@ -1112,6 +1197,22 @@ async fn gps_pps_trill_task() {
     if !SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
         BUZZER_COMMANDS.send(BuzzerCommand::GpsPpsAcquired).await;
     }
+
+    let state = loop {
+        let state = states.changed().await;
+        if state.frequency_calibration_locked {
+            break state;
+        }
+    };
+    info!(
+        "GPS frequency calibration acquired; playing calibration jingle: samples={} calibrated_ppb={}",
+        state.frequency_calibration_samples, state.calibrated_frequency_error_ppb
+    );
+    if !SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
+        BUZZER_COMMANDS
+            .send(BuzzerCommand::GpsCalibrationAcquired)
+            .await;
+    }
 }
 
 #[embassy_executor::task]
@@ -1120,6 +1221,8 @@ async fn buzzer_task(mut driver: buzzer::BuzzerDriver<'static>) -> ! {
         match BUZZER_COMMANDS.receive().await {
             #[cfg(not(feature = "fake-gps-time"))]
             BuzzerCommand::GpsPpsAcquired => play_gps_pps_trill(&mut driver).await,
+            #[cfg(not(feature = "fake-gps-time"))]
+            BuzzerCommand::GpsCalibrationAcquired => play_gps_calibration_jingle(&mut driver).await,
             BuzzerCommand::SevereError => loop {
                 let next_alarm = Instant::now() + Duration::from_secs(10);
                 play_severe_error_signal(&mut driver).await;
@@ -1148,6 +1251,29 @@ async fn play_gps_pps_trill(buzzer: &mut buzzer::BuzzerDriver<'static>) {
             buzzer::PitchHz(2_093),
             Duration::from_millis(110),
             buzzer::Volume(200),
+        )
+        .await;
+}
+
+#[cfg(not(feature = "fake-gps-time"))]
+async fn play_gps_calibration_jingle(buzzer: &mut buzzer::BuzzerDriver<'static>) {
+    // A rising major arpeggio with an octave resolve distinguishes the
+    // ten-minute frequency-calibration lock from the rapid first-PPS trill.
+    for pitch_hz in [784, 988, 1_175, 1_568] {
+        let _ = buzzer
+            .play_tone(
+                buzzer::PitchHz(pitch_hz),
+                Duration::from_millis(75),
+                buzzer::Volume(190),
+            )
+            .await;
+        Timer::after_millis(25).await;
+    }
+    let _ = buzzer
+        .play_tone(
+            buzzer::PitchHz(2_093),
+            Duration::from_millis(220),
+            buzzer::Volume(210),
         )
         .await;
 }
@@ -1584,9 +1710,6 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         LED_COMMANDS
             .send(LedCommand::On(leds::LedName::SysMainGreen))
             .await;
-        LED_COMMANDS
-            .send(LedCommand::On(leds::LedName::SysGpsGreen))
-            .await;
         let power = POWER.state();
         record_outcome(log_info!(
             power_log,
@@ -1743,9 +1866,6 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         Timer::after_millis(100).await;
         LED_COMMANDS
             .send(LedCommand::Off(leds::LedName::SysMainGreen))
-            .await;
-        LED_COMMANDS
-            .send(LedCommand::Off(leds::LedName::SysGpsGreen))
             .await;
         Timer::after_secs(10).await;
     }
