@@ -118,6 +118,10 @@ pub struct TimeConfig {
     /// interval when admitting anchors and qualifying reacquisition, in ppm.
     /// Change this single parameter to tune PPS cadence admission.
     pub pps_interval_tolerance_ppm: u32,
+    /// Number of PPS edges to ignore immediately after a gap or invalid
+    /// interval. This gives the receiver time to settle its PPS phase before
+    /// cadence qualification begins. Raw edges remain available for logging.
+    pub pps_reacquisition_discard_edges: u8,
     /// Consecutive clean one-second intervals required after a PPS gap.
     pub pps_reacquisition_intervals: u8,
     /// Emit a one-shot warning once holdover reaches this duration.
@@ -140,6 +144,10 @@ impl Default for TimeConfig {
             max_phase_slew_ppb: 250_000,
             pps_loss_timeout: Duration::from_millis(1_500),
             pps_interval_tolerance_ppm: 20,
+            // The L86 can emit free-running PPS while its timing solution
+            // relocks. Five edges provides a short settling window without
+            // materially extending the normal GPS duty-cycle wake period.
+            pps_reacquisition_discard_edges: 5,
             pps_reacquisition_intervals: 3,
             holdover_warning_threshold: Duration::from_secs(90),
             utc_second_correction_tolerance_us: 100_000,
@@ -184,6 +192,7 @@ pub struct TimeState {
     pub accepted_anchors: u32,
     pub rejected_anchors: u32,
     pub pps_reacquisition_active: bool,
+    pub pps_reacquisition_discarded_edges: u8,
     pub pps_reacquisition_clean_intervals: u8,
     pub pps_reacquisition_rejections: u32,
 }
@@ -214,6 +223,7 @@ impl TimeState {
             accepted_anchors: 0,
             rejected_anchors: 0,
             pps_reacquisition_active: false,
+            pps_reacquisition_discarded_edges: 0,
             pps_reacquisition_clean_intervals: 0,
             pps_reacquisition_rejections: 0,
         }

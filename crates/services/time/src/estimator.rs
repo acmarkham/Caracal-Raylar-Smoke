@@ -391,9 +391,10 @@ impl TimeEstimator {
         );
     }
 
-    /// Reject the gap edge and the first clean intervals after it. This keeps
-    /// standby gaps and timer restart artefacts out of phase control and the
-    /// oscillator regression.
+    /// Reject a configurable settling window after a gap, then require clean
+    /// cadence intervals. This keeps receiver PPS phase recalibration,
+    /// standby gaps, and timer restart artefacts out of phase control and the
+    /// oscillator regression. Raw PPS publication/logging is unaffected.
     fn pps_reacquisition_ready(
         &mut self,
         system_time: Instant,
@@ -431,21 +432,66 @@ impl TimeEstimator {
             }
             _ => false,
         };
+        let observed_edges = match (previous_sequence, pps_sequence) {
+            (Some(previous_sequence), Some(pps_sequence)) => pps_sequence
+                .saturating_sub(previous_sequence)
+                .max(1)
+                .min(u8::MAX as u64)
+                as u8,
+            _ => 1,
+        };
+        let mut settling_edge = false;
 
         if !clean || interval >= self.config.pps_loss_timeout || sequence_gap {
             self.state.pps_reacquisition_active = true;
+            self.state.pps_reacquisition_discarded_edges =
+                u8::from(self.config.pps_reacquisition_discard_edges != 0);
             self.state.pps_reacquisition_clean_intervals = 0;
+            settling_edge = self.config.pps_reacquisition_discard_edges != 0;
             self.disable_phase_slew(system_time);
         } else if self.state.pps_reacquisition_active {
-            self.state.pps_reacquisition_clean_intervals = if clean {
-                self.state
+            if self.state.pps_reacquisition_discarded_edges
+                < self.config.pps_reacquisition_discard_edges
+            {
+                let remaining = self
+                    .config
+                    .pps_reacquisition_discard_edges
+                    .saturating_sub(self.state.pps_reacquisition_discarded_edges);
+                self.state.pps_reacquisition_discarded_edges = self
+                    .state
+                    .pps_reacquisition_discarded_edges
+                    .saturating_add(observed_edges.min(remaining));
+                // Sequence jumps let unpaired raw PPS edges contribute to
+                // settling. Reject this correlated edge only when it is
+                // itself still one of the first N edges.
+                if observed_edges <= remaining {
+                    settling_edge = true;
+                } else {
+                    self.state.pps_reacquisition_clean_intervals = 1;
+                }
+            } else if clean {
+                self.state.pps_reacquisition_clean_intervals = self
+                    .state
                     .pps_reacquisition_clean_intervals
-                    .saturating_add(1)
+                    .saturating_add(1);
             } else {
-                0
-            };
+                self.state.pps_reacquisition_clean_intervals = 0;
+            }
         } else {
             return true;
+        }
+
+        if settling_edge {
+            self.state.pps_reacquisition_rejections =
+                self.state.pps_reacquisition_rejections.saturating_add(1);
+            #[cfg(feature = "defmt")]
+            defmt::info!(
+                "PPS reacquisition settling: discarded_edges={}/{} rejected={}",
+                self.state.pps_reacquisition_discarded_edges,
+                self.config.pps_reacquisition_discard_edges,
+                self.state.pps_reacquisition_rejections
+            );
+            return false;
         }
 
         if self.state.pps_reacquisition_clean_intervals < self.config.pps_reacquisition_intervals {
@@ -466,7 +512,8 @@ impl TimeEstimator {
         self.state.pps_reacquisition_active = false;
         #[cfg(feature = "defmt")]
         defmt::info!(
-            "PPS reacquisition qualified after {} clean intervals",
+            "PPS reacquisition qualified after {} discarded edges and {} clean intervals",
+            self.state.pps_reacquisition_discarded_edges,
             self.state.pps_reacquisition_clean_intervals
         );
         true
@@ -704,7 +751,9 @@ mod tests {
 
     #[test]
     fn reacquisition_requires_three_clean_pps_intervals() {
-        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        let mut config = TimeConfig::default();
+        config.pps_reacquisition_discard_edges = 0;
+        let mut estimator = TimeEstimator::new(config);
         assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
 
         assert!(!estimator.ingest(anchor(30, 1_700_000_030, 10)));
@@ -718,6 +767,32 @@ mod tests {
         assert_eq!(state.pps_reacquisition_rejections, 3);
         assert_eq!(state.accepted_anchors, 2);
         assert_eq!(state.rejected_anchors, 3);
+    }
+
+    #[test]
+    fn default_reacquisition_discards_five_edges_then_qualifies_cadence() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
+
+        // The first returning edge detects the gap and counts as settling
+        // edge one. Four further edges complete the five-edge window. None
+        // may alter the UTC mapping or oscillator calibration.
+        for second in 30..=34u64 {
+            assert!(!estimator.ingest(anchor(second, 1_700_000_000 + second as i64, 10)));
+        }
+        assert_eq!(estimator.state().pps_reacquisition_discarded_edges, 5);
+        assert_eq!(estimator.state().accepted_anchors, 1);
+        assert_eq!(estimator.state().rejected_anchors, 5);
+
+        // The existing cadence gate then requires three clean edge pairs;
+        // the anchor closing the third pair is the first one admitted.
+        assert!(!estimator.ingest(anchor(35, 1_700_000_035, 10)));
+        assert!(!estimator.ingest(anchor(36, 1_700_000_036, 10)));
+        assert!(estimator.ingest(anchor(37, 1_700_000_037, 10)));
+        assert!(!estimator.state().pps_reacquisition_active);
+        assert_eq!(estimator.state().pps_reacquisition_clean_intervals, 3);
+        assert_eq!(estimator.state().accepted_anchors, 2);
+        assert_eq!(estimator.state().rejected_anchors, 7);
     }
 
     #[test]
@@ -736,7 +811,9 @@ mod tests {
 
     #[test]
     fn out_of_tolerance_edge_pair_rearms_reacquisition_gate() {
-        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        let mut config = TimeConfig::default();
+        config.pps_reacquisition_discard_edges = 0;
+        let mut estimator = TimeEstimator::new(config);
         assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
 
         let tolerance_ticks =
@@ -764,7 +841,9 @@ mod tests {
 
     #[test]
     fn reacquisition_uses_raw_pps_intervals_when_correlations_are_skipped() {
-        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        let mut config = TimeConfig::default();
+        config.pps_reacquisition_discard_edges = 0;
+        let mut estimator = TimeEstimator::new(config);
         assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
 
         let mut gap = anchor(30, 1_700_000_030, 10);
@@ -803,6 +882,7 @@ mod tests {
         resumed.pps_interval = Some(Duration::from_secs(1));
         assert!(!estimator.ingest(resumed));
         assert!(estimator.state().pps_reacquisition_active);
+        assert_eq!(estimator.state().pps_reacquisition_discarded_edges, 1);
         assert_eq!(estimator.state().pps_reacquisition_clean_intervals, 0);
     }
 

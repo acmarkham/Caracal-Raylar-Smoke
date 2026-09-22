@@ -1644,8 +1644,9 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
         }
         record_outcome(log_info!(
             time_log,
-            "PPS_GATE active={} clean_intervals={} gate_rejections={}",
+            "PPS_GATE active={} discarded_edges={} clean_intervals={} gate_rejections={}",
             time.pps_reacquisition_active,
+            time.pps_reacquisition_discarded_edges,
             time.pps_reacquisition_clean_intervals,
             time.pps_reacquisition_rejections
         ));
