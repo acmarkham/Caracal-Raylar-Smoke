@@ -48,6 +48,9 @@ pub enum PpsTimingSource {
 pub enum GpsCommand {
     Start,
     Stop,
+    /// Release continuous initial tracking after the Time Service has locked
+    /// its oscillator-frequency calibration.
+    FrequencyCalibrationLocked,
     ForceSearch,
     ColdStart,
     WarmStart,
@@ -81,7 +84,11 @@ pub struct GpsConfig {
     pub gps_off_time: Duration,
     pub first_search_time: Duration,
     /// Continuous on-time after the first fix, before duty cycling starts.
+    /// Used when `wait_for_frequency_calibration_lock` is false.
     pub initial_calibration_time: Duration,
+    /// Keep the receiver continuously active after its first fix until a
+    /// `FrequencyCalibrationLocked` command is received from the Time Service.
+    pub wait_for_frequency_calibration_lock: bool,
     pub search_time: Duration,
     pub search_failure_threshold: u32,
     pub initial_start_mode: StartMode,
@@ -99,6 +106,7 @@ impl Default for GpsConfig {
             gps_off_time: Duration::from_secs(30),
             first_search_time: Duration::from_secs(15 * 60),
             initial_calibration_time: Duration::from_secs(10 * 60),
+            wait_for_frequency_calibration_lock: false,
             search_time: Duration::from_secs(30),
             search_failure_threshold: 10,
             initial_start_mode: StartMode::Hot,

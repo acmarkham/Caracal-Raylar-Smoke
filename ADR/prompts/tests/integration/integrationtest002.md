@@ -80,8 +80,10 @@ After GPS fix is acquired: Audio
    the NMEA serial-arrival timestamp as an anchor.
 2. Issue a different "successful GPS" beep after the first GPS PPS anchor has
    been accepted.
-3. Keep GPS continuously powered for 10 minutes after the first fix to
-   calibrate oscillator frequency before entering the normal GPS power cycle.
+3. Keep GPS continuously active after the first fix until the Time Service
+   reports `frequency_calibration_locked`, then enter the normal GPS power
+   cycle. The nominal lock interval is 10 minutes, but PPS outages must extend
+   it rather than allowing a fixed elapsed-time deadline to end calibration.
    Use hardware timer input capture for PPS and an outlier-resistant regression
    spanning this calibration interval. Correct unambiguous adjacent-second NMEA
    labels, reject remaining large residuals, slew smaller phase errors without
@@ -275,7 +277,8 @@ The test should verify that:
   intervals within an inclusive +/-20 ppm tolerance have been observed, and
   the withheld samples do not alter calibration. Any later edge pair outside
   that tolerance is rejected and re-arms qualification.
-* Frequency calibration locks after the initial ten-minute window.
+* GPS remains continuously active until frequency calibration locks after a
+  complete initial eleven-sample, approximately ten-minute PPS baseline.
 * Per-edge PPS and per-correlation records are present without unexplained
   sequence gaps and contain enough raw timestamps for post-hoc correction.
 * Logging messages are correctly formatted.

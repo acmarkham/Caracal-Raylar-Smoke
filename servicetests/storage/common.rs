@@ -141,6 +141,7 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
 
     let gps_config = GpsConfig {
         pps_timing_source: PpsTimingSource::Tim4Capture,
+        wait_for_frequency_calibration_lock: true,
         ..GpsConfig::default()
     };
     let pps = Stm32Pps::from_config(&gps_config, pps, pps_exti, pps_capture_timer, Irqs, Irqs);
@@ -156,6 +157,7 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
     spawner.spawn(unwrap!(gps_driver_task(driver)));
     spawner.spawn(unwrap!(time_service_task(time)));
     spawner.spawn(unwrap!(gps_time_source_task(correlations)));
+    spawner.spawn(unwrap!(gps_frequency_calibration_lock_task()));
     GPS_RESOURCES.command_sender().send(GpsCommand::Start).await;
 }
 
@@ -317,6 +319,22 @@ async fn gps_driver_task(driver: GpsDriver<BufferedUart<'static>, Stm32Pps, Stm3
 #[embassy_executor::task]
 async fn time_service_task(service: TimeService<4, 8>) -> ! {
     service.run().await
+}
+
+/// Release the GPS driver into duty cycling only after the Time Service has
+/// collected and locked its full frequency-calibration baseline.
+#[embassy_executor::task]
+async fn gps_frequency_calibration_lock_task() {
+    loop {
+        if TIME_RESOURCES.time_state().frequency_calibration_locked {
+            GPS_RESOURCES
+                .command_sender()
+                .send(GpsCommand::FrequencyCalibrationLocked)
+                .await;
+            return;
+        }
+        Timer::after_secs(1).await;
+    }
 }
 
 #[embassy_executor::task]

@@ -117,10 +117,12 @@ each flash are retained under `.probe-rs-logs/`.
   Each new sample is written to the `Sensor` component of `/syslog.txt` with
   explicit fixed-point units and source identity. This integration deliberately
   registers no composite sensors or threshold rules.
-- After the first fix, GPS remains continuously powered for ten minutes so the
-  Time Service can calibrate its oscillator frequency from PPS. Only after this
-  one-time calibration period does the normal 30-second on/30-second off duty
-  cycle begin.
+- After the first fix, GPS remains continuously active until the Time Service
+  reports `frequency_calibration_locked`. This normally requires the complete
+  eleven-sample, ten-minute PPS baseline, but PPS outages now extend continuous
+  tracking instead of allowing a fixed timer to end calibration early. Only
+  after the explicit lock handshake does the normal 30-second on/30-second off
+  duty cycle begin.
 - PPS edges use TIM4 channel 4 hardware input capture at 1 MHz. After the first
   cross-clock epoch is established, edge timestamps are reconstructed from the
   capture counter rather than interrupt wake-up time. STM32U59xxx TIM4 is

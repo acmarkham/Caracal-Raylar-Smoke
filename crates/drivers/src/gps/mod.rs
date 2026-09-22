@@ -381,6 +381,9 @@ where
             GpsCommand::Stop => {
                 enter_low_power(&mut power, &serial, &stats_pub, &config).await;
             }
+            // This is normally consumed while initial calibration is active.
+            // If received while idle there is no tracking window to release.
+            GpsCommand::FrequencyCalibrationLocked => {}
         }
     }
 }
@@ -452,12 +455,18 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
                     }
                 });
 
-                let tracking_time = if *initial_calibration_pending {
-                    config.initial_calibration_time
-                } else {
-                    config.gps_on_time
-                };
-                if sleep_or_stop(commands, serial, config, tracking_time).await {
+                let stopped =
+                    if *initial_calibration_pending && config.wait_for_frequency_calibration_lock {
+                        wait_for_frequency_calibration_lock(commands, serial, config).await
+                    } else {
+                        let tracking_time = if *initial_calibration_pending {
+                            config.initial_calibration_time
+                        } else {
+                            config.gps_on_time
+                        };
+                        sleep_or_stop(commands, serial, config, tracking_time).await
+                    };
+                if stopped {
                     enter_low_power(power, serial, stats_pub, config).await;
                     return;
                 }
@@ -576,6 +585,31 @@ async fn sleep_or_stop<const COMMAND_DEPTH: usize>(
     }
 }
 
+/// Keep the GPS continuously active until the Time Service explicitly reports
+/// that its frequency estimate is locked. Other runtime commands remain
+/// responsive, and `Stop` still terminates the search cycle immediately.
+async fn wait_for_frequency_calibration_lock<const COMMAND_DEPTH: usize>(
+    commands: &embassy_sync::channel::Receiver<'_, GpsMutex, GpsCommand, COMMAND_DEPTH>,
+    serial: &embassy_sync::channel::Sender<'_, GpsMutex, SerialRequest, COMMAND_DEPTH>,
+    config: &GpsConfig,
+) -> bool {
+    #[cfg(feature = "defmt")]
+    defmt::info!("GPS waiting for Time Service frequency calibration lock");
+    loop {
+        let command = commands.receive().await;
+        #[cfg(feature = "defmt")]
+        defmt::info!("GPS calibration wait command: {}", command);
+        if command == GpsCommand::FrequencyCalibrationLocked {
+            #[cfg(feature = "defmt")]
+            defmt::info!("GPS frequency calibration lock confirmed");
+            return false;
+        }
+        if handle_runtime_command(serial, config, command).await {
+            return true;
+        }
+    }
+}
+
 async fn handle_runtime_command<const COMMAND_DEPTH: usize>(
     serial: &embassy_sync::channel::Sender<'_, GpsMutex, SerialRequest, COMMAND_DEPTH>,
     config: &GpsConfig,
@@ -595,6 +629,9 @@ async fn handle_runtime_command<const COMMAND_DEPTH: usize>(
             send_start_mode(serial, config, StartMode::Hot).await;
             false
         }
+        // Consumed by `wait_for_frequency_calibration_lock`. It is harmless
+        // in search, ordinary tracking, or standby windows.
+        GpsCommand::FrequencyCalibrationLocked => false,
     }
 }
 
