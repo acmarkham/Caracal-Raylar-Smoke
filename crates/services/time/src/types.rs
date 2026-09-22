@@ -114,9 +114,10 @@ pub struct TimeConfig {
     /// Declare PPS lost after this long without an accepted edge. Holdover
     /// then runs on the calibrated oscillator rate without a phase slew.
     pub pps_loss_timeout: Duration,
-    /// Maximum error from a nominal one-second PPS interval while qualifying
-    /// a reacquisition.
-    pub pps_interval_tolerance: Duration,
+    /// Inclusive error allowed around a nominal one-second PPS edge-pair
+    /// interval when admitting anchors and qualifying reacquisition, in ppm.
+    /// Change this single parameter to tune PPS cadence admission.
+    pub pps_interval_tolerance_ppm: u32,
     /// Consecutive clean one-second intervals required after a PPS gap.
     pub pps_reacquisition_intervals: u8,
     /// Emit a one-shot warning once holdover reaches this duration.
@@ -138,7 +139,7 @@ impl Default for TimeConfig {
             phase_slew_duration: Duration::from_secs(60),
             max_phase_slew_ppb: 250_000,
             pps_loss_timeout: Duration::from_millis(1_500),
-            pps_interval_tolerance: Duration::from_millis(50),
+            pps_interval_tolerance_ppm: 20,
             pps_reacquisition_intervals: 3,
             holdover_warning_threshold: Duration::from_secs(90),
             utc_second_correction_tolerance_us: 100_000,

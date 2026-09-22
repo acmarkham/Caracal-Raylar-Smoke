@@ -153,9 +153,12 @@ each flash are retained under `.probe-rs-logs/`.
   available. A one-shot holdover warning is raised after 90 seconds.
 - After 1.5 seconds without PPS, the temporary phase slew is removed with a
   continuity-preserving rebase. Reacquisition discards the gap edge and
-  requires three clean raw PPS intervals within 50 ms of one second. Raw edge
-  intervals, rather than the spacing between NMEA-correlated anchors, qualify
-  the gate, so a missed NMEA pairing cannot permanently block recovery.
+  requires three clean raw PPS edge-pair intervals within an inclusive +/-20
+  ppm of one second (999,980 through 1,000,020 us). The tolerance is the single
+  `TimeConfig::pps_interval_tolerance_ppm` parameter. Raw edge intervals,
+  rather than the spacing between NMEA-correlated anchors, qualify the gate,
+  so a missed NMEA pairing cannot permanently block recovery. Any edge pair
+  outside that tolerance is rejected and re-arms the three-clean-pair gate.
 - The ten-second Time records include UTC status, first/current anchor source, latest PPS
   residual, calibrated and slew frequency components, accepted/rejected anchor
   counts, UTC-second corrections, uncertainty, and holdover duration. Separate

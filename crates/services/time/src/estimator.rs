@@ -5,6 +5,7 @@ use crate::{Anchor, TimeConfig, TimeSource, TimeState, UtcStatus, UtcTimestamp};
 const FREQUENCY_SAMPLE_CAPACITY: usize = 11;
 const FREQUENCY_SLOPE_CAPACITY: usize =
     FREQUENCY_SAMPLE_CAPACITY * (FREQUENCY_SAMPLE_CAPACITY - 1) / 2;
+const PARTS_PER_MILLION: u128 = 1_000_000;
 
 #[derive(Clone, Copy)]
 struct FrequencySample {
@@ -412,8 +413,13 @@ impl TimeEstimator {
             raw_pps_interval.unwrap_or_else(|| system_time.saturating_duration_since(previous));
         let nominal_ticks = TICK_HZ;
         let interval_ticks = interval.as_ticks();
-        let error_ticks = interval_ticks.abs_diff(nominal_ticks);
-        let clean = error_ticks <= self.config.pps_interval_tolerance.as_ticks();
+        let clean = interval_is_within_ppm(
+            interval_ticks,
+            nominal_ticks,
+            self.config.pps_interval_tolerance_ppm,
+        );
+        let interval_tolerance_ticks =
+            ppm_tolerance_ticks(nominal_ticks, self.config.pps_interval_tolerance_ppm);
         let correlation_elapsed_ticks = system_time.saturating_duration_since(previous).as_ticks();
         let sequence_gap = match (previous_sequence, pps_sequence) {
             (Some(previous_sequence), Some(pps_sequence)) => {
@@ -421,12 +427,12 @@ impl TimeEstimator {
                 correlation_elapsed_ticks
                     > edge_count
                         .saturating_mul(nominal_ticks)
-                        .saturating_add(self.config.pps_interval_tolerance.as_ticks())
+                        .saturating_add(interval_tolerance_ticks)
             }
             _ => false,
         };
 
-        if interval >= self.config.pps_loss_timeout || sequence_gap {
+        if !clean || interval >= self.config.pps_loss_timeout || sequence_gap {
             self.state.pps_reacquisition_active = true;
             self.state.pps_reacquisition_clean_intervals = 0;
             self.disable_phase_slew(system_time);
@@ -485,6 +491,16 @@ impl TimeEstimator {
             );
         }
     }
+}
+
+fn interval_is_within_ppm(interval_ticks: u64, nominal_ticks: u64, tolerance_ppm: u32) -> bool {
+    (interval_ticks.abs_diff(nominal_ticks) as u128).saturating_mul(PARTS_PER_MILLION)
+        <= (nominal_ticks as u128).saturating_mul(tolerance_ppm as u128)
+}
+
+fn ppm_tolerance_ticks(nominal_ticks: u64, tolerance_ppm: u32) -> u64 {
+    ((nominal_ticks as u128).saturating_mul(tolerance_ppm as u128) / PARTS_PER_MILLION)
+        .min(u64::MAX as u128) as u64
 }
 
 fn phase_slew_ppb(residual_us: i128, config: &TimeConfig) -> i64 {
@@ -702,6 +718,48 @@ mod tests {
         assert_eq!(state.pps_reacquisition_rejections, 3);
         assert_eq!(state.accepted_anchors, 2);
         assert_eq!(state.rejected_anchors, 3);
+    }
+
+    #[test]
+    fn pps_interval_gate_uses_inclusive_twenty_ppm_boundary() {
+        assert!(interval_is_within_ppm(999_980, 1_000_000, 20));
+        assert!(interval_is_within_ppm(1_000_020, 1_000_000, 20));
+        assert!(!interval_is_within_ppm(999_979, 1_000_000, 20));
+        assert!(!interval_is_within_ppm(1_000_021, 1_000_000, 20));
+    }
+
+    #[test]
+    fn pps_interval_gate_uses_configured_ppm_tolerance() {
+        assert!(interval_is_within_ppm(1_000_025, 1_000_000, 25));
+        assert!(!interval_is_within_ppm(1_000_025, 1_000_000, 24));
+    }
+
+    #[test]
+    fn out_of_tolerance_edge_pair_rearms_reacquisition_gate() {
+        let mut estimator = TimeEstimator::new(TimeConfig::default());
+        assert!(estimator.ingest(anchor(0, 1_700_000_000, 10)));
+
+        let tolerance_ticks =
+            ppm_tolerance_ticks(TICK_HZ, TimeConfig::default().pps_interval_tolerance_ppm);
+        let mut boundary = anchor(1, 1_700_000_001, 10);
+        boundary.pps_interval = Some(Duration::from_ticks(TICK_HZ + tolerance_ticks));
+        assert!(estimator.ingest(boundary));
+
+        let mut outside = anchor(2, 1_700_000_002, 10);
+        outside.pps_interval = Some(Duration::from_ticks(TICK_HZ + tolerance_ticks + 1));
+        assert!(!estimator.ingest(outside));
+        assert!(estimator.state().pps_reacquisition_active);
+        assert_eq!(estimator.state().pps_reacquisition_clean_intervals, 0);
+
+        for second in 3..=4u64 {
+            let mut clean = anchor(second, 1_700_000_000 + second as i64, 10);
+            clean.pps_interval = Some(Duration::from_secs(1));
+            assert!(!estimator.ingest(clean));
+        }
+        let mut qualified = anchor(5, 1_700_000_005, 10);
+        qualified.pps_interval = Some(Duration::from_secs(1));
+        assert!(estimator.ingest(qualified));
+        assert!(!estimator.state().pps_reacquisition_active);
     }
 
     #[test]

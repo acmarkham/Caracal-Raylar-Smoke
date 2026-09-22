@@ -89,7 +89,9 @@ After GPS fix is acquired: Audio
    Once PPS is absent for 1.5 seconds, remove the temporary phase slew without
    stepping UTC and use only the calibrated oscillator rate during holdover.
    On PPS return, reject the gap edge and require three consecutive PPS
-   intervals within 50 ms of one second before accepting another time anchor.
+   edge-pair intervals within an inclusive +/-20 ppm of one second before
+   accepting another time anchor. Reject any subsequent edge pair outside that
+   tolerance and re-arm the same three-clean-pair qualification gate.
    Gap and qualification samples must not enter oscillator regression. Freeze
    oscillator calibration after the initial eleven-point, ten-minute window so
    later reacquisition artefacts cannot move the learned frequency.
@@ -269,8 +271,10 @@ The test should verify that:
   002.
 * Holdover uses calibrated frequency only; phase slew is zero once PPS loss is
   declared.
-* Reacquisition anchors are withheld until three clean one-second PPS intervals
-  have been observed, and the withheld samples do not alter calibration.
+* Reacquisition anchors are withheld until three one-second PPS edge-pair
+  intervals within an inclusive +/-20 ppm tolerance have been observed, and
+  the withheld samples do not alter calibration. Any later edge pair outside
+  that tolerance is rejected and re-arms qualification.
 * Frequency calibration locks after the initial ten-minute window.
 * Per-edge PPS and per-correlation records are present without unexplained
   sequence gaps and contain enough raw timestamps for post-hoc correction.
