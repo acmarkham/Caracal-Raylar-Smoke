@@ -133,6 +133,10 @@ each flash are retained under `.probe-rs-logs/`.
   Capture initialization explicitly changes `TIM4_ARR` from its RM0456 reset
   value of `0x0000_FFFF` to `0xFFFF_FFFF`; setting the 1 MHz prescaler alone
   would otherwise retain a 65.536 ms counting period on the 32-bit peripheral.
+  Embassy-stm32 0.6's asynchronous capture future also reads CCR4 through a
+  16-bit register view. The GPS driver uses that future only as the edge wakeup
+  and then re-reads the latched CCR4 with the library's 32-bit synchronous
+  accessor before extending capture time.
 - Oscillator calibration uses an allocation-free 11-point, ten-minute
   Theil-Sen regression over minute-spaced PPS samples. Pairwise slopes outside
   100 ppm are discarded, so an isolated timing or UTC-label outlier cannot
@@ -248,5 +252,8 @@ The driver now consumes the complete 32-bit TIM4_CH4 capture and has no wrap
 ambiguity during ordinary PPS intervals or 30-second GPS standby cycles. It
 also explicitly programs `TIM4_ARR = 0xFFFF_FFFF`; Embassy's input-capture
 constructor configures the prescaler but otherwise leaves ARR at its
-`0x0000_FFFF` reset value. The next hardware endurance run supersedes
-conclusions drawn from the former 16-bit wrap-extension model.
+`0x0000_FFFF` reset value. A subsequent endurance run showed that the async
+capture future in embassy-stm32 0.6 independently truncated the captured CCR4
+value to 16 bits. The driver now re-reads the latched register through the
+32-bit synchronous accessor after every edge. The next hardware endurance run
+supersedes conclusions drawn from both former 16-bit paths.

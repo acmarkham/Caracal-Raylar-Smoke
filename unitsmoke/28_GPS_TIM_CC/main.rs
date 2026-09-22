@@ -123,6 +123,9 @@ async fn pps_capture_task(
         pps.wait_for_rising_edge().await;
         let systime_us = Instant::now().as_micros();
         let cc4if = tim4_capture.get_input_interrupt(Channel::Ch4);
+        // Use the 32-bit synchronous accessor. In embassy-stm32 0.6 the value
+        // returned by the async input-capture future is read via TimGp16 and
+        // would truncate STM32U59xxx TIM4_CCR4 to its low 16 bits.
         let cc4: u32 = tim4_capture.get_capture_value(Channel::Ch4);
         clear_tim4_ch4_capture_flag();
 

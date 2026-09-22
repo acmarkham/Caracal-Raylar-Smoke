@@ -181,7 +181,13 @@ impl PpsSource for Tim4Pps {
     type Error = core::convert::Infallible;
 
     async fn wait_for_pps(&mut self) -> Result<PpsCapture, Self::Error> {
-        let raw: u32 = self.capture.wait_for_rising_edge(Channel::Ch4).await;
+        // embassy-stm32 0.6's InputCaptureFuture uses the TimGp16 register
+        // view when it returns the captured value, truncating CCR4 to 16 bits
+        // even though STM32U59xxx TIM4 and T::Word are 32-bit. Use the future
+        // only to await the hardware edge, then re-read the still-latched CCR4
+        // through get_capture_value(), whose low-level path uses TimGp32.
+        let _truncated_capture = self.capture.wait_for_rising_edge(Channel::Ch4).await;
+        let raw: u32 = self.capture.get_capture_value(Channel::Ch4);
         let observation_time = Instant::now();
         let capture_ticks = self.extend_ticks(raw, observation_time);
         // The first edge establishes the cross-domain epoch. Later timestamps

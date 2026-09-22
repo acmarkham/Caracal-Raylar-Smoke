@@ -86,6 +86,13 @@ value as `0x0000_FFFF`, initialization must explicitly program
 `TIM4_ARR = 0xFFFF_FFFF` and issue an update event before accepting PPS edges.
 The 32-bit peripheral width alone does not select the 32-bit counting period.
 
+In embassy-stm32 0.6, the asynchronous `InputCaptureFuture` reads the captured
+value through the `TimGp16` register view and therefore returns only
+`TIM4_CCR4[15:0]`. Await that future for edge notification only, then read the
+latched capture with `InputCapture::get_capture_value(Channel::Ch4)`, whose
+low-level implementation uses the 32-bit register view. Do not feed the value
+returned directly by `wait_for_rising_edge()` into PPS timestamp extension.
+
 Responsibilities:
 
 * Timestamp every PPS pulse using hardware input capture

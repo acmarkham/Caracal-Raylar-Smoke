@@ -102,6 +102,10 @@ After GPS fix is acquired: Audio
    Explicitly program `TIM4_ARR = 0xFFFF_FFFF` during capture initialization;
    the RM0456 reset value is `0x0000_FFFF`, and configuring only the prescaler
    would leave even this 32-bit timer wrapping every 65.536 ms.
+   With embassy-stm32 0.6, use the asynchronous input-capture future only to
+   await the edge because that future returns CCR4 through a 16-bit register
+   view. Immediately re-read the latched CCR4 using the driver's 32-bit
+   `get_capture_value()` path before calculating `capture_ticks` or deltas.
 4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
 5. Save data to minute long wav files, in hourly folders. 
 6. Start on top-of-the minute boundary e.g. 00s

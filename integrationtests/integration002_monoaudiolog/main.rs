@@ -611,7 +611,7 @@ async fn main(spawner: Spawner) -> ! {
         "STM32 core supply selected: {:?}",
         core_driver.selected_supply()
     );
-    let Board {
+    let Board { 
         leds: board_leds,
         buzzer: board_buzzer,
         gps,
