@@ -128,7 +128,10 @@ each flash are retained under `.probe-rs-logs/`.
   eleven-sample, ten-minute PPS baseline, but PPS outages now extend continuous
   tracking instead of allowing a fixed timer to end calibration early. Only
   after the explicit lock handshake does the normal 30-second on/30-second off
-  duty cycle begin.
+  duty cycle begin. A failed 30-second reacquisition increments the persistent
+  search-failure and timeout counters, returns to the normal standby interval,
+  emits an explicit `Gps: SEARCH_TIMEOUT` syslog record, and then retries with
+  the same fixed duty cycle. Search-window backoff is not yet applied.
 - PPS edges use TIM4 channel 4 hardware input capture at 1 MHz. After the first
   cross-clock epoch is established, edge timestamps are reconstructed from the
   capture counter rather than interrupt wake-up time. STM32U59xxx TIM4 is

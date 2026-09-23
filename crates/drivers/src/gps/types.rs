@@ -90,6 +90,9 @@ pub struct GpsConfig {
     /// `FrequencyCalibrationLocked` command is received from the Time Service.
     pub wait_for_frequency_calibration_lock: bool,
     pub search_time: Duration,
+    /// Reserved for a future search-window backoff/escalation policy. Search
+    /// timeouts currently retain the standard fixed on/off duty cycle and do
+    /// not stop autonomous retries at this threshold.
     pub search_failure_threshold: u32,
     pub initial_start_mode: StartMode,
     pub power_settle_time: Duration,

@@ -1703,6 +1703,7 @@ fn log_location(location_log: TestLogger, event: &'static str, state: LocationSt
 
 #[embassy_executor::task]
 async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log: TestLogger) -> ! {
+    let mut observed_search_timeouts = 0u32;
     loop {
         if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
             common::pending_forever().await;
@@ -1775,6 +1776,15 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             time.pps_reacquisition_rejections
         ));
         let gps = common::GPS_RESOURCES.stats();
+        if gps.num_search_timeouts != observed_search_timeouts {
+            observed_search_timeouts = gps.num_search_timeouts;
+            record_outcome(log_info!(
+                gps_log,
+                "SEARCH_TIMEOUT count={} failures={} policy=fixed_duty_cycle standby_before_retry=true",
+                gps.num_search_timeouts,
+                gps.num_search_failures
+            ));
+        }
         record_outcome(log_info!(
             gps_log,
             "state={:?} powered={} calibrated={} fixes={} checksum_err={} uart_err={} overflow={} reacq={}/{} search={}/{} pps_events={} pps_source={:?} pps_timeouts={} search_timeouts={}",

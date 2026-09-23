@@ -488,14 +488,31 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
                 return;
             }
             SearchOutcome::Timeout => {
+                let now = Instant::now();
                 modify_stats(stats_pub, |stats| {
                     stats.num_search_failures = stats.num_search_failures.saturating_add(1);
                     stats.num_search_timeouts = stats.num_search_timeouts.saturating_add(1);
+                    stats.total_on_time += now.saturating_duration_since(on_started);
                     stats.operating_state = OperatingState::Error;
                 });
-                drain_stop_command(commands);
+                #[cfg(feature = "defmt")]
+                defmt::warn!(
+                    "GPS search timed out after {} seconds; entering standard {} second standby before retry",
+                    search_time.as_secs(),
+                    config.gps_off_time.as_secs()
+                );
+
+                // A missed acquisition is recoverable. Preserve the normal
+                // fixed duty cycle: return to standby for the configured off
+                // interval, then retry with the ordinary hot-start search
+                // window. `search_failure_threshold` is intentionally not
+                // applied here; it is reserved for a future backoff/search
+                // escalation policy and must not make one timeout terminal.
                 enter_low_power(power, serial, stats_pub, config).await;
-                return;
+                if sleep_or_stop(commands, serial, config, config.gps_off_time).await {
+                    return;
+                }
+                cycle_start_mode = StartMode::Hot;
             }
         }
     }
@@ -690,16 +707,6 @@ async fn send_start_mode<const COMMAND_DEPTH: usize>(
 
     if let Some(command) = command {
         serial.send(SerialRequest::Write(command)).await;
-    }
-}
-
-fn drain_stop_command<const COMMAND_DEPTH: usize>(
-    commands: &embassy_sync::channel::Receiver<'_, GpsMutex, GpsCommand, COMMAND_DEPTH>,
-) {
-    while let Ok(command) = commands.try_receive() {
-        if command == GpsCommand::Stop {
-            break;
-        }
     }
 }
 

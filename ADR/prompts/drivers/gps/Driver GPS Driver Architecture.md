@@ -194,6 +194,14 @@ enum OperatingState {
 
 The GPS Manager task owns all state transitions.
 
+A search or reacquisition timeout is recoverable. The manager increments and
+publishes the search-failure/timeout counters, enters `Standby` for the normal
+`gps_off_time`, and then starts another acquisition using the same fixed
+`search_time`. A timeout must not return the manager to its idle command wait or
+permanently stop autonomous duty cycling. `search_failure_threshold` is
+reserved for a future backoff or start-mode escalation policy; it does not yet
+alter the constant duty cycle.
+
 ---
 
 # Published Data
