@@ -80,6 +80,14 @@ each flash are retained under `.probe-rs-logs/`.
   enables both fractional multipliers. This follows the RM0456 FRACN update
   sequence and the STM32U5 latch-delay workaround reported in
   [ST's community discussion](https://community.st.com/stm32-mcus-embedded-software-32/stm32u5-fracn-not-working-135760).
+- `embassy-stm32` 0.6 computes PLL frequencies as `(source / M) * N` using
+  integer `Hertz`. With a 16 MHz HSE and M=3/N=54 this truncates the modelled
+  SYSCLK to 143,999,991 Hz. Its timer setup then chooses divide-by-143 rather
+  than divide-by-144, making both TIM4 capture and the TIM5 time driver run
+  6,993 ppm fast. Integrationtest002 advertises 16,000,002 Hz to Embassy's
+  software clock model, the smallest adjustment that selects divide-by-144.
+  This does not change the RCC hardware ratio and introduces only +0.125 ppm
+  into software frequency bookkeeping.
 - Core-supply selection runs immediately after `embassy_stm32::init`, because
   Embassy resets the PWR block during MCU initialization. The default
   `core-smps` feature selects SMPS and waits for the hardware status to confirm

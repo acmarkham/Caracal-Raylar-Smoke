@@ -25,6 +25,17 @@ workaround described in the
 [ST Community report](https://community.st.com/stm32-mcus-embedded-software-32/stm32u5-fracn-not-working-135760).
 There is deliberately no runtime GPS-controlled PLL servo.
 
+Embassy 0.6 performs PLL frequency bookkeeping as `(source / M) * N` with
+integer `Hertz`. Modelling the physical 16 MHz HSE literally therefore yields
+143,999,991 Hz for the M=3/N=54/R=2 system clock. Its 1 MHz timer setup then
+selects divide-by-143 instead of divide-by-144, causing the TIM4 capture clock
+and TIM5 time driver to run at 144/143, approximately 6,993 ppm fast. The
+integration configuration supplies 16,000,002 Hz as a software-only HSE model,
+which is the smallest adjustment that makes Embassy select divide-by-144. It
+does not change the hardware PLL ratio and adds only +0.125 ppm bookkeeping
+bias. This workaround should be removed if Embassy changes its PLL calculation
+to multiply before dividing or otherwise preserves the rational clock ratio.
+
 ## Constraints
 Read
 ADR\common\AGENTS.md

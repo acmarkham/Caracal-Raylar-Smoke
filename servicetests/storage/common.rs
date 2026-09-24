@@ -35,6 +35,19 @@ pub const MAX_HSE_ERROR_PPM: i32 = 30;
 const PLL_BASE_N: i32 = 54;
 const PLL_FRAC_SCALE: i64 = 8192;
 const PPM_SCALE: i64 = 1_000_000;
+const PHYSICAL_HSE_HZ: u32 = 16_000_000;
+// embassy-stm32 0.6 calculates a PLL clock as `(source / M) * N`, truncating
+// the non-integral 16 MHz / 3 reference before multiplying by 54. Advertising
+// exactly 16 MHz would therefore make Embassy record SYSCLK as 143_999_991 Hz
+// and select a divide-by-143 timer prescaler for a requested 1 MHz clock. The
+// hardware ratio is exactly 16 MHz * 54 / 3 / 2 = 144 MHz, so that prescaler
+// runs TIM4 and the TIM5 time driver at 144/143 = 1.006993 MHz.
+//
+// This +2 Hz value is software clock-model compensation only; the RCC hardware
+// configuration is unchanged. It is the smallest value for which Embassy's
+// sequential integer calculation lands just above 144 MHz, selecting the
+// correct divide-by-144 prescaler. Its +0.125 ppm bookkeeping bias is benign.
+const EMBASSY_HSE_MODEL_HZ: u32 = PHYSICAL_HSE_HZ + 2;
 // The ST fractional-latch workaround requires a short pause while FRACEN is
 // clear. At the 144 MHz startup SYSCLK, 256 spin-loop iterations are safely
 // longer than several PLL reference cycles but still only a few microseconds.
@@ -221,7 +234,7 @@ pub fn mcu_config_with_hse_error_ppm(
 
     let mut config = embassy_stm32::Config::default();
     config.rcc.hse = Some(Hse {
-        freq: mhz(16),
+        freq: Hertz(EMBASSY_HSE_MODEL_HZ),
         mode: HseMode::Oscillator,
     });
     config.rcc.pll1 = Some(Pll {
