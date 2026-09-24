@@ -65,6 +65,21 @@ each flash are retained under `.probe-rs-logs/`.
 
 ## Implementation notes
 
+- Integrationtest002 applies one fixed HSE correction immediately after MCU
+  initialization and never servos the PLLs at runtime. The single tuning
+  parameter is `HSE_MEASURED_ERROR_PPM` in `main.rs`; it defaults to `-9`,
+  where a negative value means the crystal was measured slow against GPS UTC.
+  Values outside +/-30 ppm are rejected. Setting it to zero selects nominal
+  clocks and leaves fractional mode disabled.
+- PLL1 and PLL3 both use HSE / 3 with a nominal N of 54, and receive the same
+  FRACN/8192 term. Their clock domains therefore have the same ppm pull while
+  retaining nominal PLL1_R=144 MHz, PLL1_P=48 MHz, and PLL3_Q=96 MHz outputs.
+  The default correction rounds to N=54, FRACN=4, or +9.042 ppm. During the
+  one-shot update, firmware clears FRACEN, performs register readbacks and
+  short settling delays, writes both FRACN registers, delays again, then
+  enables both fractional multipliers. This follows the RM0456 FRACN update
+  sequence and the STM32U5 latch-delay workaround reported in
+  [ST's community discussion](https://community.st.com/stm32-mcus-embedded-software-32/stm32u5-fracn-not-working-135760).
 - Core-supply selection runs immediately after `embassy_stm32::init`, because
   Embassy resets the PWR block during MCU initialization. The default
   `core-smps` feature selects SMPS and waits for the hardware status to confirm
@@ -127,8 +142,8 @@ each flash are retained under `.probe-rs-logs/`.
   reports `frequency_calibration_locked`. This normally requires the complete
   eleven-sample, ten-minute PPS baseline, but PPS outages now extend continuous
   tracking instead of allowing a fixed timer to end calibration early. Only
-  after the explicit lock handshake does the normal 30-second on/30-second off
-  duty cycle begin. A failed 30-second reacquisition increments the persistent
+  after the explicit lock handshake does the low-power 60-second on/30-minute
+  standby duty cycle begin. A failed 90-second reacquisition increments the persistent
   search-failure and timeout counters, returns to the normal standby interval,
   emits an explicit `Gps: SEARCH_TIMEOUT` syslog record, and then retries with
   the same fixed duty cycle. Search-window backoff is not yet applied.
@@ -267,7 +282,7 @@ incorrectly treated STM32U595 TIM4 as a 16-bit timer and attempted to infer
 65.536 ms wraps. DS13633 Rev 3 section 3.44 Table 19 instead specifies TIM4 as
 32-bit, which is also represented by the RM0456 TIM2-TIM5 register definitions.
 The driver now consumes the complete 32-bit TIM4_CH4 capture and has no wrap
-ambiguity during ordinary PPS intervals or 30-second GPS standby cycles. It
+ambiguity during ordinary PPS intervals or 30-minute GPS standby cycles. It
 also explicitly programs `TIM4_ARR = 0xFFFF_FFFF`; Embassy's input-capture
 constructor configures the prescaler but otherwise leaves ARR at its
 `0x0000_FFFF` reset value. A subsequent endurance run showed that the async

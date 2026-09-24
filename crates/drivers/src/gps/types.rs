@@ -110,7 +110,7 @@ impl Default for GpsConfig {
             first_search_time: Duration::from_secs(15 * 60),
             initial_calibration_time: Duration::from_secs(10 * 60),
             wait_for_frequency_calibration_lock: false,
-            search_time: Duration::from_secs(30),
+            search_time: Duration::from_secs(90),
             search_failure_threshold: 10,
             initial_start_mode: StartMode::Hot,
             power_settle_time: Duration::from_millis(250),

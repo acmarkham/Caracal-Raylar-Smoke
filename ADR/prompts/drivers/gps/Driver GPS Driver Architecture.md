@@ -157,7 +157,7 @@ pub struct GpsConfig {
     gps_on_time: Duration,                  // default 30 seconds
     gps_off_time: Duration,                 // default 5 minutes
     first_search_time: Duration,            // default 15 minutes
-    search_time: Duration,                  // default 30 seconds
+    search_time: Duration,                  // default 90 seconds
     search_failure_threshold: u32,          // default 10
     initial_start_mode: StartMode,          // Hot/Warm/Cold
 }
@@ -168,7 +168,7 @@ Defaults:
 * GPS On Time: 30 seconds
 * GPS Off Time: 5 minutes
 * First Search Time: 15 minutes
-* Search Time: 30 seconds
+* Search Time: 90 seconds
 * Search Failure Threshold: 10
 * Initial Start Mode: Hot Start
 

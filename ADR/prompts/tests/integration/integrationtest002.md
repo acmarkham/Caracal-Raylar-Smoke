@@ -1,5 +1,30 @@
 # Integration Test: Audio recording, Time, and Logging
 
+## Startup oscillator correction
+
+Integrationtest002 shall configure PLL1 and PLL3 from the 16 MHz HSE using the
+same fractional multiplier: M=3, nominal N=54, and a common FRACN/8192. This
+keeps the GPS/system-time and audio clock domains on the same ppm scale. Output
+dividers retain the nominal 144 MHz SYSCLK, 48 MHz SDMMC clock source, and
+96 MHz MDF kernel clock.
+
+`HSE_MEASURED_ERROR_PPM` is the single board-tuning parameter and defaults to
+-9 ppm. Its sign describes the measured HSE error relative to UTC, so a
+negative value requests a positive PLL correction. The startup calculator
+uses the reciprocal correction, rounds to the nearest FRACN step, normalizes
+negative corrections into N=53 plus a high FRACN value, and rejects values
+outside +/-30 ppm. Zero ppm uses N=54, FRACN=0 and leaves fractional mode
+disabled.
+
+The correction is applied exactly once, immediately after
+`embassy_stm32::init` and before board peripherals are constructed. For both
+PLLs, firmware clears FRACEN, reads back and delays briefly, writes FRACN,
+reads back and delays again, then sets FRACEN only when FRACN is nonzero. This
+implements the RM0456 fractional update ordering plus the STM32U5 latch-delay
+workaround described in the
+[ST Community report](https://community.st.com/stm32-mcus-embedded-software-32/stm32u5-fracn-not-working-135760).
+There is deliberately no runtime GPS-controlled PLL servo.
+
 ## Constraints
 Read
 ADR\common\AGENTS.md
@@ -81,9 +106,11 @@ After GPS fix is acquired: Audio
 2. Issue a different "successful GPS" beep after the first GPS PPS anchor has
    been accepted.
 3. Keep GPS continuously active after the first fix until the Time Service
-   reports `frequency_calibration_locked`, then enter the normal GPS power
-   cycle. The nominal lock interval is 10 minutes, but PPS outages must extend
-   it rather than allowing a fixed elapsed-time deadline to end calibration.
+   reports `frequency_calibration_locked`, then enter a low-power cycle with 60
+   seconds active and 30 minutes in standby. Post-calibration reacquisition uses
+   the driver's default 90-second search window. The nominal lock interval is 10
+   minutes, but PPS outages must extend it rather than allowing a fixed elapsed-
+   time deadline to end calibration.
    Use hardware timer input capture for PPS and an outlier-resistant regression
    spanning this calibration interval. Correct unambiguous adjacent-second NMEA
    labels, reject remaining large residuals, slew smaller phase errors without
@@ -278,7 +305,8 @@ The test should verify that:
   the withheld samples do not alter calibration. Any later edge pair outside
   that tolerance is rejected and re-arms qualification.
 * GPS remains continuously active until frequency calibration locks after a
-  complete initial eleven-sample, approximately ten-minute PPS baseline.
+  complete initial eleven-sample, approximately ten-minute PPS baseline. Its
+  post-lock duty cycle is 60 seconds active followed by 30 minutes in standby.
 * Per-edge PPS and per-correlation records are present without unexplained
   sequence gaps and contain enough raw timestamps for post-hoc correction.
 * Logging messages are correctly formatted.

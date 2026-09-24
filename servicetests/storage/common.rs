@@ -7,7 +7,7 @@ use embassy_stm32::sdmmc::sd::{CmdBlock, StorageDevice};
 use embassy_stm32::sdmmc::{Config as SdmmcConfig, Sdmmc};
 use embassy_stm32::time::{Hertz, mhz};
 use embassy_stm32::usart::{BufferedUart, Config as UartConfig, DataBits, Parity, StopBits};
-use embassy_time::Timer;
+use embassy_time::{Duration, Timer};
 use raylar_board_v1p0::{Gps, Irqs, SdCard};
 use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
 use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources, PpsTimingSource};
@@ -25,6 +25,88 @@ use static_cell::StaticCell;
 pub static GPS_RESOURCES: GpsResources = GpsResources::new();
 pub static TIME_RESOURCES: TimeResources<4, 8> = TimeResources::new();
 const SD_TARGET_FREQ: Hertz = mhz(24);
+
+/// Largest measured HSE error accepted by the startup PLL correction.
+///
+/// This is deliberately much smaller than the range of the fractional PLL.
+/// It prevents a bad configuration value from making a large, unsafe clock
+/// change while still covering the expected board-to-board crystal spread.
+pub const MAX_HSE_ERROR_PPM: i32 = 30;
+const PLL_BASE_N: i32 = 54;
+const PLL_FRAC_SCALE: i64 = 8192;
+const PPM_SCALE: i64 = 1_000_000;
+// The ST fractional-latch workaround requires a short pause while FRACEN is
+// clear. At the 144 MHz startup SYSCLK, 256 spin-loop iterations are safely
+// longer than several PLL reference cycles but still only a few microseconds.
+const PLL_FRAC_LATCH_DELAY_ITERATIONS: usize = 256;
+
+/// An invalid measured HSE error was supplied to the boot clock setup.
+#[derive(Clone, Copy, Debug, defmt::Format, PartialEq, Eq)]
+pub enum PllCorrectionError {
+    PpmOutsideSafeRange { requested_ppm: i32 },
+}
+
+/// Boot-only plan for applying the same fractional correction to PLL1/PLL3.
+///
+/// `measured_error_ppm` is signed oscillator error: a negative value means
+/// the board clock was measured slow against UTC and therefore needs a
+/// positive PLL pull. This value is consumed by `apply` to make its intended
+/// one-shot startup use clear.
+pub struct PllFrequencyCorrection {
+    measured_error_ppm: i32,
+    integer_n: u16,
+    fracn: u16,
+}
+
+impl PllFrequencyCorrection {
+    pub fn measured_error_ppm(&self) -> i32 {
+        self.measured_error_ppm
+    }
+
+    pub fn integer_n(&self) -> u16 {
+        self.integer_n
+    }
+
+    pub fn fracn(&self) -> u16 {
+        self.fracn
+    }
+
+    /// Apply PLL1/PLL3 FRACN once, immediately after `embassy_stm32::init`.
+    ///
+    /// RM0456 requires FRACEN to be cleared before FRACN is changed and set
+    /// again afterwards. Readbacks plus short delays implement the additional
+    /// settling workaround reported for STM32U5 fractional-PLL latching. A
+    /// zero fractional value deliberately leaves fractional mode disabled.
+    pub fn apply(self) {
+        use embassy_stm32::pac::RCC;
+
+        RCC.pll1cfgr().modify(|w| w.set_pllfracen(false));
+        RCC.pll3cfgr().modify(|w| w.set_pllfracen(false));
+        let _ = RCC.pll1cfgr().read();
+        let _ = RCC.pll3cfgr().read();
+        pll_fractional_latch_delay();
+
+        RCC.pll1fracr().write(|w| w.set_pllfracn(self.fracn));
+        RCC.pll3fracr().write(|w| w.set_pllfracn(self.fracn));
+        let _ = RCC.pll1fracr().read();
+        let _ = RCC.pll3fracr().read();
+        pll_fractional_latch_delay();
+
+        if self.fracn != 0 {
+            RCC.pll1cfgr().modify(|w| w.set_pllfracen(true));
+            RCC.pll3cfgr().modify(|w| w.set_pllfracen(true));
+            let _ = RCC.pll1cfgr().read();
+            let _ = RCC.pll3cfgr().read();
+        }
+    }
+}
+
+#[inline(never)]
+fn pll_fractional_latch_delay() {
+    for _ in 0..PLL_FRAC_LATCH_DELAY_ITERATIONS {
+        core::hint::spin_loop();
+    }
+}
 
 /// Keeps the active-low SD power GPIO configured for as long as the filesystem
 /// backend exists. Dropping an Embassy `Output` disconnects the pin, which can
@@ -108,7 +190,84 @@ pub fn mcu_config() -> embassy_stm32::Config {
     config
 }
 
+/// Build integrationtest002's common-ratio PLL clock tree and its boot trim.
+///
+/// Both PLLs use HSE / 3 and the same N + FRACN/8192 multiplier. Consequently
+/// SYSCLK/PPS timing and the audio kernel clock receive exactly the same ppm
+/// correction. The output dividers retain PLL1_R=144 MHz, PLL1_P=48 MHz and
+/// PLL3_Q=96 MHz at the nominal N=54 setting.
+pub fn mcu_config_with_hse_error_ppm(
+    measured_error_ppm: i32,
+) -> Result<(embassy_stm32::Config, PllFrequencyCorrection), PllCorrectionError> {
+    if !(-MAX_HSE_ERROR_PPM..=MAX_HSE_ERROR_PPM).contains(&measured_error_ppm) {
+        return Err(PllCorrectionError::PpmOutsideSafeRange {
+            requested_ppm: measured_error_ppm,
+        });
+    }
+
+    // Correct the measured source error using the reciprocal scale factor:
+    // multiplier = 54 * 1_000_000 / (1_000_000 + measured_error_ppm).
+    // Keep the multiplier in 1/8192 units and round to the nearest FRACN step.
+    let numerator = i64::from(PLL_BASE_N) * PLL_FRAC_SCALE * PPM_SCALE;
+    let denominator = PPM_SCALE + i64::from(measured_error_ppm);
+    let multiplier_units = (numerator + denominator / 2) / denominator;
+    let integer_n = (multiplier_units / PLL_FRAC_SCALE) as u16;
+    let fracn = (multiplier_units % PLL_FRAC_SCALE) as u16;
+    let mul = match integer_n {
+        53 => PllMul::MUL53,
+        54 => PllMul::MUL54,
+        _ => unreachable!("the +/-30 ppm guard only permits PLL N=53 or N=54"),
+    };
+
+    let mut config = embassy_stm32::Config::default();
+    config.rcc.hse = Some(Hse {
+        freq: mhz(16),
+        mode: HseMode::Oscillator,
+    });
+    config.rcc.pll1 = Some(Pll {
+        source: PllSource::HSE,
+        prediv: PllPreDiv::DIV3,
+        mul,
+        divp: Some(PllDiv::DIV6),
+        divq: Some(PllDiv::DIV2),
+        divr: Some(PllDiv::DIV2),
+    });
+    config.rcc.pll3 = Some(Pll {
+        source: PllSource::HSE,
+        prediv: PllPreDiv::DIV3,
+        mul,
+        divp: None,
+        divq: Some(PllDiv::DIV3),
+        divr: None,
+    });
+    config.rcc.sys = Sysclk::PLL1_R;
+    config.rcc.hsi48 = Some(Hsi48Config::new());
+    config.rcc.mux.sdmmcsel = Sdmmcsel::PLL1_P;
+
+    Ok((
+        config,
+        PllFrequencyCorrection {
+            measured_error_ppm,
+            integer_n,
+            fracn,
+        },
+    ))
+}
+
 pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
+    let defaults = GpsConfig::default();
+    start_time_with_duty_cycle(spawner, gps, defaults.gps_on_time, defaults.gps_off_time).await;
+}
+
+/// Start GPS/PPS time with a caller-selected post-calibration duty cycle.
+/// Initial acquisition still remains continuous until frequency calibration
+/// locks; these durations apply only to subsequent tracking and standby.
+pub async fn start_time_with_duty_cycle(
+    spawner: Spawner,
+    gps: Gps<'static>,
+    gps_on_time: Duration,
+    gps_off_time: Duration,
+) {
     let Gps {
         usart,
         tx,
@@ -140,6 +299,8 @@ pub async fn start_time(spawner: Spawner, gps: Gps<'static>) {
     ));
 
     let gps_config = GpsConfig {
+        gps_on_time,
+        gps_off_time,
         pps_timing_source: PpsTimingSource::Tim4Capture,
         wait_for_frequency_calibration_lock: true,
         ..GpsConfig::default()

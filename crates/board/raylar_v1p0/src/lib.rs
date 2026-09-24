@@ -1,18 +1,20 @@
 #![no_std]
 
-use embassy_stm32::Peri;
-use embassy_stm32::Peripherals;
 use embassy_stm32::exti::{self, ExtiInput};
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::mode::Async;
+use embassy_stm32::Peri;
+use embassy_stm32::Peripherals;
 // ADC voltage sense imports
 use embassy_stm32::peripherals::{ADC1, ADC4, PA0, PA1, PB1};
 // buzzer imports
 use embassy_stm32::peripherals::{PA5, TIM8};
 // USB-C CDC imports
-use embassy_stm32::peripherals::{PA9, PA11, PA12, USB_OTG_HS};
+use embassy_stm32::peripherals::{PA11, PA12, PA9, USB_OTG_HS};
 // i2c imports
 use embassy_stm32::peripherals::{I2C1, I2C5, PB6, PB7, PD0, PD1};
+// MikroBUS I2C/control imports
+use embassy_stm32::peripherals::{I2C3, PC0, PC1};
 // gps imports
 use embassy_stm32::peripherals::{EXTI9, PA2, PA3, PB9, TIM4, USART2};
 // pdm microphone imports
@@ -21,7 +23,7 @@ use embassy_stm32::peripherals::{
     PE4, PE7,
 };
 // microSD imports
-use embassy_stm32::peripherals::{PC8, PC9, PC10, PC11, PC12, PD2, SDMMC1};
+use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
 use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
@@ -43,11 +45,15 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
 // - PA12 = USB_D_P
 // - PB4  = SYS_GPS_GREEN
 // - PB1  = V_ADC_SOLAR
+// - PB2  = MBUS_PWM
+// - PB5  = MBUS_INT
 // - PB6  = QWIIC_SCL
 // - PB7  = QWIIC_SDA
 // - PB8  = MIC_CCLK0
 // - PB9  = GPS_PPS
 // - PB15 = SYS_MAIN_RED
+// - PC0  = MBUS_SCL
+// - PC1  = MBUS_SDA
 // - PC8  = SDIO_D0
 // - PC9  = SDIO_D1
 // - PC10 = SDIO_D2
@@ -81,15 +87,11 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
 // - PA14 = TRACE_SWCLK
 // - PA15 = unconnected
 // - PB0  = EXT_OPA_VOUT
-// - PB2  = MBUS_PWM
 // - PB3  = TRACE_SWO
-// - PB5  = MBUS_INT
 // - PB10 = EXT_I2C_SCL
 // - PB11 = MBUS_RX_STM_RX
 // - PB13 = MBUS_SCK
 // - PB14 = MBUS_MISO
-// - PC0  = MBUS_SCL
-// - PC1  = MBUS_SDA
 // - PC2  = MIC_CCLK1
 // - PC3  = MBUS_MOSI
 // - PC6  = EXT_1
@@ -122,6 +124,7 @@ use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
 
 bind_interrupts!(pub struct Irqs {
     EXTI2 => exti::InterruptHandler<interrupt::typelevel::EXTI2>;
+    EXTI5 => exti::InterruptHandler<interrupt::typelevel::EXTI5>;
     EXTI9 => exti::InterruptHandler<interrupt::typelevel::EXTI9>;
     EXTI12 => exti::InterruptHandler<interrupt::typelevel::EXTI12>;
     SDMMC1 => sdmmc::InterruptHandler<SDMMC1>;
@@ -137,6 +140,7 @@ pub struct Board<'d> {
     pub buzzer: Buzzer<'d>,
     pub sens_i2c: SensI2C<'d>,
     pub qwiic_i2c: QwiicI2C<'d>,
+    pub mbus: Mbus<'d>,
     pub gps: Gps<'d>,
     pub pdm_mic1: PdmMic1<'d>,
     pub pdm_mic_array: PdmMicArray<'d>,
@@ -184,6 +188,15 @@ pub struct QwiicI2C<'d> {
     pub i2c: Peri<'d, I2C1>,
     pub sda: Peri<'d, PB7>,
     pub scl: Peri<'d, PB6>,
+}
+
+// MikroBUS connector: I2C3 on PC0/PC1, enable on PWM, and active-low IRQ on INT.
+pub struct Mbus<'d> {
+    pub i2c: Peri<'d, I2C3>,
+    pub scl: Peri<'d, PC0>,
+    pub sda: Peri<'d, PC1>,
+    pub enable: Output<'d>,
+    pub interrupt: ExtiInput<'d, Async>,
 }
 
 // GPS on USART2: STM TX PA2 -> GPS RX, GPS TX -> STM RX PA3, PPS on PB9/EXTI9.
@@ -295,6 +308,13 @@ impl Board<'static> {
             PB6,
             PB7,
             I2C1,
+            // MikroBUS I2C and controls
+            I2C3,
+            PC0,
+            PC1,
+            PB2,
+            PB5,
+            EXTI5,
             // gps
             PC13,
             PE3,
@@ -377,6 +397,13 @@ impl Board<'static> {
                 i2c: I2C1,
                 sda: PB7,
                 scl: PB6,
+            },
+            mbus: Mbus {
+                i2c: I2C3,
+                scl: PC0,
+                sda: PC1,
+                enable: Output::new(PB2, Level::Low, Speed::Medium),
+                interrupt: ExtiInput::new(PB5, EXTI5, Pull::None, Irqs),
             },
             gps: Gps {
                 usart: USART2,

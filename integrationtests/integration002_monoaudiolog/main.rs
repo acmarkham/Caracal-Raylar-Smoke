@@ -83,6 +83,13 @@ const HALF_SAMPLES: usize = 1_600;
 const DMA_SAMPLES: usize = HALF_SAMPLES * 2;
 const AUDIO_PACKETS_PER_SECOND: u32 = (SAMPLE_RATE_HZ / HALF_SAMPLES) as u32;
 const LOCATION_HISTORY: usize = 9;
+const GPS_POST_CALIBRATION_ON_TIME: Duration = Duration::from_secs(60);
+const GPS_POST_CALIBRATION_OFF_TIME: Duration = Duration::from_secs(30 * 60);
+// Single board-tuning parameter. Negative means the HSE was measured slow
+// against GPS UTC (999_991 nominal 1 MHz ticks is approximately -9 ppm), so
+// the common PLL1/PLL3 multiplier is pulled upward by about 9 ppm. Set this to
+// zero to use the nominal integer PLLs with fractional mode disabled.
+const HSE_MEASURED_ERROR_PPM: i32 = -9;
 // Eight seconds absorbs SD write latency while the recorder catches up.
 const AUDIO_CAPACITY: usize = SAMPLE_RATE_HZ * CHANNELS * 8;
 
@@ -602,7 +609,21 @@ async fn main(spawner: Spawner) -> ! {
     unsafe {
         embedded_alloc::init!(HEAP, HEAP_BYTES);
     }
-    let peripherals = embassy_stm32::init(common::mcu_config());
+    let (mcu_config, pll_correction) = unwrap!(common::mcu_config_with_hse_error_ppm(
+        HSE_MEASURED_ERROR_PPM
+    ));
+    let peripherals = embassy_stm32::init(mcu_config);
+    let pll_integer_n = pll_correction.integer_n();
+    let pll_fracn = pll_correction.fracn();
+    let measured_error_ppm = pll_correction.measured_error_ppm();
+    pll_correction.apply();
+    info!(
+        "Startup PLL correction applied once: measured_error_ppm={} M=3 N={} FRACN={} fractional_enabled={}",
+        measured_error_ppm,
+        pll_integer_n,
+        pll_fracn,
+        pll_fracn != 0,
+    );
     let core_supply = if cfg!(feature = "core-smps") {
         CoreSupply::Smps
     } else {
@@ -645,7 +666,13 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(unwrap!(cpu_usage_task(cpu_log)));
     #[cfg(not(feature = "fake-gps-time"))]
     {
-        common::start_time(spawner, gps).await;
+        common::start_time_with_duty_cycle(
+            spawner,
+            gps,
+            GPS_POST_CALIBRATION_ON_TIME,
+            GPS_POST_CALIBRATION_OFF_TIME,
+        )
+        .await;
         spawner.spawn(unwrap!(gps_led_task()));
     }
     #[cfg(feature = "fake-gps-time")]
@@ -728,8 +755,10 @@ async fn main(spawner: Spawner) -> ! {
     log_versioning(system_log, VERSIONING.state());
     record_outcome(log_info!(
         system_log,
-        "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders",
-        SAMPLE_RATE_HZ
+        "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders; gps_post_calibration_on_s={} gps_post_calibration_off_s={}",
+        SAMPLE_RATE_HZ,
+        GPS_POST_CALIBRATION_ON_TIME.as_secs(),
+        GPS_POST_CALIBRATION_OFF_TIME.as_secs()
     ));
     // Commit startup records before audio startup. This makes /syslog.txt
     // visible even if GPS acquisition or microphone capture subsequently
