@@ -36,6 +36,8 @@ use raylar_board_v1p0::{AdcVoltages, Board, Leds, PdmMicArray, PdmMicDma, SensI2
 use raylar_drivers::batterycharger::{ChargerBus, ChargerConfig, ChargerDriver, ChargerResources};
 #[cfg(not(feature = "fake-gps-time"))]
 use raylar_drivers::gps::OperatingState;
+#[cfg(not(feature = "fake-gps-time"))]
+use raylar_drivers::gps::PhaseQualifiedShutdownConfig;
 use raylar_drivers::mic_array::stm32::{Dma0TimestampHandler, MonoPins, Stm32MonoMicrophoneDriver};
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
@@ -85,6 +87,10 @@ const AUDIO_PACKETS_PER_SECOND: u32 = (SAMPLE_RATE_HZ / HALF_SAMPLES) as u32;
 const LOCATION_HISTORY: usize = 9;
 const GPS_POST_CALIBRATION_ON_TIME: Duration = Duration::from_secs(60);
 const GPS_POST_CALIBRATION_OFF_TIME: Duration = Duration::from_secs(30 * 60);
+const GPS_PHASE_MAXIMUM_ON_TIME: Duration = Duration::from_secs(180);
+const GPS_PHASE_RESIDUAL_THRESHOLD_US: u64 = 250;
+const GPS_PHASE_UNCERTAINTY_THRESHOLD_US: u64 = 500;
+const GPS_PHASE_CONSECUTIVE_ANCHORS: u8 = 5;
 // Single board-tuning parameter. Negative means the HSE was measured slow
 // against GPS UTC (999_991 nominal 1 MHz ticks is approximately -9 ppm), so
 // the common PLL1/PLL3 multiplier is pulled upward by about 9 ppm. Set this to
@@ -666,11 +672,17 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(unwrap!(cpu_usage_task(cpu_log)));
     #[cfg(not(feature = "fake-gps-time"))]
     {
-        common::start_time_with_duty_cycle(
+        common::start_time_with_phase_qualified_duty_cycle(
             spawner,
             gps,
             GPS_POST_CALIBRATION_ON_TIME,
             GPS_POST_CALIBRATION_OFF_TIME,
+            PhaseQualifiedShutdownConfig {
+                maximum_on_time: GPS_PHASE_MAXIMUM_ON_TIME,
+                residual_threshold_us: GPS_PHASE_RESIDUAL_THRESHOLD_US,
+                uncertainty_threshold_us: GPS_PHASE_UNCERTAINTY_THRESHOLD_US,
+                consecutive_anchors: GPS_PHASE_CONSECUTIVE_ANCHORS,
+            },
         )
         .await;
         spawner.spawn(unwrap!(gps_led_task()));
@@ -755,10 +767,14 @@ async fn main(spawner: Spawner) -> ! {
     log_versioning(system_log, VERSIONING.state());
     record_outcome(log_info!(
         system_log,
-        "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders; gps_post_calibration_on_s={} gps_post_calibration_off_s={}",
+        "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders; gps_post_calibration_min_on_s={} gps_post_calibration_max_on_s={} gps_post_calibration_off_s={} gps_phase_residual_us={} gps_phase_uncertainty_us={} gps_phase_consecutive={}",
         SAMPLE_RATE_HZ,
         GPS_POST_CALIBRATION_ON_TIME.as_secs(),
-        GPS_POST_CALIBRATION_OFF_TIME.as_secs()
+        GPS_PHASE_MAXIMUM_ON_TIME.as_secs(),
+        GPS_POST_CALIBRATION_OFF_TIME.as_secs(),
+        GPS_PHASE_RESIDUAL_THRESHOLD_US,
+        GPS_PHASE_UNCERTAINTY_THRESHOLD_US,
+        GPS_PHASE_CONSECUTIVE_ANCHORS
     ));
     // Commit startup records before audio startup. This makes /syslog.txt
     // visible even if GPS acquisition or microphone capture subsequently
@@ -1733,6 +1749,8 @@ fn log_location(location_log: TestLogger, event: &'static str, state: LocationSt
 #[embassy_executor::task]
 async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log: TestLogger) -> ! {
     let mut observed_search_timeouts = 0u32;
+    let mut observed_phase_shutdowns = 0u32;
+    let mut observed_phase_timeouts = 0u32;
     loop {
         if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
             common::pending_forever().await;
@@ -1814,6 +1832,29 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
                 gps.num_search_failures
             ));
         }
+        if gps.num_phase_qualified_shutdowns != observed_phase_shutdowns {
+            observed_phase_shutdowns = gps.num_phase_qualified_shutdowns;
+            record_outcome(log_info!(
+                gps_log,
+                "PHASE_QUALIFIED_SHUTDOWN count={} residual_us={:?} uncertainty_us={} required_streak={}",
+                gps.num_phase_qualified_shutdowns,
+                gps.last_phase_residual_us,
+                gps.last_phase_uncertainty_us,
+                GPS_PHASE_CONSECUTIVE_ANCHORS
+            ));
+        }
+        if gps.num_phase_convergence_timeouts != observed_phase_timeouts {
+            observed_phase_timeouts = gps.num_phase_convergence_timeouts;
+            record_outcome(log_info!(
+                gps_log,
+                "PHASE_CONVERGENCE_TIMEOUT count={} residual_us={:?} uncertainty_us={} streak={} maximum_on_s={} standby_after_timeout=true",
+                gps.num_phase_convergence_timeouts,
+                gps.last_phase_residual_us,
+                gps.last_phase_uncertainty_us,
+                gps.phase_qualification_streak,
+                GPS_PHASE_MAXIMUM_ON_TIME.as_secs()
+            ));
+        }
         record_outcome(log_info!(
             gps_log,
             "state={:?} powered={} calibrated={} fixes={} checksum_err={} uart_err={} overflow={} reacq={}/{} search={}/{} pps_events={} pps_source={:?} pps_timeouts={} search_timeouts={}",
@@ -1832,6 +1873,16 @@ async fn status_logger_task(power_log: TestLogger, time_log: TestLogger, gps_log
             gps.last_pps_timing_source,
             gps.num_pps_timeouts,
             gps.num_search_timeouts
+        ));
+        record_outcome(log_info!(
+            gps_log,
+            "PHASE active={} streak={} residual_us={:?} uncertainty_us={} shutdowns={} timeouts={}",
+            gps.phase_qualification_active,
+            gps.phase_qualification_streak,
+            gps.last_phase_residual_us,
+            gps.last_phase_uncertainty_us,
+            gps.num_phase_qualified_shutdowns,
+            gps.num_phase_convergence_timeouts
         ));
         let now = Instant::now();
         let latest_pps = common::GPS_RESOURCES.latest_pps();

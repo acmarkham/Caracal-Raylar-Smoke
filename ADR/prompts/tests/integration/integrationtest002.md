@@ -29,12 +29,12 @@ Embassy 0.6 performs PLL frequency bookkeeping as `(source / M) * N` with
 integer `Hertz`. Modelling the physical 16 MHz HSE literally therefore yields
 143,999,991 Hz for the M=3/N=54/R=2 system clock. Its 1 MHz timer setup then
 selects divide-by-143 instead of divide-by-144, causing the TIM4 capture clock
-and TIM5 time driver to run at 144/143, approximately 6,993 ppm fast. The
-integration configuration supplies 16,000,002 Hz as a software-only HSE model,
-which is the smallest adjustment that makes Embassy select divide-by-144. It
-does not change the hardware PLL ratio and adds only +0.125 ppm bookkeeping
-bias. This workaround should be removed if Embassy changes its PLL calculation
-to multiply before dividing or otherwise preserves the rational clock ratio.
+and TIM5 time driver to run at 144/143, approximately 6,993 ppm fast. The HSE
+must remain truthfully declared as exactly 16 MHz because Embassy's OTG-HS
+setup validates it against a discrete frequency list. Integration startup
+therefore explicitly repairs TIM4 and TIM5 to PSC=143. This workaround should
+be removed if Embassy changes its PLL calculation to multiply before dividing
+or otherwise preserves the rational clock ratio.
 
 ## Constraints
 Read
@@ -117,8 +117,13 @@ After GPS fix is acquired: Audio
 2. Issue a different "successful GPS" beep after the first GPS PPS anchor has
    been accepted.
 3. Keep GPS continuously active after the first fix until the Time Service
-   reports `frequency_calibration_locked`, then enter a low-power cycle with 60
-   seconds active and 30 minutes in standby. Post-calibration reacquisition uses
+   reports `frequency_calibration_locked`, then enter a low-power cycle with a
+   minimum 60-second powered-on period and 30 minutes in standby. After the minimum,
+   remain active until five consecutive admitted PPS anchors have absolute
+   phase residual <=250 us and UTC uncertainty <=500 us. Bound the complete
+   powered-on period at 180 seconds; on failure, log a phase-convergence timeout
+   and enter the standard standby interval. A gated or rejected PPS edge resets
+   the qualifying streak. Post-calibration reacquisition uses
    the driver's default 90-second search window. The nominal lock interval is 10
    minutes, but PPS outages must extend it rather than allowing a fixed elapsed-
    time deadline to end calibration.
@@ -316,8 +321,10 @@ The test should verify that:
   the withheld samples do not alter calibration. Any later edge pair outside
   that tolerance is rejected and re-arms qualification.
 * GPS remains continuously active until frequency calibration locks after a
-  complete initial eleven-sample, approximately ten-minute PPS baseline. Its
-  post-lock duty cycle is 60 seconds active followed by 30 minutes in standby.
+  complete initial eleven-sample, approximately ten-minute PPS baseline. Each
+  post-lock cycle is active for at least 60 seconds, requires five consecutive
+  accepted anchors within the 250 us residual and 500 us uncertainty limits,
+  is bounded at 180 seconds, and is followed by 30 minutes in standby.
 * Per-edge PPS and per-correlation records are present without unexplained
   sequence gaps and contain enough raw timestamps for post-hoc correction.
 * Logging messages are correctly formatted.

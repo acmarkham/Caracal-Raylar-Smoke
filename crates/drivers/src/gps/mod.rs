@@ -383,7 +383,7 @@ where
             }
             // This is normally consumed while initial calibration is active.
             // If received while idle there is no tracking window to release.
-            GpsCommand::FrequencyCalibrationLocked => {}
+            GpsCommand::FrequencyCalibrationLocked | GpsCommand::PhaseQuality { .. } => {}
         }
     }
 }
@@ -458,6 +458,20 @@ async fn run_search_cycle<POWER, const WATCHERS: usize, const COMMAND_DEPTH: usi
                 let stopped =
                     if *initial_calibration_pending && config.wait_for_frequency_calibration_lock {
                         wait_for_frequency_calibration_lock(commands, serial, config).await
+                    } else if !*initial_calibration_pending {
+                        if let Some(phase_config) = config.phase_qualified_shutdown {
+                            wait_for_phase_qualified_shutdown(
+                                commands,
+                                serial,
+                                stats_pub,
+                                config,
+                                phase_config,
+                                on_started,
+                            )
+                            .await
+                        } else {
+                            sleep_or_stop(commands, serial, config, config.gps_on_time).await
+                        }
                     } else {
                         let tracking_time = if *initial_calibration_pending {
                             config.initial_calibration_time
@@ -627,6 +641,150 @@ async fn wait_for_frequency_calibration_lock<const COMMAND_DEPTH: usize>(
     }
 }
 
+/// Keep a reacquired receiver powered for at least `gps_on_time`, then enter
+/// standby only after consecutive admitted PPS anchors show that UTC phase and
+/// uncertainty have converged. Both deadlines are measured from power-on so
+/// the maximum remains a genuine energy-use bound even after a slow fix.
+async fn wait_for_phase_qualified_shutdown<
+    const WATCHERS: usize,
+    const COMMAND_DEPTH: usize,
+>(
+    commands: &embassy_sync::channel::Receiver<'_, GpsMutex, GpsCommand, COMMAND_DEPTH>,
+    serial: &embassy_sync::channel::Sender<'_, GpsMutex, SerialRequest, COMMAND_DEPTH>,
+    stats_pub: &embassy_sync::watch::Sender<'_, GpsMutex, GpsStats, WATCHERS>,
+    config: &GpsConfig,
+    phase_config: PhaseQualifiedShutdownConfig,
+    on_started: Instant,
+) -> bool {
+    let minimum_deadline = on_started + config.gps_on_time;
+    let maximum_on_time = if phase_config.maximum_on_time < config.gps_on_time {
+        config.gps_on_time
+    } else {
+        phase_config.maximum_on_time
+    };
+    let maximum_deadline = on_started + maximum_on_time;
+    let required_anchors = phase_config.consecutive_anchors.max(1);
+    let mut streak = 0u8;
+    let mut previous_observation_sequence = None;
+
+    modify_stats(stats_pub, |stats| {
+        stats.phase_qualification_active = true;
+        stats.phase_qualification_streak = 0;
+        stats.last_phase_residual_us = None;
+        stats.last_phase_uncertainty_us = u64::MAX;
+    });
+    #[cfg(feature = "defmt")]
+    defmt::info!(
+        "GPS phase qualification started: minimum_s={} maximum_s={} residual_us={} uncertainty_us={} consecutive={}",
+        config.gps_on_time.as_secs(),
+        maximum_on_time.as_secs(),
+        phase_config.residual_threshold_us,
+        phase_config.uncertainty_threshold_us,
+        required_anchors
+    );
+
+    loop {
+        let now = Instant::now();
+        if now >= minimum_deadline && streak >= required_anchors {
+            modify_stats(stats_pub, |stats| {
+                stats.phase_qualification_active = false;
+                stats.num_phase_qualified_shutdowns =
+                    stats.num_phase_qualified_shutdowns.saturating_add(1);
+            });
+            #[cfg(feature = "defmt")]
+            defmt::info!(
+                "GPS phase-qualified shutdown: on_s={} streak={}",
+                now.saturating_duration_since(on_started).as_secs(),
+                streak
+            );
+            return false;
+        }
+        if now >= maximum_deadline {
+            modify_stats(stats_pub, |stats| {
+                stats.phase_qualification_active = false;
+                stats.num_phase_convergence_timeouts =
+                    stats.num_phase_convergence_timeouts.saturating_add(1);
+            });
+            #[cfg(feature = "defmt")]
+            defmt::warn!(
+                "GPS phase convergence timed out after {} seconds: streak={} residual_us={:?}",
+                maximum_on_time.as_secs(),
+                streak,
+                stats_pub.try_get().and_then(|stats| stats.last_phase_residual_us)
+            );
+            return false;
+        }
+
+        let wait = min_duration(
+            maximum_deadline.saturating_duration_since(now),
+            MANAGER_COMMAND_POLL,
+        );
+        let Ok(command) = with_timeout(wait, commands.receive()).await else {
+            continue;
+        };
+
+        if let GpsCommand::PhaseQuality {
+            observation_sequence,
+            accepted,
+            residual_us,
+            uncertainty_us,
+            pps_gate_active,
+        } = command
+        {
+            if previous_observation_sequence == Some(observation_sequence) {
+                continue;
+            }
+            let sequence_is_consecutive = previous_observation_sequence
+                .map(|previous| previous.wrapping_add(1) == observation_sequence)
+                .unwrap_or(true);
+            previous_observation_sequence = Some(observation_sequence);
+            let qualifies = phase_quality_qualifies(
+                accepted,
+                residual_us,
+                uncertainty_us,
+                pps_gate_active,
+                &phase_config,
+            );
+            streak = if sequence_is_consecutive && qualifies {
+                streak.saturating_add(1)
+            } else if qualifies {
+                1
+            } else {
+                0
+            };
+            modify_stats(stats_pub, |stats| {
+                stats.phase_qualification_streak = streak;
+                stats.last_phase_residual_us = residual_us;
+                stats.last_phase_uncertainty_us = uncertainty_us;
+            });
+            continue;
+        }
+
+        if handle_runtime_command(serial, config, command).await {
+            modify_stats(stats_pub, |stats| {
+                stats.phase_qualification_active = false;
+                stats.phase_qualification_streak = 0;
+            });
+            return true;
+        }
+    }
+}
+
+fn phase_quality_qualifies(
+    accepted: bool,
+    residual_us: Option<i64>,
+    uncertainty_us: u64,
+    pps_gate_active: bool,
+    config: &PhaseQualifiedShutdownConfig,
+) -> bool {
+    accepted
+        && !pps_gate_active
+        && residual_us
+            .map(|residual| residual.unsigned_abs() <= config.residual_threshold_us)
+            .unwrap_or(false)
+        && uncertainty_us <= config.uncertainty_threshold_us
+}
+
 async fn handle_runtime_command<const COMMAND_DEPTH: usize>(
     serial: &embassy_sync::channel::Sender<'_, GpsMutex, SerialRequest, COMMAND_DEPTH>,
     config: &GpsConfig,
@@ -648,7 +806,7 @@ async fn handle_runtime_command<const COMMAND_DEPTH: usize>(
         }
         // Consumed by `wait_for_frequency_calibration_lock`. It is harmless
         // in search, ordinary tracking, or standby windows.
-        GpsCommand::FrequencyCalibrationLocked => false,
+        GpsCommand::FrequencyCalibrationLocked | GpsCommand::PhaseQuality { .. } => false,
     }
 }
 
@@ -1056,6 +1214,19 @@ mod tests {
         let pps = pps_at(nmea_timestamp + Duration::from_millis(1));
 
         assert!(!pps_matches_nmea(pps, nmea_timestamp));
+    }
+
+    #[test]
+    fn phase_quality_requires_residual_uncertainty_and_open_gate() {
+        let config = PhaseQualifiedShutdownConfig::default();
+
+        assert!(phase_quality_qualifies(true, Some(250), 500, false, &config));
+        assert!(phase_quality_qualifies(true, Some(-250), 500, false, &config));
+        assert!(!phase_quality_qualifies(true, Some(251), 500, false, &config));
+        assert!(!phase_quality_qualifies(true, Some(250), 501, false, &config));
+        assert!(!phase_quality_qualifies(true, None, 100, false, &config));
+        assert!(!phase_quality_qualifies(true, Some(0), 100, true, &config));
+        assert!(!phase_quality_qualifies(false, Some(0), 100, false, &config));
     }
 }
 

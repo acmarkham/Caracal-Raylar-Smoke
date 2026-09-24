@@ -25,6 +25,10 @@ pub const TIM4_PPS_CAPTURE_FREQUENCY_HZ: u32 = 1_000_000;
 // register definitions. At 1 MHz the counter wraps every 2^32 us, or about
 // 71 minutes 35 seconds.
 const TIM4_COUNTER_MODULUS: u64 = 1u64 << 32;
+// TIM4 is clocked at a nominal 144 MHz on Raylar v1.0. PSC stores divisor-1.
+// This explicit value also avoids embassy-stm32 0.6's M=3/N=54 clock-model
+// truncation selecting PSC=142 and making the capture clock 144/143 too fast.
+const TIM4_ONE_MHZ_PRESCALER: u16 = 143;
 
 fn configure_tim4_32_bit_period() {
     // Embassy InputCapture configures the timer tick prescaler but leaves ARR
@@ -37,11 +41,13 @@ fn configure_tim4_32_bit_period() {
         embassy_stm32::pac::timer::TimGp32::from_ptr(<TIM4 as CoreInstance>::regs())
     };
     regs.cr1().modify(|r| r.set_cen(false));
+    regs.psc().write_value(TIM4_ONE_MHZ_PRESCALER);
     regs.arr().write_value(u32::MAX);
     regs.egr().write(|r| r.set_ug(true));
     regs.sr().modify(|r| r.set_uif(false));
     regs.cr1().modify(|r| r.set_cen(true));
     debug_assert_eq!(regs.arr().read(), u32::MAX);
+    debug_assert_eq!(regs.psc().read(), TIM4_ONE_MHZ_PRESCALER);
 }
 
 pub struct Stm32GpsPower {

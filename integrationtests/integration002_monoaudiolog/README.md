@@ -84,10 +84,9 @@ each flash are retained under `.probe-rs-logs/`.
   integer `Hertz`. With a 16 MHz HSE and M=3/N=54 this truncates the modelled
   SYSCLK to 143,999,991 Hz. Its timer setup then chooses divide-by-143 rather
   than divide-by-144, making both TIM4 capture and the TIM5 time driver run
-  6,993 ppm fast. Integrationtest002 advertises 16,000,002 Hz to Embassy's
-  software clock model, the smallest adjustment that selects divide-by-144.
-  This does not change the RCC hardware ratio and introduces only +0.125 ppm
-  into software frequency bookkeeping.
+  6,993 ppm fast. The firmware keeps the truthful 16 MHz HSE declaration—OTG
+  validates this exact value—and explicitly repairs TIM4 and TIM5 to PSC=143
+  during their one-shot startup initialization.
 - Core-supply selection runs immediately after `embassy_stm32::init`, because
   Embassy resets the PWR block during MCU initialization. The default
   `core-smps` feature selects SMPS and waits for the hardware status to confirm
@@ -150,8 +149,12 @@ each flash are retained under `.probe-rs-logs/`.
   reports `frequency_calibration_locked`. This normally requires the complete
   eleven-sample, ten-minute PPS baseline, but PPS outages now extend continuous
   tracking instead of allowing a fixed timer to end calibration early. Only
-  after the explicit lock handshake does the low-power 60-second on/30-minute
-  standby duty cycle begin. A failed 90-second reacquisition increments the persistent
+  after the explicit lock handshake does the low-power duty cycle begin.
+  Each reacquisition power-on remains active for at least 60 seconds and then enters standby
+  only after five consecutive admitted PPS anchors have absolute residual at
+  most 250 us and UTC uncertainty at most 500 us. A 180-second power-on maximum bounds
+  power use; failure to converge by then is logged before the normal 30-minute
+  standby. A failed 90-second reacquisition increments the persistent
   search-failure and timeout counters, returns to the normal standby interval,
   emits an explicit `Gps: SEARCH_TIMEOUT` syslog record, and then retries with
   the same fixed duty cycle. Search-window backoff is not yet applied.
@@ -196,6 +199,13 @@ each flash are retained under `.probe-rs-logs/`.
   so a missed NMEA pairing cannot permanently block recovery. Any edge pair
   outside that tolerance is rejected and restarts both the five-edge settling
   window and the subsequent three-clean-pair gate.
+- Phase shutdown observations are keyed by the combined Time Service
+  accepted/rejected-anchor counters. Repeated state publications are ignored,
+  while each gated/rejected PPS edge explicitly breaks the qualifying streak.
+  The GPS status record
+  exposes the active streak, latest residual/uncertainty, qualified shutdown
+  count, and convergence-timeout count; each shutdown or timeout also emits a
+  dedicated syslog event.
 - The ten-second Time records include UTC status, first/current anchor source, latest PPS
   residual, calibrated and slew frequency components, accepted/rejected anchor
   counts, UTC-second corrections, uncertainty, and holdover duration. Separate

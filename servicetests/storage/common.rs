@@ -10,7 +10,9 @@ use embassy_stm32::usart::{BufferedUart, Config as UartConfig, DataBits, Parity,
 use embassy_time::{Duration, Timer};
 use raylar_board_v1p0::{Gps, Irqs, SdCard};
 use raylar_drivers::gps::stm32::{Stm32GpsPower, Stm32Pps};
-use raylar_drivers::gps::{GpsCommand, GpsConfig, GpsDriver, GpsResources, PpsTimingSource};
+use raylar_drivers::gps::{
+    GpsCommand, GpsConfig, GpsDriver, GpsResources, PhaseQualifiedShutdownConfig, PpsTimingSource,
+};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
     FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver, detect_exfat_volume,
@@ -35,19 +37,13 @@ pub const MAX_HSE_ERROR_PPM: i32 = 30;
 const PLL_BASE_N: i32 = 54;
 const PLL_FRAC_SCALE: i64 = 8192;
 const PPM_SCALE: i64 = 1_000_000;
-const PHYSICAL_HSE_HZ: u32 = 16_000_000;
-// embassy-stm32 0.6 calculates a PLL clock as `(source / M) * N`, truncating
-// the non-integral 16 MHz / 3 reference before multiplying by 54. Advertising
-// exactly 16 MHz would therefore make Embassy record SYSCLK as 143_999_991 Hz
-// and select a divide-by-143 timer prescaler for a requested 1 MHz clock. The
-// hardware ratio is exactly 16 MHz * 54 / 3 / 2 = 144 MHz, so that prescaler
-// runs TIM4 and the TIM5 time driver at 144/143 = 1.006993 MHz.
-//
-// This +2 Hz value is software clock-model compensation only; the RCC hardware
-// configuration is unchanged. It is the smallest value for which Embassy's
-// sequential integer calculation lands just above 144 MHz, selecting the
-// correct divide-by-144 prescaler. Its +0.125 ppm bookkeeping bias is benign.
-const EMBASSY_HSE_MODEL_HZ: u32 = PHYSICAL_HSE_HZ + 2;
+// The hardware timer clock is nominally 144 MHz, so a 1 MHz counter requires
+// PSC=143. embassy-stm32 0.6 models M=3/N=54 as `(16 MHz / 3) * 54`, truncates
+// SYSCLK to 143_999_991 Hz, and incorrectly selects PSC=142. Keep the truthful
+// 16 MHz HSE model (required by OTG-HS validation) and repair only the affected
+// exact-1-MHz timers. See `correct_embassy_time_driver_prescaler` and the TIM4
+// PPS capture initialization.
+const ONE_MHZ_FROM_144_MHZ_PSC: u16 = 143;
 // The ST fractional-latch workaround requires a short pause while FRACEN is
 // clear. At the 144 MHz startup SYSCLK, 256 spin-loop iterations are safely
 // longer than several PLL reference cycles but still only a few microseconds.
@@ -111,7 +107,53 @@ impl PllFrequencyCorrection {
             let _ = RCC.pll1cfgr().read();
             let _ = RCC.pll3cfgr().read();
         }
+
+        correct_embassy_time_driver_prescaler();
     }
+}
+
+/// Correct TIM5, which is selected as this workspace's Embassy time driver.
+///
+/// This runs immediately after `embassy_stm32::init`, before application code
+/// observes `Instant`. Interrupts are masked while the live counter is stopped,
+/// rescaled, and restarted so the one-shot prescaler repair remains monotonic.
+fn correct_embassy_time_driver_prescaler() {
+    cortex_m::interrupt::free(|_| {
+        let regs = embassy_stm32::pac::TIM5;
+        let old_psc = regs.psc().read();
+        if old_psc == ONE_MHZ_FROM_144_MHZ_PSC {
+            return;
+        }
+
+        // Limit this workaround to the known Embassy M=3 truncation result.
+        // If its clock calculation changes, do not silently rewrite a different
+        // timer configuration.
+        const EMBASSY_TRUNCATED_PSC: u16 = 142;
+        if old_psc != EMBASSY_TRUNCATED_PSC {
+            error!(
+                "TIM5 1MHz prescaler correction skipped: unexpected PSC={}",
+                old_psc
+            );
+            return;
+        }
+
+        let was_enabled = regs.cr1().read().cen();
+        regs.cr1().modify(|w| w.set_cen(false));
+        let old_counter = regs.cnt().read();
+        let corrected_counter = ((old_counter as u64)
+            .saturating_mul((EMBASSY_TRUNCATED_PSC as u64) + 1)
+            / ((ONE_MHZ_FROM_144_MHZ_PSC as u64) + 1)) as u32;
+
+        regs.psc().write_value(ONE_MHZ_FROM_144_MHZ_PSC);
+        regs.egr().write(|w| w.set_ug(true));
+        regs.sr().modify(|w| w.set_uif(false));
+        regs.cnt().write_value(corrected_counter);
+        regs.cr1().modify(|w| w.set_cen(was_enabled));
+        info!(
+            "Corrected Embassy TIM5 1MHz prescaler: PSC {} -> {}",
+            old_psc, ONE_MHZ_FROM_144_MHZ_PSC
+        );
+    });
 }
 
 #[inline(never)]
@@ -234,7 +276,7 @@ pub fn mcu_config_with_hse_error_ppm(
 
     let mut config = embassy_stm32::Config::default();
     config.rcc.hse = Some(Hse {
-        freq: Hertz(EMBASSY_HSE_MODEL_HZ),
+        freq: mhz(16),
         mode: HseMode::Oscillator,
     });
     config.rcc.pll1 = Some(Pll {
@@ -281,6 +323,34 @@ pub async fn start_time_with_duty_cycle(
     gps_on_time: Duration,
     gps_off_time: Duration,
 ) {
+    start_time_inner(spawner, gps, gps_on_time, gps_off_time, None).await;
+}
+
+/// Start GPS/PPS time with phase-qualified post-calibration shutdown.
+pub async fn start_time_with_phase_qualified_duty_cycle(
+    spawner: Spawner,
+    gps: Gps<'static>,
+    gps_on_time: Duration,
+    gps_off_time: Duration,
+    phase_shutdown: PhaseQualifiedShutdownConfig,
+) {
+    start_time_inner(
+        spawner,
+        gps,
+        gps_on_time,
+        gps_off_time,
+        Some(phase_shutdown),
+    )
+    .await;
+}
+
+async fn start_time_inner(
+    spawner: Spawner,
+    gps: Gps<'static>,
+    gps_on_time: Duration,
+    gps_off_time: Duration,
+    phase_qualified_shutdown: Option<PhaseQualifiedShutdownConfig>,
+) {
     let Gps {
         usart,
         tx,
@@ -314,6 +384,7 @@ pub async fn start_time_with_duty_cycle(
     let gps_config = GpsConfig {
         gps_on_time,
         gps_off_time,
+        phase_qualified_shutdown,
         pps_timing_source: PpsTimingSource::Tim4Capture,
         wait_for_frequency_calibration_lock: true,
         ..GpsConfig::default()
@@ -332,6 +403,9 @@ pub async fn start_time_with_duty_cycle(
     spawner.spawn(unwrap!(time_service_task(time)));
     spawner.spawn(unwrap!(gps_time_source_task(correlations)));
     spawner.spawn(unwrap!(gps_frequency_calibration_lock_task()));
+    if phase_qualified_shutdown.is_some() {
+        spawner.spawn(unwrap!(gps_phase_quality_task()));
+    }
     GPS_RESOURCES.command_sender().send(GpsCommand::Start).await;
 }
 
@@ -508,6 +582,47 @@ async fn gps_frequency_calibration_lock_task() {
             return;
         }
         Timer::after_secs(1).await;
+    }
+}
+
+/// Forward each newly evaluated post-calibration GPS PPS anchor to the GPS
+/// manager. Both accepted and rejected observations are forwarded: an accepted
+/// anchor can extend the good streak, while a rejected/gated edge breaks it.
+/// Periodic watch publications with no evaluated anchor are ignored.
+#[embassy_executor::task]
+async fn gps_phase_quality_task() {
+    let mut states = unwrap!(TIME_RESOURCES.state_receiver());
+    let initial = TIME_RESOURCES.time_state();
+    let mut observed_accepted = initial.accepted_anchors;
+    let mut observed_rejected = initial.rejected_anchors;
+    let mut calibration_was_locked = initial.frequency_calibration_locked;
+
+    loop {
+        let state = states.changed().await;
+        let accepted = state.accepted_anchors != observed_accepted;
+        let rejected = state.rejected_anchors != observed_rejected;
+        let has_new_observation = accepted || rejected;
+        observed_accepted = state.accepted_anchors;
+        observed_rejected = state.rejected_anchors;
+        if calibration_was_locked
+            && has_new_observation
+            && state.active_time_source == TimeSource::GpsPps
+        {
+            GPS_RESOURCES
+                .command_sender()
+                .send(GpsCommand::PhaseQuality {
+                    observation_sequence: u64::from(state.accepted_anchors)
+                        + u64::from(state.rejected_anchors),
+                    // If the watch ever coalesces multiple publications, do
+                    // not count the resulting ambiguous observation as good.
+                    accepted: accepted && !rejected,
+                    residual_us: state.last_anchor_residual_us,
+                    uncertainty_us: state.uncertainty_us,
+                    pps_gate_active: state.pps_reacquisition_active,
+                })
+                .await;
+        }
+        calibration_was_locked |= state.frequency_calibration_locked;
     }
 }
 

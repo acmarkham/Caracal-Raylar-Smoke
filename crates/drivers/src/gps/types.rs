@@ -51,10 +51,45 @@ pub enum GpsCommand {
     /// Release continuous initial tracking after the Time Service has locked
     /// its oscillator-frequency calibration.
     FrequencyCalibrationLocked,
+    /// Latest Time Service quality after a GPS PPS anchor was evaluated.
+    /// `observation_sequence` includes accepted and rejected anchors so a
+    /// rejected/gated edge breaks, rather than merely pauses, a good streak.
+    PhaseQuality {
+        observation_sequence: u64,
+        accepted: bool,
+        residual_us: Option<i64>,
+        uncertainty_us: u64,
+        pps_gate_active: bool,
+    },
     ForceSearch,
     ColdStart,
     WarmStart,
     HotStart,
+}
+
+/// Conditions for ending a post-calibration GPS tracking window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhaseQualifiedShutdownConfig {
+    /// Safety bound on the complete powered-on interval: return to standby
+    /// even if convergence is not achieved.
+    pub maximum_on_time: Duration,
+    /// Maximum absolute Time Service phase residual accepted as "small".
+    pub residual_threshold_us: u64,
+    /// Maximum UTC uncertainty accepted when evaluating the residual.
+    pub uncertainty_threshold_us: u64,
+    /// Consecutive newly accepted PPS anchors that must meet both thresholds.
+    pub consecutive_anchors: u8,
+}
+
+impl Default for PhaseQualifiedShutdownConfig {
+    fn default() -> Self {
+        Self {
+            maximum_on_time: Duration::from_secs(180),
+            residual_threshold_us: 250,
+            uncertainty_threshold_us: 500,
+            consecutive_anchors: 5,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +115,9 @@ impl Default for GpsModuleCommands {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpsConfig {
+    /// Minimum powered-on interval. When `phase_qualified_shutdown` is
+    /// configured, GPS remains active beyond this duration until timing
+    /// quality qualifies or the configured maximum is reached.
     pub gps_on_time: Duration,
     pub gps_off_time: Duration,
     pub first_search_time: Duration,
@@ -89,6 +127,8 @@ pub struct GpsConfig {
     /// Keep the receiver continuously active after its first fix until a
     /// `FrequencyCalibrationLocked` command is received from the Time Service.
     pub wait_for_frequency_calibration_lock: bool,
+    /// Optional phase-qualified post-calibration shutdown policy.
+    pub phase_qualified_shutdown: Option<PhaseQualifiedShutdownConfig>,
     pub search_time: Duration,
     /// Reserved for a future search-window backoff/escalation policy. Search
     /// timeouts currently retain the standard fixed on/off duty cycle and do
@@ -110,6 +150,7 @@ impl Default for GpsConfig {
             first_search_time: Duration::from_secs(15 * 60),
             initial_calibration_time: Duration::from_secs(10 * 60),
             wait_for_frequency_calibration_lock: false,
+            phase_qualified_shutdown: None,
             search_time: Duration::from_secs(90),
             search_failure_threshold: 10,
             initial_start_mode: StartMode::Hot,
@@ -220,6 +261,12 @@ pub struct GpsStats {
     pub initial_calibration_complete: bool,
     pub num_reacquisition_attempts: u32,
     pub num_reacquisition_successes: u32,
+    pub phase_qualification_active: bool,
+    pub phase_qualification_streak: u8,
+    pub last_phase_residual_us: Option<i64>,
+    pub last_phase_uncertainty_us: u64,
+    pub num_phase_qualified_shutdowns: u32,
+    pub num_phase_convergence_timeouts: u32,
 }
 
 impl Default for GpsStats {
@@ -245,6 +292,12 @@ impl Default for GpsStats {
             initial_calibration_complete: false,
             num_reacquisition_attempts: 0,
             num_reacquisition_successes: 0,
+            phase_qualification_active: false,
+            phase_qualification_streak: 0,
+            last_phase_residual_us: None,
+            last_phase_uncertainty_us: u64::MAX,
+            num_phase_qualified_shutdowns: 0,
+            num_phase_convergence_timeouts: 0,
         }
     }
 }
