@@ -66,6 +66,7 @@ members = [
     "unitsmoke/30_exfat_write",
     "unitsmoke/31_sd_inspect",
     "unitsmoke/32_lightranger_i2c",
+    "unitsmoke/33_power_profile",
 ]
 
 [workspace.package]

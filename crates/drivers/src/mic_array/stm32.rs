@@ -1,5 +1,6 @@
 //! STM32U595 MDF1/GPDMA implementation.
 
+use core::future::Future;
 use core::marker::PhantomPinned;
 use core::pin::{pin, Pin};
 use core::ptr;
@@ -13,7 +14,7 @@ use embassy_stm32::peripherals::{PB8, PC2, PD3, PD6, PE4, PE7};
 use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Instant, TICK_HZ};
+use embassy_time::{Duration, Instant, Timer, TICK_HZ};
 
 use super::stm32_config::*;
 use super::{
@@ -264,6 +265,80 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
 
     pub const fn resolved_config(&self) -> ResolvedConfig {
         self.config
+    }
+
+    /// Runs a finite mono-then-hexaphonic capture while discarding samples.
+    ///
+    /// This is intended for peripheral power profiling: channel 0 and CCK0
+    /// run during `mono_duration`, then all six filters, DMA channels and both
+    /// microphone clocks run during `hex_duration`. `before_hex_measurement`
+    /// runs after the six-channel hardware is active, allowing a caller to
+    /// emit an out-of-band state marker before the timed measurement begins.
+    /// MDF, GPDMA and all microphone pins are shut down before this returns.
+    pub async fn run_staged_discarding<F, Fut>(
+        self,
+        mono_duration: Duration,
+        before_hex_measurement: F,
+        hex_duration: Duration,
+    ) where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = ()>,
+    {
+        let Self {
+            pins,
+            dma,
+            resources,
+            config,
+        } = self;
+        let mut configured_pins = configure_staged_pins(pins);
+
+        let half = BUFFER / 2;
+        let buffers = resources.buffers.get().cast::<[u32; BUFFER]>();
+        let mut mic1 = make_ring(dma.ch0, 0, unsafe { &mut *buffers.add(0) });
+        let mut mic2 = make_ring(dma.ch1, 1, unsafe { &mut *buffers.add(1) });
+        let mut mic3 = make_ring(dma.ch2, 2, unsafe { &mut *buffers.add(2) });
+        let mut mic4 = make_ring(dma.ch3, 3, unsafe { &mut *buffers.add(3) });
+        let mut mic5 = make_ring(dma.ch4, 4, unsafe { &mut *buffers.add(4) });
+        let mut mic6 = make_ring(dma.ch5, 5, unsafe { &mut *buffers.add(5) });
+
+        mic1.set_alignment(half);
+        mic2.set_alignment(half);
+        mic3.set_alignment(half);
+        mic4.set_alignment(half);
+        mic5.set_alignment(half);
+        mic6.set_alignment(half);
+
+        let mut mono_config = config;
+        mono_config.requested.mode = MicrophoneMode::Mono;
+        configure_mdf(mono_config);
+        mic1.start();
+        enable_filters(MicrophoneMode::Mono);
+        Timer::after(mono_duration).await;
+
+        disable_filters();
+        configure_mdf(config);
+        mic2.start();
+        mic3.start();
+        mic4.start();
+        mic5.start();
+        mic6.start();
+        enable_filters(MicrophoneMode::Hexaphonic);
+        before_hex_measurement().await;
+        Timer::after(hex_duration).await;
+
+        disable_filters();
+        mic1.request_reset();
+        mic2.request_reset();
+        mic3.request_reset();
+        mic4.request_reset();
+        mic5.request_reset();
+        mic6.request_reset();
+        drop((mic1, mic2, mic3, mic4, mic5, mic6));
+        pac::RCC.ahb1enr().modify(|w| w.set_mdf1en(false));
+        for pin in &mut configured_pins {
+            pin.set_as_analog();
+        }
+        resources.state.sender().send(CaptureState::default());
     }
 
     /// Runs continuous capture. DMA errors are published and capture resumes.
@@ -640,6 +715,24 @@ fn configure_pins(pins: Pins<'_>) {
     }
 }
 
+fn configure_staged_pins(pins: Pins<'_>) -> [Flex<'_>; 6] {
+    let mut pins = [
+        Flex::new(pins.cck0.into::<AnyPin>()),
+        Flex::new(pins.sd0.into::<AnyPin>()),
+        Flex::new(pins.cck1.into::<AnyPin>()),
+        Flex::new(pins.sd1.into::<AnyPin>()),
+        Flex::new(pins.sd2.into::<AnyPin>()),
+        Flex::new(pins.sd3.into::<AnyPin>()),
+    ];
+    pins[0].set_as_af_unchecked(5, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+    pins[1].set_as_af_unchecked(6, AfType::input(Pull::None));
+    pins[2].set_as_af_unchecked(6, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+    for pin in &mut pins[3..] {
+        pin.set_as_af_unchecked(6, AfType::input(Pull::None));
+    }
+    pins
+}
+
 fn configure_mono_pins(pins: MonoPins<'_>) {
     let mut cck0 = Flex::new(pins.cck0);
     cck0.set_as_af_unchecked(5, AfType::output(OutputType::PushPull, Speed::VeryHigh));
@@ -717,6 +810,12 @@ fn configure_mdf(config: ResolvedConfig) {
 fn enable_filters(mode: MicrophoneMode) {
     for filter in 0..mode.channel_count() {
         write(register(MDF_DFLTCR0, filter), (1 << 0) | (1 << 1));
+    }
+}
+
+fn disable_filters() {
+    for filter in FILTERS {
+        write(register(MDF_DFLTCR0, filter), 0);
     }
 }
 
