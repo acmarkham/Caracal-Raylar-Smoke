@@ -1,5 +1,6 @@
 use raylar_audiosource::{AudioSource, Error as AudioSourceError, Reader, ReaderStart};
 use raylar_storage_service::StorageLayout;
+use raylar_time_service::UtcTimestamp;
 
 use crate::wav::WavError;
 use crate::{MetadataSource, RecordingStorage, WavContainer};
@@ -11,6 +12,7 @@ pub const DEFAULT_ENCODE_BUFFER_BYTES: usize = 16 * 1_024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct AudioRecorderConfig {
+    /// Recording duration and UTC alignment interval in seconds.
     pub recording_seconds: u32,
     pub storage_layout: StorageLayout,
 }
@@ -56,8 +58,12 @@ pub struct AudioRecorder<
     container: WavContainer,
     storage_layout: StorageLayout,
     stream: Option<S::Handle>,
+    sample_rate_hz: u32,
+    frame_samples: usize,
+    regular_samples_per_recording: usize,
     samples_per_recording: usize,
     samples_in_recording: usize,
+    next_recording_started_utc: Option<UtcTimestamp>,
     encoded: [u8; ENCODE_BYTES],
 }
 
@@ -108,8 +114,12 @@ where
             container,
             storage_layout: config.storage_layout,
             stream: None,
+            sample_rate_hz: format.sample_rate_hz,
+            frame_samples,
+            regular_samples_per_recording: samples_per_recording,
             samples_per_recording,
             samples_in_recording: 0,
+            next_recording_started_utc: None,
             encoded: [0; ENCODE_BYTES],
         })
     }
@@ -118,10 +128,12 @@ where
         if self.stream.is_some() {
             return Ok(());
         }
-        self.begin_recording().await?;
-        // Storage setup may take seconds. The logical recording begins only
-        // after its header is durable, so setup-time audio is not an overrun.
+        // Establish the audio cursor immediately before taking the UTC
+        // snapshot in `begin_recording`. Samples produced while the storage
+        // stream is opened and its header is written remain in the source's
+        // retention buffer, preserving the planned UTC boundary.
         self.reader.seek_to_latest();
+        self.begin_recording().await?;
         Ok(())
     }
 
@@ -181,6 +193,9 @@ where
         if self.stream.is_some() {
             self.finish_recording().await?;
         }
+        // A later start is a new recording set whose first file may begin at
+        // its then-current (unaligned) UTC time.
+        self.next_recording_started_utc = None;
         Ok(())
     }
 
@@ -192,22 +207,45 @@ where
     }
 
     async fn begin_recording(&mut self) -> Result<(), AudioRecorderError<S::Error>> {
-        let metadata = self
+        let mut metadata = self
             .metadata
             .snapshot()
             .ok_or(AudioRecorderError::TimeUnavailable)?;
+        let (samples_per_recording, next_recording_started_utc) =
+            if let Some(started_utc) = self.next_recording_started_utc {
+                metadata.started_utc = started_utc;
+                let next = started_utc
+                    .seconds
+                    .checked_add(self.container.declared_file_seconds().into())
+                    .and_then(|seconds| UtcTimestamp::new(seconds, 0))
+                    .ok_or(AudioRecorderError::InvalidConfig)?;
+                (self.regular_samples_per_recording, next)
+            } else {
+                first_recording_plan(
+                    metadata.started_utc,
+                    self.container.declared_file_seconds(),
+                    self.sample_rate_hz,
+                    self.frame_samples,
+                )
+                .ok_or(AudioRecorderError::InvalidConfig)?
+            };
+        let header = self
+            .container
+            .header_for_samples(&metadata, samples_per_recording)
+            .map_err(|_| AudioRecorderError::InvalidConfig)?;
         let stream = self
             .storage
-            .begin_audio_stream(self.storage_layout)
+            .begin_audio_stream(self.storage_layout, metadata.started_utc)
             .await
             .map_err(AudioRecorderError::Storage)?;
-        let header = self.container.header(&metadata);
         if let Err(error) = self.storage.append_audio(stream, &header).await {
             let _ = self.storage.finish_audio(stream).await;
             return Err(AudioRecorderError::Storage(error));
         }
         self.stream = Some(stream);
+        self.samples_per_recording = samples_per_recording;
         self.samples_in_recording = 0;
+        self.next_recording_started_utc = Some(next_recording_started_utc);
         Ok(())
     }
 
@@ -218,6 +256,33 @@ where
             .await
             .map_err(AudioRecorderError::Storage)
     }
+}
+
+fn first_recording_plan(
+    started_utc: UtcTimestamp,
+    recording_seconds: u32,
+    sample_rate_hz: u32,
+    frame_samples: usize,
+) -> Option<(usize, UtcTimestamp)> {
+    let interval_us = i128::from(recording_seconds) * 1_000_000;
+    let started_us =
+        i128::from(started_utc.seconds) * 1_000_000 + i128::from(started_utc.microseconds);
+    let offset_us = started_us.rem_euclid(interval_us);
+    let duration_us = if offset_us == 0 {
+        interval_us
+    } else {
+        interval_us - offset_us
+    };
+    let frames = duration_us
+        .checked_mul(i128::from(sample_rate_hz))?
+        .checked_add(999_999)?
+        / 1_000_000;
+    let interleaved_samples = usize::try_from(frames).ok()?.checked_mul(frame_samples)?;
+    let next_started_us = i64::try_from(started_us.checked_add(duration_us)?).ok()?;
+    Some((
+        interleaved_samples,
+        UtcTimestamp::from_micros(next_started_us),
+    ))
 }
 
 #[cfg(test)]
@@ -246,6 +311,7 @@ mod tests {
     struct MockStorage {
         writes: Vec<Vec<u8>>,
         layouts: Vec<StorageLayout>,
+        starts: Vec<UtcTimestamp>,
         finishes: usize,
         next_handle: u8,
     }
@@ -257,8 +323,10 @@ mod tests {
         async fn begin_audio_stream(
             &mut self,
             layout: StorageLayout,
+            started_utc: UtcTimestamp,
         ) -> Result<Self::Handle, Self::Error> {
             self.layouts.push(layout);
+            self.starts.push(started_utc);
             self.next_handle += 1;
             Ok(self.next_handle)
         }
@@ -358,5 +426,52 @@ mod tests {
         assert_eq!(second.pcm_samples, 2);
         assert!(first.rotated);
         assert!(second.rotated);
+    }
+
+    struct PartialMinuteMetadata;
+
+    impl MetadataSource for PartialMinuteMetadata {
+        fn snapshot(&self) -> Option<RecordingMetadata> {
+            Some(RecordingMetadata::new(
+                UtcTimestamp::new(1_700_000_038, 500_000).unwrap(),
+            ))
+        }
+    }
+
+    #[test]
+    fn first_recording_is_shortened_then_successors_start_on_the_boundary() {
+        let source = AudioSource::<128, 1>::new(AudioFormat::new(4, 1, 1_000_000));
+        let config = AudioRecorderConfig {
+            recording_seconds: 60,
+            storage_layout: StorageLayout::HourlyFolders,
+        };
+        let mut recorder = AudioRecorder::<_, _, 128, 1, 64>::new(
+            &source,
+            MockStorage::default(),
+            PartialMinuteMetadata,
+            config,
+        )
+        .unwrap();
+
+        block_on(recorder.start()).unwrap();
+        // 1_700_000_040 is the next multiple of 60: 1.5 seconds, or six frames.
+        source.write(&[1, 2, 3, 4, 5, 6], 0).unwrap();
+        let progress = block_on(recorder.record_next()).unwrap();
+
+        assert!(progress.rotated);
+        assert_eq!(recorder.storage().starts.len(), 2);
+        assert_eq!(recorder.storage().starts[0].seconds, 1_700_000_038);
+        assert_eq!(recorder.storage().starts[0].microseconds, 500_000);
+        assert_eq!(recorder.storage().starts[1].seconds, 1_700_000_040);
+        assert_eq!(recorder.storage().starts[1].microseconds, 0);
+        assert_eq!(recorder.storage().starts[1].seconds % 60, 0);
+        assert_eq!(
+            u32::from_le_bytes(recorder.storage().writes[0][508..512].try_into().unwrap()),
+            24
+        );
+        assert_eq!(
+            u32::from_le_bytes(recorder.storage().writes[2][508..512].try_into().unwrap()),
+            960
+        );
     }
 }

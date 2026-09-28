@@ -47,7 +47,7 @@ pub(crate) fn stream_path<E>(
 
     match kind {
         StreamKind::Log => write!(&mut path, "/log_{timestamp}_{sequence}.txt"),
-        StreamKind::Audio => write!(&mut path, "/aud_{timestamp}_{sequence}.wav"),
+        StreamKind::Audio => write!(&mut path, "/aud_{timestamp}.wav"),
         StreamKind::GpsTiming => write!(&mut path, "/gps_{timestamp}_{sequence}.pps"),
     }
     .map_err(|_| StorageServiceError::InvalidPath)?;
@@ -85,7 +85,7 @@ mod tests {
             7,
         )
         .unwrap();
-        assert_eq!(path.as_str(), "/1783987200/aud_1784016510_7.wav");
+        assert_eq!(path.as_str(), "/1783987200/aud_1784016510.wav");
     }
 
     #[test]

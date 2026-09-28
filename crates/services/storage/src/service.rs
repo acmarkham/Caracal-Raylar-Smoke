@@ -1,4 +1,4 @@
-use raylar_drivers::storage::{BLOCK_BYTES, StorageDeviceIdentity};
+use raylar_drivers::storage::{StorageDeviceIdentity, BLOCK_BYTES};
 use raylar_time_service::{TimeResources, UtcTimestamp};
 
 use crate::backend::StorageBackend;
@@ -72,6 +72,31 @@ where
         kind: StreamKind,
         layout: StorageLayout,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        let timestamp = self.clock.current_utc().map(|now| now.seconds);
+        self.begin_stream_with_timestamp(kind, layout, timestamp)
+            .await
+    }
+
+    /// Begin a stream using an explicit logical start time.
+    ///
+    /// This is used by timestamp-aligned producers whose data boundary can
+    /// precede the filesystem open by a small amount.
+    pub async fn begin_stream_at(
+        &mut self,
+        kind: StreamKind,
+        layout: StorageLayout,
+        started_utc: UtcTimestamp,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.begin_stream_with_timestamp(kind, layout, Some(started_utc.seconds))
+            .await
+    }
+
+    async fn begin_stream_with_timestamp(
+        &mut self,
+        kind: StreamKind,
+        layout: StorageLayout,
+        timestamp: Option<i64>,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         let index = self
             .slots
             .iter()
@@ -79,7 +104,6 @@ where
             .ok_or(StorageServiceError::TooManyStreams)?;
         let generation = self.generations[index].wrapping_add(1);
         let sequence = self.stream_sequence.wrapping_add(1);
-        let timestamp = self.clock.current_utc().map(|now| now.seconds);
         let path = stream_path(kind, layout, timestamp, sequence)?;
         if let Some(folder) = folder_path::<B::Error>(path.as_str())? {
             self.backend

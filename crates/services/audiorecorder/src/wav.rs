@@ -20,7 +20,7 @@ pub enum WavError {
 /// PCM WAV header generator owned by the recorder service.
 pub struct WavContainer {
     format: AudioFormat,
-    declared_file_seconds: u32,
+    declared_data_bytes: u32,
 }
 
 impl WavContainer {
@@ -33,19 +33,47 @@ impl WavContainer {
             .checked_mul(u32::from(format.channels))
             .and_then(|value| value.checked_mul(4))
             .ok_or(WavError::DataSizeOverflow)?;
-        bytes_per_second
+        let declared_data_bytes = bytes_per_second
             .checked_mul(declared_file_seconds)
             .ok_or(WavError::DataSizeOverflow)?;
         Ok(Self {
             format,
-            declared_file_seconds,
+            declared_data_bytes,
         })
     }
 
     pub fn header(&self, metadata: &RecordingMetadata) -> [u8; WAV_HEADER_BYTES] {
+        self.header_with_data_bytes(metadata, self.declared_data_bytes)
+    }
+
+    pub(crate) const fn declared_file_seconds(&self) -> u32 {
+        let bytes_per_second = self.format.sample_rate_hz * self.format.channels as u32 * 4;
+        self.declared_data_bytes / bytes_per_second
+    }
+
+    pub fn header_for_samples(
+        &self,
+        metadata: &RecordingMetadata,
+        interleaved_samples: usize,
+    ) -> Result<[u8; WAV_HEADER_BYTES], WavError> {
+        if !interleaved_samples.is_multiple_of(usize::from(self.format.channels)) {
+            return Err(WavError::InvalidFormat);
+        }
+        let data_bytes = u32::try_from(interleaved_samples)
+            .ok()
+            .and_then(|samples| samples.checked_mul(4))
+            .filter(|bytes| *bytes <= self.declared_data_bytes)
+            .ok_or(WavError::DataSizeOverflow)?;
+        Ok(self.header_with_data_bytes(metadata, data_bytes))
+    }
+
+    fn header_with_data_bytes(
+        &self,
+        metadata: &RecordingMetadata,
+        data_bytes: u32,
+    ) -> [u8; WAV_HEADER_BYTES] {
         let mut header = [0; WAV_HEADER_BYTES];
         let byte_rate = self.format.sample_rate_hz * u32::from(self.format.channels) * 4;
-        let data_bytes = byte_rate * self.declared_file_seconds;
 
         put_id(&mut header, 0, b"RIFF");
         put_u32(

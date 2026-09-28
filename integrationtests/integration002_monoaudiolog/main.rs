@@ -61,7 +61,7 @@ use raylar_sensor_service::{
 use raylar_storage_service::{
     StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, StreamKind,
 };
-use raylar_time_service::TimeResources;
+use raylar_time_service::{TimeResources, UtcTimestamp};
 use raylar_versioning_service::{
     IdentityConfig, IdentityField, IdentityResources, IdentityState, IdentityVersioningService,
 };
@@ -453,6 +453,19 @@ where
             .begin_stream(kind, layout)
             .await
     }
+    async fn begin_at(
+        &self,
+        kind: StreamKind,
+        layout: StorageLayout,
+        started_utc: UtcTimestamp,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.inner
+            .lock()
+            .await
+            .borrow_mut()
+            .begin_stream_at(kind, layout, started_utc)
+            .await
+    }
     async fn write(
         &self,
         stream: StreamHandle,
@@ -495,11 +508,15 @@ where
     async fn begin_audio_stream(
         &mut self,
         layout: StorageLayout,
+        started_utc: UtcTimestamp,
     ) -> Result<Self::Handle, Self::Error> {
         let started = Instant::now();
         info!("RTT audio boundary: begin stream start");
         let result = AUDIO_STORAGE_PROFILE
-            .instrument(self.storage.begin(StreamKind::Audio, layout))
+            .instrument(
+                self.storage
+                    .begin_at(StreamKind::Audio, layout, started_utc),
+            )
             .await;
         let elapsed_us = Instant::now()
             .saturating_duration_since(started)

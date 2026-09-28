@@ -2,6 +2,7 @@ use raylar_storage_service::{
     StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, StreamKind,
     UtcClock,
 };
+use raylar_time_service::UtcTimestamp;
 
 #[allow(async_fn_in_trait)]
 pub trait RecordingStorage {
@@ -11,6 +12,7 @@ pub trait RecordingStorage {
     async fn begin_audio_stream(
         &mut self,
         layout: StorageLayout,
+        started_utc: UtcTimestamp,
     ) -> Result<Self::Handle, Self::Error>;
     async fn append_audio(&mut self, stream: Self::Handle, bytes: &[u8])
         -> Result<(), Self::Error>;
@@ -29,8 +31,10 @@ where
     async fn begin_audio_stream(
         &mut self,
         layout: StorageLayout,
+        started_utc: UtcTimestamp,
     ) -> Result<StreamHandle, Self::Error> {
-        self.begin_stream(StreamKind::Audio, layout).await
+        self.begin_stream_at(StreamKind::Audio, layout, started_utc)
+            .await
     }
 
     async fn append_audio(
