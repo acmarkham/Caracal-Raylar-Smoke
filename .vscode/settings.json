@@ -5,6 +5,7 @@
     "rust-analyzer.check.overrideCommand": [
         "cargo",
         "check",
+        "--release",
         "--workspace",
         "--target",
         "thumbv8m.main-none-eabihf",

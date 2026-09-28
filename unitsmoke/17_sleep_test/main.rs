@@ -10,7 +10,7 @@
 #![no_std]
 #![no_main]
 
-use defmt::{info, unwrap};
+use core::panic::PanicInfo;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Flex, Level, Output, Pin, Speed};
 use embassy_stm32::rcc::*;
@@ -18,7 +18,36 @@ use embassy_stm32::time::mhz;
 use embassy_stm32::usart::{Config as UartConfig, DataBits, Parity, StopBits, UartTx};
 use embassy_stm32::Peri;
 use embassy_time::{Duration, Timer};
-use {defmt_rtt as _, panic_probe as _};
+use embedded_alloc::LlffHeap as Heap;
+use raylar_drivers::stm32_core::stm32::Stm32CoreDriver;
+use raylar_drivers::stm32_core::{CoreConfig, CoreSupply};
+
+const HEAP_BYTES: usize = 8 * 1024;
+
+#[global_allocator]
+static HEAP: Heap = Heap::empty();
+
+// Embassy is built with its workspace-wide `defmt` feature, so a logger symbol
+// is required. Discard frames locally instead of linking the RTT transport.
+#[defmt::global_logger]
+struct DisabledLogger;
+
+unsafe impl defmt::Logger for DisabledLogger {
+    fn acquire() {}
+
+    unsafe fn flush() {}
+
+    unsafe fn release() {}
+
+    unsafe fn write(_bytes: &[u8]) {}
+}
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        cortex_m::asm::wfi();
+    }
+}
 
 fn park_analog(pin: Peri<'static, impl Pin>) -> Flex<'static> {
     let mut pin = Flex::new(pin);
@@ -28,10 +57,18 @@ fn park_analog(pin: Peri<'static, impl Pin>) -> Flex<'static> {
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) -> ! {
-    info!("17_sleep_test main entered");
-    defmt::flush();
+    unsafe {
+        embedded_alloc::init!(HEAP, HEAP_BYTES);
+    }
 
     let mut config = embassy_stm32::Config::default();
+
+    // Keep the 80 MHz HSE/PLL1 clock tree, but turn off unused default
+    // oscillators and prevent the debug block from remaining clocked in sleep.
+    config.rcc.msis = None;
+    config.rcc.msik = None;
+    config.rcc.hsi48 = None;
+    config.enable_debug_during_sleep = false;
 
     config.rcc.hse = Some(Hse {
         freq: mhz(16),
@@ -50,8 +87,20 @@ async fn main(_spawner: Spawner) -> ! {
     config.rcc.sys = Sysclk::PLL1_R;
 
     let p = embassy_stm32::init(config);
-    info!("STM32 init complete");
-    defmt::flush();
+
+    let core_supply = if cfg!(feature = "core-smps") {
+        CoreSupply::Smps
+    } else {
+        CoreSupply::Ldo
+    };
+    let _core_driver = match Stm32CoreDriver::init(CoreConfig {
+        supply: core_supply,
+    }) {
+        Ok(driver) => driver,
+        Err(_) => loop {
+            cortex_m::asm::wfi();
+        },
+    };
     let mut sys_gps_green = Output::new(p.PB4, Level::Low, Speed::Low);
     let mut sys_gps_red = Output::new(p.PD7, Level::Low, Speed::Low);
     let mut sys_main_red = Output::new(p.PB15, Level::Low, Speed::Low);
@@ -66,9 +115,7 @@ async fn main(_spawner: Spawner) -> ! {
 
     gps_en.set_low();
     gps_rst.set_high();
-    info!("GPS_EN=HIGH GPS_RST=HIGH, sending L86 standby command");
-    Timer::after_millis(250).await;
-    info!("GPS standby command settle complete");
+    Timer::after_millis(2500).await;
 
     let mut gps_uart_config = UartConfig::default();
     gps_uart_config.baudrate = 9_600;
@@ -76,20 +123,18 @@ async fn main(_spawner: Spawner) -> ! {
     gps_uart_config.parity = Parity::ParityNone;
     gps_uart_config.stop_bits = StopBits::STOP1;
 
-    let mut gps_uart = unwrap!(UartTx::new_blocking(p.USART2, p.PA2, gps_uart_config));
-    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
-    Timer::after(Duration::from_millis(250)).await;
-    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
-    Timer::after(Duration::from_millis(250)).await;
-    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
-    Timer::after(Duration::from_millis(250)).await;
-    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
-    Timer::after(Duration::from_millis(250)).await;
-    unwrap!(gps_uart.blocking_write(b"$PMTK161,0*28\r\n"));
-    unwrap!(gps_uart.blocking_flush());
-    drop(gps_uart);
-    info!("GPS standby command sent");
-    defmt::flush();
+    if let Ok(mut gps_uart) = UartTx::new_blocking(p.USART2, p.PA2, gps_uart_config) {
+        let _ = gps_uart.blocking_write(b"$PMTK161,0*28\r\n");
+        Timer::after(Duration::from_millis(250)).await;
+        let _ = gps_uart.blocking_write(b"$PMTK161,0*28\r\n");
+        Timer::after(Duration::from_millis(250)).await;
+        let _ = gps_uart.blocking_write(b"$PMTK161,0*28\r\n");
+        Timer::after(Duration::from_millis(250)).await;
+        let _ = gps_uart.blocking_write(b"$PMTK161,0*28\r\n");
+        Timer::after(Duration::from_millis(250)).await;
+        let _ = gps_uart.blocking_write(b"$PMTK161,0*28\r\n");
+        let _ = gps_uart.blocking_flush();
+    }
 
     let _parked_unused_pins = (
         park_analog(p.PE2),
@@ -124,21 +169,11 @@ async fn main(_spawner: Spawner) -> ! {
     rf_cs.set_low();
     rf_nrst.set_low();
 
-    info!("17_sleep_test started");
-    info!("GPS standby requested, SD off, radio held in reset");
-    info!("Unused GPIOs parked in analog mode");
-    info!("STM32 sleep/standby disabled while debugging GPS UART");
-    defmt::flush();
-
     loop {
         sys_main_red.set_high();
-        info!("CPU awake, red LED on");
-        defmt::flush();
         Timer::after_secs(1).await;
 
         sys_main_red.set_low();
-        info!("CPU awake, red LED off");
-        defmt::flush();
         Timer::after_secs(1).await;
     }
 }

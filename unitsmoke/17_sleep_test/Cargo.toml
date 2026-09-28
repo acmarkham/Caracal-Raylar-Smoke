@@ -12,17 +12,24 @@ test = false
 bench = false
 
 [dependencies]
+raylar-drivers = { path = "../../crates/drivers", features = ["stm32"] }
 embassy-stm32.workspace = true
 embassy-executor.workspace = true
 embassy-time.workspace = true
 defmt.workspace = true
-defmt-rtt.workspace = true
-panic-probe.workspace = true
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
+embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"] }
 
 [features]
-trustzone-secure = ["embassy-stm32/trustzone-secure"]
+default = ["core-smps"]
+# Raylar v1.0 fits the SMPS inductor and uses the STM32U595 Q package. Disable
+# default features to retain the internal LDO for comparison or diagnosis.
+core-smps = []
+trustzone-secure = [
+    "embassy-stm32/trustzone-secure",
+    "raylar-drivers/trustzone-secure",
+]
 
 [package.metadata.embassy]
 build = [
