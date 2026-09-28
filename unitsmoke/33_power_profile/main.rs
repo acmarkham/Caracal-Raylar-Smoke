@@ -1,19 +1,20 @@
-//! Ten-state board power profile.
+//! Eleven-state board power profile.
 //!
-//! States 1-9 provide an eight-second steady measurement window after the red
-//! entry marker has completed. State 10 is terminal STOP2 with HSE disabled.
+//! States 1-10 provide an eight-second steady measurement window after the red
+//! entry marker has completed. State 11 is terminal STOP2 with HSE disabled.
 //!
 //!
 //! #1: unit_smoke_17 settings (gpio analog, RF off, GPS off, SD off, HSE on, 80MHz)
 //! #2: mount SD card (i.e. storage service active) but no explicit writes
 //! #3: Sustained writing to SD card
-//! #4 Unmount and turn SD card off with SD_PWR pin
-//! #5 mono mic enabled (MCO output) according to integration_test002 settings along with MDF filters+ DMA (just dump the data, don't process it)
-//! #6 All mics enabled (both MCO active) along with MDF filters + DMA
-//! #7 All Mics off
-//! #8 GPS on
-//! #9 GPS in standby
-//! #10 (terminal state): HSE off, STM core into STOP mode
+//! #4: Write one 512-byte block to SD every second
+//! #5: Unmount and turn SD card off with SD_PWR pin
+//! #6: Mono mic enabled (MCO output) according to integration_test002 settings along with MDF filters+ DMA (just dump the data, don't process it)
+//! #7: All mics enabled (both MCO active) along with MDF filters + DMA
+//! #8: All Mics off
+//! #9: GPS on
+//! #10: GPS in standby
+//! #11 (terminal state): HSE off, STM core into STOP mode
 //!
 //!
 
@@ -59,6 +60,7 @@ const DMA_SAMPLES: usize = HALF_SAMPLES * 2;
 const MIC_CONFIG: MicrophoneConfig =
     MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf);
 const WRITE_DATA: [u8; 4096] = [0xa5; 4096];
+const WRITE_BLOCK: [u8; 512] = [0x5a; 512];
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -246,7 +248,7 @@ async fn main(_spawner: Spawner) -> ! {
     // then repeatedly request standby before taking the baseline reading.
     Timer::after_millis(2_500).await;
     // SAFETY: these duplicate tokens are used only by this short-lived UART.
-    // It is dropped before the original USART2/PA2 tokens are used in state 9.
+    // It is dropped before the original USART2/PA2 tokens are used in state 10.
     let startup_usart = unsafe { gps_usart.clone_unchecked() };
     let startup_tx = unsafe { gps_tx.clone_unchecked() };
     let mut startup_uart = match UartTx::new_blocking(startup_usart, startup_tx, gps_uart_config())
@@ -303,56 +305,76 @@ async fn main(_spawner: Spawner) -> ! {
         }
     }
 
-    // #4: close the stream, release SDMMC/filesystem state, then remove card power.
+    // #4: append exactly one service block per second for eight seconds.
+    enter_state(&mut sys_main_red, 4).await;
+    let periodic_start = Instant::now();
+    for second in 0..STATE_DURATION.as_secs() {
+        if second != 0 {
+            Timer::at(periodic_start + Duration::from_secs(second)).await;
+        }
+        if storage.write(stream, &WRITE_BLOCK).await.is_err() {
+            fail(&mut sys_main_red).await;
+        }
+    }
+    Timer::at(periodic_start + STATE_DURATION).await;
+
+    // #5: close the stream, release SDMMC/filesystem state, then remove card power.
     if storage.finish(stream).await.is_err() {
         fail(&mut sys_main_red).await;
     }
     let _sd_power = storage.into_inner().power_off();
-    enter_state(&mut sys_main_red, 4).await;
+    enter_state(&mut sys_main_red, 5).await;
     Timer::after(STATE_DURATION).await;
 
-    // #5/#6: integration-002 audio settings, first CCK0/filter0/DMA0 only,
+    // #6/#7: integration-002 audio settings, first CCK0/filter0/DMA0 only,
     // then both clocks and all six MDF filters/DMA channels. Data is discarded.
     set_pll3_enabled(true);
     let microphone = match microphone_driver(pdm_mic_array) {
         Ok(driver) => driver,
         Err(_) => fail(&mut sys_main_red).await,
     };
-    enter_state(&mut sys_main_red, 5).await;
+    enter_state(&mut sys_main_red, 6).await;
     microphone
         .run_staged_discarding(
             STATE_DURATION,
-            || enter_state(&mut sys_main_red, 6),
+            || enter_state(&mut sys_main_red, 7),
             STATE_DURATION,
         )
         .await;
     set_pll3_enabled(false);
 
-    // #7: the finite capture has disabled MDF/GPDMA and parked all mic pins.
-    enter_state(&mut sys_main_red, 7).await;
-    Timer::after(STATE_DURATION).await;
-
-    // #8: GPS powered and released from reset.
-    gps_en.set_high();
-    gps_rst.set_high();
+    // #8: the finite capture has disabled MDF/GPDMA and parked all mic pins.
     enter_state(&mut sys_main_red, 8).await;
     Timer::after(STATE_DURATION).await;
 
-    // #9: request GPS standby, then drop USART so only GPS standby remains.
+    // #9: GPS powered and released from reset.
+    gps_en.set_high();
+    gps_rst.set_high();
+    enter_state(&mut sys_main_red, 9).await;
+    Timer::after(STATE_DURATION).await;
+
+    // #10: repeatedly request GPS standby, then drop USART so only GPS standby remains.
     let mut gps_uart = match UartTx::new_blocking(gps_usart, gps_tx, gps_uart_config()) {
         Ok(uart) => uart,
         Err(_) => fail(&mut sys_main_red).await,
     };
-    if gps_uart.blocking_write(b"$PMTK161,0*28\r\n").is_err() || gps_uart.blocking_flush().is_err()
-    {
+    for attempt in 0..4 {
+        if gps_uart.blocking_write(b"$PMTK161,0*28\r\n").is_err() {
+            fail(&mut sys_main_red).await;
+        }
+        if attempt != 3 {
+            Timer::after_millis(250).await;
+        }
+    }
+    if gps_uart.blocking_flush().is_err() {
         fail(&mut sys_main_red).await;
     }
     drop(gps_uart);
-    enter_state(&mut sys_main_red, 9).await;
+    enter_state(&mut sys_main_red, 10).await;
     Timer::after(STATE_DURATION).await;
 
-    // #10: terminal marker, then move SYSCLK off HSE and enter STOP2 forever.
-    enter_state(&mut sys_main_red, 10).await;
+    // #11: terminal marker, then move SYSCLK off HSE and enter STOP2 forever.
+    enter_state(&mut sys_main_red, 11).await;
     sys_main_red.set_low();
     drop(sys_main_red);
     enter_terminal_stop2()
