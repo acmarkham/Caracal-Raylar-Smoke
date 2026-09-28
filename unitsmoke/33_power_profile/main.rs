@@ -2,6 +2,20 @@
 //!
 //! States 1-9 provide an eight-second steady measurement window after the red
 //! entry marker has completed. State 10 is terminal STOP2 with HSE disabled.
+//!
+//!
+//! #1: unit_smoke_17 settings (gpio analog, RF off, GPS off, SD off, HSE on, 80MHz)
+//! #2: mount SD card (i.e. storage service active) but no explicit writes
+//! #3: Sustained writing to SD card
+//! #4 Unmount and turn SD card off with SD_PWR pin
+//! #5 mono mic enabled (MCO output) according to integration_test002 settings along with MDF filters+ DMA (just dump the data, don't process it)
+//! #6 All mics enabled (both MCO active) along with MDF filters + DMA
+//! #7 All Mics off
+//! #8 GPS on
+//! #9 GPS in standby
+//! #10 (terminal state): HSE off, STM core into STOP mode
+//!
+//!
 
 #![no_std]
 #![no_main]
@@ -228,6 +242,31 @@ async fn main(_spawner: Spawner) -> ! {
     gps_rst.set_high();
     set_sd_detect_active(false);
 
+    // Match unit smoke 17: give the GPS rail/control state time to settle,
+    // then repeatedly request standby before taking the baseline reading.
+    Timer::after_millis(2_500).await;
+    // SAFETY: these duplicate tokens are used only by this short-lived UART.
+    // It is dropped before the original USART2/PA2 tokens are used in state 9.
+    let startup_usart = unsafe { gps_usart.clone_unchecked() };
+    let startup_tx = unsafe { gps_tx.clone_unchecked() };
+    let mut startup_uart = match UartTx::new_blocking(startup_usart, startup_tx, gps_uart_config())
+    {
+        Ok(uart) => uart,
+        Err(_) => fail(&mut sys_main_red).await,
+    };
+    for attempt in 0..5 {
+        if startup_uart.blocking_write(b"$PMTK161,0*28\r\n").is_err() {
+            fail(&mut sys_main_red).await;
+        }
+        if attempt != 4 {
+            Timer::after_millis(250).await;
+        }
+    }
+    if startup_uart.blocking_flush().is_err() {
+        fail(&mut sys_main_red).await;
+    }
+    drop(startup_uart);
+
     // #1: test-17 baseline, including SD/GPS/RF off and 80 MHz HSE SYSCLK.
     enter_state(&mut sys_main_red, 1).await;
     Timer::after(STATE_DURATION).await;
@@ -300,12 +339,7 @@ async fn main(_spawner: Spawner) -> ! {
     Timer::after(STATE_DURATION).await;
 
     // #9: request GPS standby, then drop USART so only GPS standby remains.
-    let mut uart_config = UartConfig::default();
-    uart_config.baudrate = 9_600;
-    uart_config.data_bits = DataBits::DataBits8;
-    uart_config.parity = Parity::ParityNone;
-    uart_config.stop_bits = StopBits::STOP1;
-    let mut gps_uart = match UartTx::new_blocking(gps_usart, gps_tx, uart_config) {
+    let mut gps_uart = match UartTx::new_blocking(gps_usart, gps_tx, gps_uart_config()) {
         Ok(uart) => uart,
         Err(_) => fail(&mut sys_main_red).await,
     };
@@ -431,6 +465,15 @@ async fn fail(led: &mut Output<'static>) -> ! {
         led.set_low();
         Timer::after_millis(40).await;
     }
+}
+
+fn gps_uart_config() -> UartConfig {
+    let mut config = UartConfig::default();
+    config.baudrate = 9_600;
+    config.data_bits = DataBits::DataBits8;
+    config.parity = Parity::ParityNone;
+    config.stop_bits = StopBits::STOP1;
+    config
 }
 
 fn set_pll3_enabled(enabled: bool) {
