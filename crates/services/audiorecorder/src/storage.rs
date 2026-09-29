@@ -19,8 +19,8 @@ pub trait RecordingStorage {
     async fn finish_audio(&mut self, stream: Self::Handle) -> Result<(), Self::Error>;
 }
 
-impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize> RecordingStorage
-    for StorageService<B, C, BLOCK_SIZE, MAX_STREAMS>
+impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize, const WRITE_BUFFER_BYTES: usize>
+    RecordingStorage for StorageService<B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES>
 where
     B: StorageBackend<BLOCK_SIZE>,
     C: UtcClock,

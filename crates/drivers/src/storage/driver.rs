@@ -1,6 +1,6 @@
-use exfat_slim::asynchronous::BlockDevice;
 use exfat_slim::asynchronous::file::File;
 use exfat_slim::asynchronous::file_system::FileSystem;
+use exfat_slim::asynchronous::BlockDevice;
 use heapless::String;
 
 use super::StorageDeviceIdentity;
@@ -19,22 +19,20 @@ pub struct StorageDriver<
     D: BlockDevice<SIZE>,
 {
     pub(crate) fs: FileSystem<D, SIZE, CACHE>,
-    pub(crate) write_slots: [Option<WriteSlot<SIZE, PATH_LEN>>; MAX_WRITE_HANDLES],
+    pub(crate) write_slots: [Option<WriteSlot<PATH_LEN>>; MAX_WRITE_HANDLES],
     pub(crate) read_slot: Option<ReadSlot>,
     pub(crate) write_generations: [u8; MAX_WRITE_HANDLES],
     pub(crate) read_generation: u8,
     pub(crate) device_identity: Option<StorageDeviceIdentity>,
 }
 
-pub(crate) struct WriteSlot<const SIZE: usize, const PATH_LEN: usize> {
+pub(crate) struct WriteSlot<const PATH_LEN: usize> {
     pub file: File,
     pub path: String<PATH_LEN>,
     pub generation: u8,
     pub logical_len: u64,
     pub committed_len: u64,
     pub last_flushed_len: u64,
-    pub pending_block: [u8; SIZE],
-    pub pending_len: usize,
     pub dirty: bool,
 }
 

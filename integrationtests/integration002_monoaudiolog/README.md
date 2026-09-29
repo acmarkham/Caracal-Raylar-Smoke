@@ -229,20 +229,51 @@ each flash are retained under `.probe-rs-logs/`.
   service queues, and DMA buffers are statically bounded. The exFAT library
   itself still uses the configured fixed 64 KiB embedded heap for filesystem
   metadata operations; application steady-state buffers do not allocate.
-- exFAT stages up to eight aligned, physically contiguous sectors and submits
-  them as one block-device write. This preserves cache coherence and bounded
-  memory while avoiding a separate SDMMC command/readiness cycle per sector.
+- The Storage Service accumulates 64 KiB per open stream before calling the
+  filesystem. The recorder can therefore retain its latency-friendly 16 KiB
+  encode buffer while four consecutive appends become one filesystem write.
+- exFAT stages up to 128 aligned, physically contiguous 512-byte sectors and
+  submits the 64 KiB run as one block-device write. This preserves cache
+  coherence and lets SDMMC use one multi-block DMA transaction instead of a
+  separate command/readiness cycle per sector.
 - Log records are drained and checkpointed every ten seconds even while
-  waiting for UTC. A checkpoint commits all complete 512-byte sectors without
-  closing and reopening the file; at most the final 511 bytes remain buffered
-  in RAM. Startup still performs a full flush so the initial record is durable.
-  Storage write failures latch the red system LED. Best-effort diagnostic INFO
-  queue drops are counted and reported at the next checkpoint but are not
-  fatal.
+  waiting for UTC. Normal writes remain buffered until 64 KiB is available; an
+  explicit checkpoint may issue a smaller write to commit every complete
+  512-byte sector, leaving at most the final 511 bytes in RAM. Checkpoints and
+  full flushes no longer close and reopen the file. Startup still performs a
+  full flush so the initial record is durable. Storage write failures latch
+  the red system LED. Best-effort diagnostic INFO queue drops are counted and
+  reported at the next checkpoint but are not fatal.
 
-## Hardware validation (2026-09-17)
+## Hardware validation
 
-### Synthetic-time release variant
+### 64 KiB buffered path (2026-09-29)
+
+The release build with `fake-gps-time` and a fresh, minute-aligned epoch ran
+continuously through two WAV rotations. The first file covered the partial
+startup minute and the second covered a full 60 seconds.
+
+| Check | Result |
+| --- | --- |
+| SD/audio errors | 0 write failures; 0 dropped or truncated log records |
+| DMA | No overrun through IRQ 1,161 at 119.7 seconds |
+| Steady CPU | 5.1–5.5% in five-second profile windows |
+| Audio storage polling | Normally 19–20 calls and 23–25 polls per five seconds |
+| First rotation | Close 7.6 ms, successor open 2.4 ms, header append 42 us |
+| Second rotation | Close 11.2 ms, successor open 2.5 ms, header append 42 us |
+
+These figures include the 64 KiB Storage Service buffer and 128-sector exFAT
+batch. They demonstrate stable sustained recording on the target SD card; raw
+throughput and supply-current deltas still require dedicated measurement.
+
+### Previous eight-sector path (2026-09-17)
+
+The measurements below predate the 64 KiB Storage Service aggregation and
+128-sector exFAT batching described above. They remain a functional baseline,
+but the polling, CPU-use, and rotation-latency figures must be remeasured on
+hardware before attributing a throughput or power improvement to the new path.
+
+#### Synthetic-time release variant
 
 The fake-time build was flashed and observed through one complete rotation:
 
@@ -267,7 +298,7 @@ The read-only card report found the finalized file at
 probe-rs reset the board to flash the inspector; it is expected for this forced
 test termination, not a rotation failure.
 
-### GPS-enabled release variant
+#### GPS-enabled release variant
 
 The default-feature release build was then flashed and observed with the GPS
 hardware, PPS capture, NMEA processing, Time Service, and Location Service all

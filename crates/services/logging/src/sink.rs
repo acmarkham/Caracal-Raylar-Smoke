@@ -20,19 +20,32 @@ pub enum StorageLogSinkError<E> {
     Storage(StorageServiceError<E>),
 }
 
-pub struct StorageLogSink<'a, B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize> {
-    storage: &'a mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS>,
+pub struct StorageLogSink<
+    'a,
+    B,
+    C,
+    const BLOCK_SIZE: usize,
+    const MAX_STREAMS: usize,
+    const WRITE_BUFFER_BYTES: usize,
+> {
+    storage: &'a mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES>,
     stream: StreamHandle,
 }
 
-impl<'a, B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize>
-    StorageLogSink<'a, B, C, BLOCK_SIZE, MAX_STREAMS>
+impl<
+        'a,
+        B,
+        C,
+        const BLOCK_SIZE: usize,
+        const MAX_STREAMS: usize,
+        const WRITE_BUFFER_BYTES: usize,
+    > StorageLogSink<'a, B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES>
 where
     B: StorageBackend<BLOCK_SIZE>,
     C: UtcClock,
 {
     pub async fn open(
-        storage: &'a mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS>,
+        storage: &'a mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES>,
     ) -> Result<Self, StorageLogSinkError<B::Error>> {
         let stream = storage
             .begin_stream(StreamKind::Log, StorageLayout::Flat)
@@ -41,7 +54,9 @@ where
         Ok(Self { storage, stream })
     }
 
-    pub fn storage_mut(&mut self) -> &mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS> {
+    pub fn storage_mut(
+        &mut self,
+    ) -> &mut StorageService<B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES> {
         self.storage
     }
 
@@ -53,8 +68,8 @@ where
     }
 }
 
-impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize> LogSink
-    for StorageLogSink<'_, B, C, BLOCK_SIZE, MAX_STREAMS>
+impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize, const WRITE_BUFFER_BYTES: usize>
+    LogSink for StorageLogSink<'_, B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES>
 where
     B: StorageBackend<BLOCK_SIZE>,
     C: UtcClock,

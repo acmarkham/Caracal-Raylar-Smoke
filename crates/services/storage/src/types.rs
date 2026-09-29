@@ -64,21 +64,19 @@ pub enum StorageServiceError<E> {
     InvalidPath,
 }
 
-pub(crate) struct StreamSlot<const BLOCK_SIZE: usize> {
+pub(crate) struct StreamSlot<const WRITE_BUFFER_BYTES: usize> {
     pub generation: u8,
     pub file: Option<FileHandle>,
-    pub path: heapless::String<PATH_CAPACITY>,
-    pub pending: [u8; BLOCK_SIZE],
+    pub pending: [u8; WRITE_BUFFER_BYTES],
     pub pending_len: usize,
 }
 
-impl<const BLOCK_SIZE: usize> StreamSlot<BLOCK_SIZE> {
+impl<const WRITE_BUFFER_BYTES: usize> StreamSlot<WRITE_BUFFER_BYTES> {
     pub fn new(generation: u8) -> Self {
         Self {
             generation,
             file: None,
-            path: heapless::String::new(),
-            pending: [0; BLOCK_SIZE],
+            pending: [0; WRITE_BUFFER_BYTES],
             pending_len: 0,
         }
     }

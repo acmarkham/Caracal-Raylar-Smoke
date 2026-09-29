@@ -200,13 +200,15 @@ where
     storage.append(bulk_c, bulk_c_data).await?;
 
     storage.flush(log).await?;
-    storage.append(log, log_tail).await?;
-    storage.append(bulk_c, bulk_tail).await?;
+    storage.append(log, &log_tail[..LOG_FINAL.len()]).await?;
+    storage
+        .append(bulk_c, &bulk_tail[..BULK_FINAL.len()])
+        .await?;
 
-    storage.close(log, LOG_FINAL.len()).await?;
-    storage.close(bulk_a, BLOCK_BYTES).await?;
-    storage.close(bulk_b, BLOCK_BYTES).await?;
-    storage.close(bulk_c, BULK_FINAL.len()).await?;
+    storage.close(log).await?;
+    storage.close(bulk_a).await?;
+    storage.close(bulk_b).await?;
+    storage.close(bulk_c).await?;
 
     let read = storage.open_for_read(log_path).await?;
     let read_buf = unsafe { &mut *core::ptr::addr_of_mut!(READ_BUF) };

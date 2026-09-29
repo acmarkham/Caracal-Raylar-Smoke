@@ -206,12 +206,8 @@ where
         self.inner.flush(handle).await
     }
 
-    async fn close(
-        &mut self,
-        handle: FileHandle,
-        valid_bytes_last_block: usize,
-    ) -> Result<(), Self::Error> {
-        self.inner.close(handle, valid_bytes_last_block).await
+    async fn close(&mut self, handle: FileHandle) -> Result<(), Self::Error> {
+        self.inner.close(handle).await
     }
 }
 

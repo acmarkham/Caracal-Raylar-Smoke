@@ -350,16 +350,18 @@ mod tests {
     #[test]
     fn contiguous_blocks_use_one_device_transaction() {
         let mut io = DummyBlockDevice {
-            blocks: vec![[0; BLOCK_SIZE], [0; BLOCK_SIZE], [0; BLOCK_SIZE]],
+            blocks: vec![[0; BLOCK_SIZE]; 128],
             write_lengths: Vec::new(),
         };
         let mut cache = SlotCache::<DummyBlockDevice, BLOCK_SIZE, 2>::new();
-        let blocks = [Aligned([1; BLOCK_SIZE]), Aligned([2; BLOCK_SIZE])];
+        let blocks: [Aligned<aligned::A4, [u8; BLOCK_SIZE]>; 128] =
+            core::array::from_fn(|index| Aligned([index as u8; BLOCK_SIZE]));
 
         cache.write_blocks(&mut io, 100, &blocks).unwrap();
 
-        assert_eq!(io.write_lengths, [2]);
-        assert_eq!(io.blocks[0], [1; BLOCK_SIZE]);
-        assert_eq!(io.blocks[1], [2; BLOCK_SIZE]);
+        assert_eq!(io.write_lengths, [128]);
+        for (index, block) in io.blocks.iter().enumerate() {
+            assert_eq!(*block, [index as u8; BLOCK_SIZE]);
+        }
     }
 }

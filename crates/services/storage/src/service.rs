@@ -6,6 +6,11 @@ use crate::policy::{folder_path, stream_path};
 use crate::types::{StorageLayout, StorageServiceError, StreamHandle, StreamKind, StreamSlot};
 
 pub const DEFAULT_MAX_STREAMS: usize = 4;
+/// Amount accumulated per open stream before issuing a backend write.
+///
+/// 64 KiB is large enough for efficient SDMMC multi-block DMA while keeping
+/// the default four-stream service footprint bounded to 256 KiB.
+pub const DEFAULT_WRITE_BUFFER_BYTES: usize = 64 * 1024;
 
 pub trait UtcClock {
     fn current_utc(&self) -> Option<UtcTimestamp>;
@@ -24,22 +29,28 @@ pub struct StorageService<
     C,
     const BLOCK_SIZE: usize = BLOCK_BYTES,
     const MAX_STREAMS: usize = DEFAULT_MAX_STREAMS,
+    const WRITE_BUFFER_BYTES: usize = DEFAULT_WRITE_BUFFER_BYTES,
 > {
     backend: B,
     clock: C,
-    slots: [Option<StreamSlot<BLOCK_SIZE>>; MAX_STREAMS],
+    slots: [Option<StreamSlot<WRITE_BUFFER_BYTES>>; MAX_STREAMS],
     generations: [u8; MAX_STREAMS],
     stream_sequence: u32,
 }
 
-impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize>
-    StorageService<B, C, BLOCK_SIZE, MAX_STREAMS>
+impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize, const WRITE_BUFFER_BYTES: usize>
+    StorageService<B, C, BLOCK_SIZE, MAX_STREAMS, WRITE_BUFFER_BYTES>
 where
     B: StorageBackend<BLOCK_SIZE>,
     C: UtcClock,
 {
     pub fn new(backend: B, clock: C) -> Result<Self, StorageServiceError<B::Error>> {
-        if BLOCK_SIZE == 0 || MAX_STREAMS == 0 || MAX_STREAMS > usize::from(u8::MAX) + 1 {
+        if BLOCK_SIZE == 0
+            || WRITE_BUFFER_BYTES < BLOCK_SIZE
+            || WRITE_BUFFER_BYTES % BLOCK_SIZE != 0
+            || MAX_STREAMS == 0
+            || MAX_STREAMS > usize::from(u8::MAX) + 1
+        {
             return Err(StorageServiceError::InvalidConfig);
         }
         Ok(Self {
@@ -120,7 +131,6 @@ where
         self.generations[index] = generation;
         self.stream_sequence = sequence;
         let mut slot = StreamSlot::new(generation);
-        slot.path = path;
         slot.file = Some(file);
         self.slots[index] = Some(slot);
         Ok(StreamHandle::new(index, generation))
@@ -135,7 +145,7 @@ where
         let slot = self.slots[index]
             .as_mut()
             .ok_or(StorageServiceError::InvalidStream)?;
-        append_bytes(&mut self.backend, slot, data).await
+        append_bytes::<_, BLOCK_SIZE, WRITE_BUFFER_BYTES>(&mut self.backend, slot, data).await
     }
 
     pub async fn flush(
@@ -147,37 +157,22 @@ where
             .as_mut()
             .ok_or(StorageServiceError::InvalidStream)?;
         let handle = slot.file.ok_or(StorageServiceError::InvalidStream)?;
-        if slot.pending_len == 0 {
-            return self
-                .backend
-                .flush(handle)
-                .await
-                .map_err(StorageServiceError::Backend);
-        }
-
-        let valid = slot.pending_len;
-        self.backend
-            .append(handle, &slot.pending)
-            .await
-            .map_err(StorageServiceError::Backend)?;
-        slot.pending_len = 0;
-        slot.file = None;
-        self.backend
-            .close(handle, valid)
-            .await
-            .map_err(StorageServiceError::Backend)?;
-        slot.file = Some(
+        if slot.pending_len != 0 {
             self.backend
-                .open_for_append(slot.path.as_str())
+                .append(handle, &slot.pending[..slot.pending_len])
                 .await
-                .map_err(StorageServiceError::Backend)?,
-        );
-        Ok(())
+                .map_err(StorageServiceError::Backend)?;
+            slot.pending_len = 0;
+        }
+        self.backend
+            .flush(handle)
+            .await
+            .map_err(StorageServiceError::Backend)
     }
 
     /// Commits complete backend blocks without closing and reopening the file.
     ///
-    /// At most one partial service block remains buffered in RAM. Use `flush`
+    /// At most one partial backend block remains buffered in RAM. Use `flush`
     /// when that final partial block must also be durable.
     pub async fn checkpoint(
         &mut self,
@@ -185,9 +180,19 @@ where
     ) -> Result<(), StorageServiceError<B::Error>> {
         let index = self.validate(stream)?;
         let slot = self.slots[index]
-            .as_ref()
+            .as_mut()
             .ok_or(StorageServiceError::InvalidStream)?;
         let handle = slot.file.ok_or(StorageServiceError::InvalidStream)?;
+        let complete_len = slot.pending_len / BLOCK_SIZE * BLOCK_SIZE;
+        if complete_len != 0 {
+            self.backend
+                .append(handle, &slot.pending[..complete_len])
+                .await
+                .map_err(StorageServiceError::Backend)?;
+            let remaining = slot.pending_len - complete_len;
+            slot.pending.copy_within(complete_len..slot.pending_len, 0);
+            slot.pending_len = remaining;
+        }
         self.backend
             .flush(handle)
             .await
@@ -202,7 +207,7 @@ where
         let mut slot = self.slots[index]
             .take()
             .ok_or(StorageServiceError::InvalidStream)?;
-        close_slot_file(&mut self.backend, &mut slot).await
+        close_slot_file::<_, BLOCK_SIZE, WRITE_BUFFER_BYTES>(&mut self.backend, &mut slot).await
     }
 
     fn validate(&self, stream: StreamHandle) -> Result<usize, StorageServiceError<B::Error>> {
@@ -219,9 +224,9 @@ where
     }
 }
 
-async fn append_bytes<B, const BLOCK_SIZE: usize>(
+async fn append_bytes<B, const BLOCK_SIZE: usize, const WRITE_BUFFER_BYTES: usize>(
     backend: &mut B,
-    slot: &mut StreamSlot<BLOCK_SIZE>,
+    slot: &mut StreamSlot<WRITE_BUFFER_BYTES>,
     mut data: &[u8],
 ) -> Result<(), StorageServiceError<B::Error>>
 where
@@ -229,8 +234,8 @@ where
 {
     let handle = slot.file.ok_or(StorageServiceError::InvalidStream)?;
     while !data.is_empty() {
-        if slot.pending_len == 0 && data.len() >= BLOCK_SIZE {
-            let direct_len = data.len() / BLOCK_SIZE * BLOCK_SIZE;
+        if slot.pending_len == 0 && data.len() >= WRITE_BUFFER_BYTES {
+            let direct_len = data.len() / WRITE_BUFFER_BYTES * WRITE_BUFFER_BYTES;
             backend
                 .append(handle, &data[..direct_len])
                 .await
@@ -238,14 +243,14 @@ where
             data = &data[direct_len..];
             continue;
         }
-        let copy_len = (BLOCK_SIZE - slot.pending_len).min(data.len());
+        let copy_len = (WRITE_BUFFER_BYTES - slot.pending_len).min(data.len());
         slot.pending[slot.pending_len..slot.pending_len + copy_len]
             .copy_from_slice(&data[..copy_len]);
         slot.pending_len += copy_len;
         data = &data[copy_len..];
-        if slot.pending_len == BLOCK_SIZE {
+        if slot.pending_len == WRITE_BUFFER_BYTES {
             backend
-                .append(handle, &slot.pending)
+                .append(handle, &slot.pending[..])
                 .await
                 .map_err(StorageServiceError::Backend)?;
             slot.pending_len = 0;
@@ -254,9 +259,9 @@ where
     Ok(())
 }
 
-async fn close_slot_file<B, const BLOCK_SIZE: usize>(
+async fn close_slot_file<B, const BLOCK_SIZE: usize, const WRITE_BUFFER_BYTES: usize>(
     backend: &mut B,
-    slot: &mut StreamSlot<BLOCK_SIZE>,
+    slot: &mut StreamSlot<WRITE_BUFFER_BYTES>,
 ) -> Result<(), StorageServiceError<B::Error>>
 where
     B: StorageBackend<BLOCK_SIZE>,
@@ -264,19 +269,15 @@ where
     let Some(handle) = slot.file.take() else {
         return Ok(());
     };
-    let valid = if slot.pending_len == 0 {
-        BLOCK_SIZE
-    } else {
-        let valid = slot.pending_len;
+    if slot.pending_len != 0 {
         backend
-            .append(handle, &slot.pending)
+            .append(handle, &slot.pending[..slot.pending_len])
             .await
             .map_err(StorageServiceError::Backend)?;
         slot.pending_len = 0;
-        valid
-    };
+    }
     backend
-        .close(handle, valid)
+        .close(handle)
         .await
         .map_err(StorageServiceError::Backend)
 }

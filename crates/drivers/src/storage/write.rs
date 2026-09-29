@@ -52,20 +52,19 @@ where
             logical_len: len,
             committed_len: len,
             last_flushed_len: len,
-            pending_block: [0; SIZE],
-            pending_len: 0,
             dirty: false,
         });
 
         Ok(FileHandle::new(slot_index, generation))
     }
 
+    /// Appends exactly `data.len()` bytes, including a final partial block.
+    ///
+    /// Large block-aligned slices can flow through exFAT as multi-block device
+    /// writes; callers do not need to pad or retain the final sector.
     pub async fn append(&mut self, handle: FileHandle, data: &[u8]) -> StorageResult<(), D::Error> {
         if data.is_empty() {
             return Ok(());
-        }
-        if data.len() % SIZE != 0 {
-            return Err(StorageError::InvalidBufferLength);
         }
 
         let index = self.validate_write_handle(handle)?;
@@ -76,26 +75,11 @@ where
             .as_mut()
             .ok_or(StorageError::InvalidHandle)?;
 
-        if slot.pending_len != 0 {
-            slot.file
-                .write(fs, &slot.pending_block[..slot.pending_len])
-                .await
-                .map_err(StorageError::from)?;
-            slot.committed_len = slot.committed_len.saturating_add(slot.pending_len as u64);
-            slot.pending_len = 0;
-        }
-
-        let direct_len = data.len() - SIZE;
-        if direct_len != 0 {
-            slot.file
-                .write(fs, &data[..direct_len])
-                .await
-                .map_err(StorageError::from)?;
-            slot.committed_len = slot.committed_len.saturating_add(direct_len as u64);
-        }
-
-        slot.pending_block.copy_from_slice(&data[direct_len..]);
-        slot.pending_len = SIZE;
+        slot.file
+            .write(fs, data)
+            .await
+            .map_err(StorageError::from)?;
+        slot.committed_len = slot.committed_len.saturating_add(data.len() as u64);
         slot.logical_len = slot.logical_len.saturating_add(data.len() as u64);
         slot.dirty = true;
         Ok(())
@@ -110,54 +94,18 @@ where
             .as_mut()
             .ok_or(StorageError::InvalidHandle)?;
 
-        if slot.pending_len != 0 {
-            slot.file
-                .write(fs, &slot.pending_block[..slot.pending_len])
-                .await
-                .map_err(StorageError::from)?;
-            slot.committed_len = slot.committed_len.saturating_add(slot.pending_len as u64);
-            slot.pending_len = 0;
-        }
-
         slot.file.flush(fs).await.map_err(StorageError::from)?;
         slot.last_flushed_len = slot.committed_len;
         slot.dirty = false;
         Ok(())
     }
 
-    pub async fn close(
-        &mut self,
-        handle: FileHandle,
-        valid_bytes_last_block: usize,
-    ) -> StorageResult<(), D::Error> {
-        if valid_bytes_last_block > SIZE {
-            return Err(StorageError::InvalidBufferLength);
-        }
-
+    pub async fn close(&mut self, handle: FileHandle) -> StorageResult<(), D::Error> {
         let index = self.validate_write_handle(handle)?;
         let mut slot = self.write_slots[index]
             .take()
             .ok_or(StorageError::InvalidHandle)?;
         let fs = &mut self.fs;
-
-        if slot.pending_len != 0 {
-            let valid = valid_bytes_last_block.min(slot.pending_len);
-            if valid != 0 {
-                slot.file
-                    .write(fs, &slot.pending_block[..valid])
-                    .await
-                    .map_err(StorageError::from)?;
-            }
-            slot.committed_len = slot.committed_len.saturating_add(valid as u64);
-            slot.logical_len = slot
-                .logical_len
-                .saturating_sub(slot.pending_len as u64)
-                .saturating_add(valid as u64);
-            slot.pending_len = 0;
-        } else if valid_bytes_last_block != 0 && valid_bytes_last_block != SIZE {
-            return Err(StorageError::InvalidState);
-        }
-
         slot.file.flush(fs).await.map_err(StorageError::from)?;
         Ok(())
     }
@@ -167,10 +115,7 @@ where
         Ok(slot.logical_len)
     }
 
-    fn write_slot(
-        &self,
-        handle: FileHandle,
-    ) -> StorageResult<&WriteSlot<SIZE, PATH_LEN>, D::Error> {
+    fn write_slot(&self, handle: FileHandle) -> StorageResult<&WriteSlot<PATH_LEN>, D::Error> {
         let index = self.validate_write_handle(handle)?;
         self.write_slots[index]
             .as_ref()

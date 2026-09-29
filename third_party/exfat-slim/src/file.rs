@@ -16,9 +16,10 @@ use super::{
     utils::split_path,
 };
 
-// A modest fixed batch bounds async-future storage while reducing the SDMMC
-// command/readiness overhead of sequential recording writes by up to 8x.
-const WRITE_BATCH_BLOCKS: usize = 8;
+// Match the storage service's default 64 KiB aggregation window. A full,
+// physically contiguous run is handed to the block device in one call so an
+// SDMMC implementation can use one multi-block DMA transaction.
+const WRITE_BATCH_BLOCKS: usize = 128;
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenOptions {
@@ -1060,7 +1061,12 @@ fn remaining_bytes_at_cursor(cursor: u64, cluster_length: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::remaining_bytes_at_cursor;
+    use super::{remaining_bytes_at_cursor, WRITE_BATCH_BLOCKS};
+
+    #[test]
+    fn write_batch_matches_64_kib_storage_window() {
+        assert_eq!(WRITE_BATCH_BLOCKS * 512, 64 * 1024);
+    }
 
     #[test]
     fn cursor_at_start_has_a_full_cluster_remaining() {
