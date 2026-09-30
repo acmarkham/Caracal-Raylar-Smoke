@@ -21,6 +21,9 @@ or field-test image so a syslog CRC and Git identity can be traced back to the
 tested source and exact ELF hash.
 
 Use `-BuildOnly` when an image should be built and recorded without flashing.
+The rust-analyzer **Run** action above a `main` function uses the same metadata
+injection automatically, and its Cargo probe runner writes the same build record
+and captures target output under `.probe-rs-logs/`.
 
 The command verifies the flash, prints target output, and saves every session
 under `.probe-rs-logs/`. The most recent target output is also copied to
