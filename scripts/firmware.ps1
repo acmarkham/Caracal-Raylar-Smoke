@@ -29,6 +29,7 @@ param(
 
     [switch]$ConnectUnderReset,
     [switch]$NoBuild,
+    [switch]$BuildOnly,
     [switch]$NoVerify,
     [switch]$DryRun,
     [switch]$QuietTargetOutput,
@@ -41,6 +42,8 @@ $ErrorActionPreference = "Stop"
 $targetTriple = "thumbv8m.main-none-eabihf"
 $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $logRoot = Join-Path $workspaceRoot ".probe-rs-logs"
+$metadataConfigPath = Join-Path $workspaceRoot "firmware-metadata.json"
+$buildRecordRoot = Join-Path $workspaceRoot "firmware-builds"
 
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -139,17 +142,33 @@ function Stop-ProbeProcess {
     }
 }
 
+function Write-BuildRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record
+    )
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
+    $json = $Record | ConvertTo-Json -Depth 4
+    [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine)
+}
+
 $previousDefmtLog = $env:DEFMT_LOG
 $hadDefmtLog = Test-Path Env:DEFMT_LOG
 $process = $null
 $processStarted = $false
 $stoppedByScript = $false
 $matchedUntil = $false
+$buildRecord = $null
+$buildRecordPath = $null
+$buildEnvironment = @{}
 
 Push-Location $workspaceRoot
 try {
     $cargoPath = Require-Command "cargo"
-    $probeRsPath = Require-Command "probe-rs"
+    if ($BuildOnly -and $NoBuild) {
+        throw "-BuildOnly and -NoBuild cannot be used together."
+    }
     $untilRegex = $null
     if ($Until) {
         try {
@@ -189,10 +208,51 @@ try {
     }
 
     $binaryName = $binaryTargets[0].name
+    $safePackage = $Package -replace '[^A-Za-z0-9_.-]', '_'
     $profileDirectory = if ($Profile -eq "release") { "release" } else { "debug" }
     $artifactPath = Join-Path $metadata.target_directory "$targetTriple\$profileDirectory\$binaryName"
 
     if (-not $NoBuild) {
+        if (-not (Test-Path -LiteralPath $metadataConfigPath -PathType Leaf)) {
+            throw "Firmware metadata config was not found at '$metadataConfigPath'."
+        }
+        $metadataConfig = Get-Content -LiteralPath $metadataConfigPath -Raw | ConvertFrom-Json
+        if (-not $metadataConfig.boardRevision) {
+            throw "firmware-metadata.json must define boardRevision."
+        }
+
+        $gitPath = Require-Command "git"
+        $gitHash = (& $gitPath rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $gitHash) {
+            throw "Unable to determine the source Git hash."
+        }
+        $trackedChanges = & $gitPath status --porcelain --untracked-files=no
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to determine whether the source tree is dirty."
+        }
+        $sourceDirty = [bool]$trackedChanges
+        $gitIdentity = if ($sourceDirty) { "$gitHash-dirty" } else { $gitHash }
+        $buildTimestamp = [DateTime]::UtcNow.ToString(
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            [Globalization.CultureInfo]::InvariantCulture
+        )
+
+        $metadataEnvironment = [ordered]@{
+            RAYLAR_FIRMWARE_VERSION = [string]$packageInfo[0].version
+            RAYLAR_GIT_HASH = $gitIdentity
+            RAYLAR_BUILD_TIMESTAMP = $buildTimestamp
+            RAYLAR_BUILD_PROFILE = $Profile
+            RAYLAR_BOARD_REVISION = [string]$metadataConfig.boardRevision
+        }
+        foreach ($entry in $metadataEnvironment.GetEnumerator()) {
+            $existing = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+            $buildEnvironment[$entry.Key] = @{
+                WasSet = $null -ne $existing
+                Value = $existing
+            }
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
+
         $buildArguments = @("build", "--package", $Package, "--bin", $binaryName, "--target", $targetTriple)
         if ($Profile -eq "release") {
             $buildArguments += "--release"
@@ -210,9 +270,35 @@ try {
         throw "Firmware artifact was not found at '$artifactPath'. Build without -NoBuild first."
     }
 
+    if (-not $NoBuild) {
+        $artifactSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $buildRecordPath = Join-Path $buildRecordRoot "$safePackage.json"
+        $buildRecord = [ordered]@{
+            schema_version = 1
+            package = $Package
+            binary = $binaryName
+            firmware_version = [string]$packageInfo[0].version
+            source_git = $gitIdentity
+            source_tree_dirty = $sourceDirty
+            build_timestamp_utc = $buildTimestamp
+            build_profile = $Profile
+            board_revision = [string]$metadataConfig.boardRevision
+            target = $targetTriple
+            artifact_sha256 = $artifactSha256
+            runtime_crc32 = $null
+        }
+        Write-BuildRecord -Path $buildRecordPath -Record $buildRecord
+        Write-Host "    Build record: $buildRecordPath (commit this file with the tested source)"
+    }
+
+    if ($BuildOnly) {
+        Write-Host "==> Build complete; firmware was not flashed."
+        return
+    }
+
+    $probeRsPath = Require-Command "probe-rs"
     New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $safePackage = $Package -replace '[^A-Za-z0-9_.-]', '_'
     $sessionDirectory = Join-Path $logRoot "$timestamp-$safePackage-$PID"
     New-Item -ItemType Directory -Path $sessionDirectory -Force | Out-Null
 
@@ -339,6 +425,17 @@ try {
     $latestTargetLog = Join-Path $logRoot "latest.log"
     if (Test-Path -LiteralPath $targetLog) {
         Copy-Item -LiteralPath $targetLog -Destination $latestTargetLog -Force
+        if ($null -ne $buildRecord) {
+            $targetText = Get-Content -LiteralPath $targetLog -Raw
+            $runtimeCrcMatch = [regex]::Match(
+                $targetText,
+                'runtime_crc32=Known\((?<crc>(?:0x)?[0-9A-Fa-f]+)\)'
+            )
+            if ($runtimeCrcMatch.Success) {
+                $buildRecord.runtime_crc32 = $runtimeCrcMatch.Groups['crc'].Value
+                Write-BuildRecord -Path $buildRecordPath -Record $buildRecord
+            }
+        }
     }
     else {
         New-Item -ItemType File -Path $latestTargetLog -Force | Out-Null
@@ -385,6 +482,14 @@ finally {
     }
     else {
         Remove-Item Env:DEFMT_LOG -ErrorAction SilentlyContinue
+    }
+    foreach ($entry in $buildEnvironment.GetEnumerator()) {
+        if ($entry.Value.WasSet) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value.Value, "Process")
+        }
+        else {
+            [Environment]::SetEnvironmentVariable($entry.Key, $null, "Process")
+        }
     }
     Pop-Location
 }

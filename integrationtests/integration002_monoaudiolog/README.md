@@ -35,13 +35,17 @@ For a diagnostic build that retains the reset-default LDO, disable default
 features (and explicitly restore any other desired features):
 
 ```powershell
-rtk cargo build -p integration-test-002-monoaudiolog --release --no-default-features
+rtk powershell -NoProfile -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
+  -Package integration-test-002-monoaudiolog -BuildOnly `
+  -CargoArgs "--no-default-features"
 ```
 
 For indoor audio development, enable the explicit test-only time source:
 
 ```powershell
-rtk cargo build -p integration-test-002-monoaudiolog --release --features fake-gps-time
+rtk powershell -NoProfile -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
+  -Package integration-test-002-monoaudiolog -BuildOnly `
+  -CargoArgs "--features","fake-gps-time"
 rtk powershell -NoProfile -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
   -Package integration-test-002-monoaudiolog -NoBuild -MonitorSeconds 135 `
   -QuietTargetOutput -ProbeArgs --preverify

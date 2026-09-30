@@ -13,6 +13,15 @@ powershell -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
     -MonitorSeconds 10
 ```
 
+The script embeds the package version, source Git identity, UTC build time,
+build profile, and board revision from `firmware-metadata.json`. Firmware that
+uses the versioning service writes these values to its syslog. A matching JSON
+record is created under `firmware-builds/`; commit the record for any overnight
+or field-test image so a syslog CRC and Git identity can be traced back to the
+tested source and exact ELF hash.
+
+Use `-BuildOnly` when an image should be built and recorded without flashing.
+
 The command verifies the flash, prints target output, and saves every session
 under `.probe-rs-logs/`. The most recent target output is also copied to
 `.probe-rs-logs/latest.log` so it can be inspected after the run.

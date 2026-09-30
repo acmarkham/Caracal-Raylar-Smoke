@@ -255,7 +255,7 @@ Example log messages:
 ```text
 00000122 1234.100 INFO  System: versioning device uuid=00112233-44556677-8899AABB serial64=0123456789ABCDEF serial48=456789ABCDEF serial32=9F34A102 serial16=A102 stm32=Known(...)
 
-00000123 1234.110 INFO  System: versioning firmware version=Known("0.1.0") git_hash=Known("...") build_timestamp=Known("...") profile=Known("release") runtime_crc32=Known(...) build_crc32=Unknown
+00000123 1234.110 INFO  System: traceability firmware_version=Known("0.1.0") git_hash=Known("...") build_timestamp=Known("...") build_profile=Known("release") board_revision=Known("Raylar v1.0") runtime_crc32=Known(...) build_crc32=Unknown
 
 00000124 1234.120 INFO  System: versioning sd_card=Known(SdCardIdentity { manufacturer_id: Known(3), oem_id: Known([83, 68]), product_name: Known([...]), product_revision: Known(33), serial_number: Known(...), manufacture_year: Known(2026), manufacture_month: Known(9), capacity_bytes: Known(128043712512) })
 

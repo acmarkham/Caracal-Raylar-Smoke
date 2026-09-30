@@ -895,11 +895,12 @@ fn log_versioning(system_log: TestLogger, state: IdentityState) {
     }
     record_outcome(log_info!(
         system_log,
-        "versioning firmware version={:?} git_hash={:?} build_timestamp={:?} profile={:?} runtime_crc32={:?} build_crc32={:?}",
+        "traceability firmware_version={:?} git_hash={:?} build_timestamp={:?} build_profile={:?} board_revision={:?} runtime_crc32={:?} build_crc32={:?}",
         state.firmware.version,
         state.firmware.git_hash,
         state.firmware.build_timestamp,
         state.firmware.build_profile,
+        state.hardware.board_revision,
         state.firmware.runtime_crc32,
         state.firmware.build_crc32
     ));
