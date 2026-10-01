@@ -16,8 +16,9 @@
 
 use defmt::{error, info};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Input, Output};
-use embassy_stm32::mode::Blocking;
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::Output;
+use embassy_stm32::mode::{Async, Blocking};
 use embassy_stm32::rcc::*;
 use embassy_stm32::spi::mode::Master;
 use embassy_stm32::spi::{Config as SpiConfig, Spi};
@@ -28,6 +29,8 @@ use {defmt_rtt as _, panic_probe as _};
 
 const LR11XX_GET_VERSION: [u8; 2] = [0x01, 0x01];
 const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
+
+type Input<'d> = ExtiInput<'d, Async>;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) -> ! {

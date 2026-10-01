@@ -1,0 +1,14 @@
+{
+    "schema_version":  1,
+    "package":  "integration-test-002-monoaudiolog",
+    "binary":  "integration-test-002-monoaudiolog",
+    "firmware_version":  "0.1.0",
+    "source_git":  "46deac00b9b6b7c0ed272284b981e33d919fbc70",
+    "source_tree_dirty":  false,
+    "build_timestamp_utc":  "2026-09-30T14:28:46Z",
+    "build_profile":  "release",
+    "board_revision":  "Raylar v1.0",
+    "target":  "thumbv8m.main-none-eabihf",
+    "artifact_sha256":  "1846513066bfddd4ee84caac0366738665ed13e5c0976e1e37b827c6f535e022",
+    "runtime_crc32":  null
+}

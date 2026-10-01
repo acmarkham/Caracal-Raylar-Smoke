@@ -126,6 +126,7 @@ bind_interrupts!(pub struct Irqs {
     EXTI2 => exti::InterruptHandler<interrupt::typelevel::EXTI2>;
     EXTI5 => exti::InterruptHandler<interrupt::typelevel::EXTI5>;
     EXTI9 => exti::InterruptHandler<interrupt::typelevel::EXTI9>;
+    EXTI10 => exti::InterruptHandler<interrupt::typelevel::EXTI10>;
     EXTI12 => exti::InterruptHandler<interrupt::typelevel::EXTI12>;
     SDMMC1 => sdmmc::InterruptHandler<SDMMC1>;
     OTG_HS => usb::InterruptHandler<USB_OTG_HS>;
@@ -261,7 +262,7 @@ pub struct EbyteRf<'d> {
     pub miso: Peri<'d, PE14>,
     pub mosi: Peri<'d, PE15>,
     pub cs: Output<'d>,
-    pub busy: Input<'d>,
+    pub busy: ExtiInput<'d, Async>,
     pub nrst: Output<'d>,
     pub irq: ExtiInput<'d, Async>,
 }
@@ -351,6 +352,7 @@ impl Board<'static> {
             SPI1,
             PE8,
             PE10,
+            EXTI10,
             PE11,
             PE12,
             EXTI12,
@@ -452,7 +454,7 @@ impl Board<'static> {
                 miso: PE14,
                 mosi: PE15,
                 cs: Output::new(PE8, Level::High, Speed::VeryHigh),
-                busy: Input::new(PE10, Pull::None),
+                busy: ExtiInput::new(PE10, EXTI10, Pull::None, Irqs),
                 nrst: Output::new(PE11, Level::High, Speed::Medium),
                 irq: ExtiInput::new(PE12, EXTI12, Pull::None, Irqs),
             },

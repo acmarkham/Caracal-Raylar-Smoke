@@ -10,6 +10,7 @@ pub mod gps;
 pub mod identity;
 pub mod leds;
 pub mod mic_array;
+pub mod radio;
 pub mod sensor_acc;
 pub mod sensor_mag;
 pub mod stm32_core;

@@ -12,7 +12,7 @@ use arbitrary_int::u24;
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_stm32::exti::ExtiInput;
-use embassy_stm32::gpio::{Input, Output};
+use embassy_stm32::gpio::Output;
 use embassy_stm32::mode::{Async, Blocking};
 use embassy_stm32::rcc::*;
 use embassy_stm32::spi::mode::Master;
@@ -37,6 +37,7 @@ const IRQ_CMD_ERROR: u32 = 1 << 22;
 const IRQ_ERROR: u32 = 1 << 23;
 
 type RadioSpi = Spi<'static, Blocking, Master>;
+type Input<'d> = ExtiInput<'d, Async>;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) -> ! {

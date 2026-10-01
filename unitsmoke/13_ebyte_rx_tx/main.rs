@@ -24,7 +24,7 @@ use core::cmp::min;
 use defmt::{error, info};
 use embassy_executor::Spawner;
 use embassy_stm32::exti::ExtiInput;
-use embassy_stm32::gpio::{Input, Output};
+use embassy_stm32::gpio::Output;
 use embassy_stm32::mode::{Async, Blocking};
 use embassy_stm32::rcc::*;
 use embassy_stm32::spi::mode::Master;
@@ -33,6 +33,8 @@ use embassy_stm32::time::mhz;
 use embassy_time::{Duration, Instant, Timer};
 use raylar_board_v1p0::{Board, EbyteRf, Leds};
 use {defmt_rtt as _, panic_probe as _};
+
+type Input<'d> = ExtiInput<'d, Async>;
 
 const BUSY_TIMEOUT: Duration = Duration::from_millis(500);
 const RADIO_FREQUENCY_HZ: u32 = 2_445_000_000;

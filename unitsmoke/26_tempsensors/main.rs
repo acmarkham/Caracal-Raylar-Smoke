@@ -15,9 +15,10 @@ use embassy_stm32::adc::adc4::{
     Averaging as Adc4Averaging, Resolution as Adc4Resolution, SampleTime as Adc4SampleTime,
 };
 use embassy_stm32::adc::{Adc, VrefInt};
-use embassy_stm32::gpio::{Input, Output};
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::Output;
 use embassy_stm32::i2c::{Config as I2cConfig, I2c, Master as I2cMaster};
-use embassy_stm32::mode::Blocking;
+use embassy_stm32::mode::{Async, Blocking};
 use embassy_stm32::pac::{self, vrefbuf};
 use embassy_stm32::peripherals::ADC4;
 use embassy_stm32::rcc::*;
@@ -30,6 +31,8 @@ use embedded_hal_async::{digital::Wait, spi::Operation};
 use lr11xx::{ops, Lr11xx};
 use raylar_board_v1p0::{AdcVoltages, Board, EbyteRf, Leds, SensI2C};
 use {defmt_rtt as _, panic_probe as _};
+
+type Input<'d> = ExtiInput<'d, Async>;
 
 const I2C_FREQUENCY: Hertz = Hertz(100_000);
 const BUSY_STARTUP_TIMEOUT: Duration = Duration::from_millis(500);

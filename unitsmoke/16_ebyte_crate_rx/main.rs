@@ -12,8 +12,9 @@ use core::convert::Infallible;
 use arbitrary_int::u24;
 use defmt::{error, info, unwrap};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Input, Output};
-use embassy_stm32::mode::Blocking;
+use embassy_stm32::exti::ExtiInput;
+use embassy_stm32::gpio::Output;
+use embassy_stm32::mode::{Async, Blocking};
 use embassy_stm32::rcc::*;
 use embassy_stm32::spi::mode::Master;
 use embassy_stm32::spi::{Config as SpiConfig, Error as SpiError, Spi};
@@ -38,6 +39,7 @@ const IRQ_CMD_ERROR: u32 = 1 << 22;
 const IRQ_ERROR: u32 = 1 << 23;
 
 type RadioSpi = Spi<'static, Blocking, Master>;
+type Input<'d> = ExtiInput<'d, Async>;
 
 #[embassy_executor::task]
 async fn heartbeat_task(mut led: Output<'static>) {
