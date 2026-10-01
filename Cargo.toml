@@ -35,6 +35,7 @@ members = [
     "servicetests/identity",
     "integrationtests/integration001_powermonitorlog",
     "integrationtests/integration002_monoaudiolog",
+    "integrationtests/integration003_radiorange",
     "unitsmoke/01_helloworld",
     "unitsmoke/02_userbutton",
     "unitsmoke/03_buzzer",

@@ -4,3 +4,4 @@ debug.log
 /.serena
 /.trialdata
 /.probe-rs-logs/
+integrationtests/integration003_radiorange/radio_test_config.rs
