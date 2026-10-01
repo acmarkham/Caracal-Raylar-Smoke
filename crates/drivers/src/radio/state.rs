@@ -1,4 +1,5 @@
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RadioState {
     Sleep,
     #[default]
@@ -8,6 +9,7 @@ pub enum RadioState {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RadioStats {
     pub state: RadioState,
     pub rx_packets: u32,

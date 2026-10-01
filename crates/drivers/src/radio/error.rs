@@ -3,6 +3,7 @@ use embassy_time::Instant;
 use super::state::RadioState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConfigError {
     UnsupportedFrequency,
     UnsupportedTxPower,
@@ -20,6 +21,7 @@ pub enum ConfigError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TransportError {
     Spi,
     Busy,
@@ -28,6 +30,7 @@ pub enum TransportError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     InvalidConfiguration(ConfigError),
     InvalidState {

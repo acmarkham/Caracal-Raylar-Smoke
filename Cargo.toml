@@ -22,6 +22,7 @@ members = [
     "drivertests/identitytest",
     "drivertests/buzzertest",
     "drivertests/ledtest",
+    "drivertests/radio",
     "drivertests/buttontest",
     "metadrivertests/audiosource",
     "servicetests/time",
