@@ -7,8 +7,10 @@ over RTT, written to `/syslog.txt`, and indicated with a short green LED flash
 and buzzer beep.
 
 An exFAT-formatted microSD card and a GPS antenna with a view of the sky are
-required. Radio activity does not begin until the Time Service reports
-`Synchronized` from `GpsPps` and the Location Service has a valid estimate.
+required. Radio activity begins once the Time Service has accepted a GPS/PPS
+UTC anchor and can map the current monotonic time to UTC, and the Location
+Service has a valid estimate. It does not wait for long-term frequency
+calibration to lock.
 
 ## Campaign configuration
 

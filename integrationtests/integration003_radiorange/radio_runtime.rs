@@ -56,17 +56,21 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
         ));
         recover_and_prepare(&mut radio, &channel, logger).await;
     }
+    let startup_time = common::TIME_RESOURCES.time_state();
     record_log_outcome(log_info!(
         logger,
-        "radio_started config_id={} modulation={} frequency_hz={} utc_gate=GpsPps/Synchronized location_valid=true",
+        "radio_started config_id={} modulation={} frequency_hz={} utc_anchor_available=true accepted_anchors={} utc_status={:?} frequency_calibration_locked={} location_valid=true",
         config::CONFIGURATION_ID,
         config::MODULATION_NAME,
         config::FREQUENCY_HZ,
+        startup_time.accepted_anchors,
+        startup_time.utc_status,
+        startup_time.frequency_calibration_locked,
     ));
 
     let seed = (device_id as u32) ^ ((device_id >> 32) as u32) ^ (Instant::now().as_ticks() as u32);
     let mut random = XorShift32::new(seed);
-    let mut next_tx = Instant::now() + random_tx_interval(&mut random);
+    let mut next_tx = schedule_next_tx(&mut random, logger, "initial");
     let mut next_sequence = Some(0u16);
     let mut rx_buffer = [0u8; PACKET_LEN];
     let mut peers: Vec<Peer, MAX_TRACKED_PEERS> = Vec::new();
@@ -75,7 +79,7 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
     let mut location_ready = true;
 
     loop {
-        if common::TIME_RESOURCES.time_state().utc_status == UtcStatus::Invalid {
+        if !gps_utc_anchor_available(Instant::now()) {
             if !utc_suspended {
                 let _ = radio.standby().await;
                 record_log_outcome(log_warn!(logger, "radio_suspended reason=utc_invalid"));
@@ -86,7 +90,7 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
         }
         if utc_suspended {
             record_log_outcome(log_info!(logger, "radio_resumed reason=utc_valid"));
-            next_tx = Instant::now() + random_tx_interval(&mut random);
+            next_tx = schedule_next_tx(&mut random, logger, "utc_resumed");
             utc_suspended = false;
         }
 
@@ -105,13 +109,16 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
         if now + config::RX_START_GUARD < next_tx {
             let rx_start = now + config::RX_START_GUARD;
             match radio.receive_at(rx_start, next_tx, &mut rx_buffer).await {
-                Ok(packet) => handle_rx(
-                    packet.payload,
-                    packet.metadata,
-                    &mut peers,
-                    &mut rx_count,
-                    logger,
-                ),
+                Ok(packet) => {
+                    handle_rx(
+                        packet.payload,
+                        packet.metadata,
+                        &mut peers,
+                        &mut rx_count,
+                        logger,
+                    );
+                    continue;
+                }
                 Err(RadioError::RxTimeout { at }) => {
                     record_log_outcome(logger.log_at(
                         at,
@@ -141,6 +148,7 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
                             time.uncertainty_us,
                         ),
                     ));
+                    continue;
                 }
                 Err(value) => {
                     let at = error_time(value).unwrap_or_else(Instant::now);
@@ -150,9 +158,9 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
                         format_args!("rx_failed error={:?} tick={}", value, at.as_ticks()),
                     ));
                     recover_and_prepare(&mut radio, &channel, logger).await;
+                    continue;
                 }
             }
-            continue;
         }
 
         if let Some(sequence) = next_sequence {
@@ -174,8 +182,7 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
                 }
             }
         }
-        next_tx = Instant::now() + random_tx_interval(&mut random);
-        info!("Next range-test TX tick={}", next_tx.as_ticks());
+        next_tx = schedule_next_tx(&mut random, logger, "after_attempt");
     }
 }
 
@@ -192,15 +199,52 @@ where
     IRQ: embedded_hal::digital::InputPin + embedded_hal_async::digital::Wait,
 {
     let now = Instant::now();
-    let location = match position::from_location(LOCATION.state(), now) {
+    let location_state = LOCATION.state();
+    let location = match position::from_location(location_state, now) {
         Ok(value) => value,
         Err(value) => {
+            let north_offset_m = (i64::from(location_state.latitude.degrees_e7)
+                - i64::from(config::ORIGIN_LATITUDE_E7))
+            .saturating_mul(config::NORTH_MM_PER_E7)
+                / 1_000;
+            let east_offset_m = (i64::from(location_state.longitude.degrees_e7)
+                - i64::from(config::ORIGIN_LONGITUDE_E7))
+            .saturating_mul(config::EAST_MM_PER_E7)
+                / 1_000;
+            let location_age_ms = now
+                .saturating_duration_since(location_state.last_fix_system_time)
+                .as_millis();
             record_log_outcome(log_warn!(
                 logger,
-                "tx_skipped sequence={} reason=location_{:?}",
+                "tx_skipped sequence={} reason=location_{:?} current_lat_e7={} current_lon_e7={} origin_lat_e7={} origin_lon_e7={} north_offset_m={} east_offset_m={} max_offset_m={} location_age_ms={} location_valid={} location_source={:?}",
                 sequence,
-                value
+                value,
+                location_state.latitude.degrees_e7,
+                location_state.longitude.degrees_e7,
+                config::ORIGIN_LATITUDE_E7,
+                config::ORIGIN_LONGITUDE_E7,
+                north_offset_m,
+                east_offset_m,
+                config::MAX_LOCAL_OFFSET_METRES,
+                location_age_ms,
+                location_state.valid,
+                location_state.source,
             ));
+            warn!(
+                "TX skipped sequence={} location_reason={} current_lat_e7={} current_lon_e7={} origin_lat_e7={} origin_lon_e7={} north_offset_m={} east_offset_m={} max_offset_m={} location_age_ms={} location_valid={} location_source={:?}",
+                sequence,
+                position_error_name(value),
+                location_state.latitude.degrees_e7,
+                location_state.longitude.degrees_e7,
+                config::ORIGIN_LATITUDE_E7,
+                config::ORIGIN_LONGITUDE_E7,
+                north_offset_m,
+                east_offset_m,
+                config::MAX_LOCAL_OFFSET_METRES,
+                location_age_ms,
+                location_state.valid,
+                location_state.source,
+            );
             return Ok(false);
         }
     };
@@ -214,6 +258,7 @@ where
                 sequence,
                 value
             ));
+            warn!("TX skipped sequence={} UTC mapping unavailable", sequence);
             return Ok(false);
         }
     };
@@ -498,18 +543,18 @@ async fn wait_for_initial_readiness(logger: TestLogger) {
         let now = Instant::now();
         let time = common::TIME_RESOURCES.time_state();
         let location = LOCATION.state();
-        let location_ready = position::from_location(location, now).is_ok();
-        if time.utc_status == UtcStatus::Synchronized
-            && time.active_time_source == TimeSource::GpsPps
-            && location_ready
-        {
+        let utc_anchor_ready = gps_utc_anchor_available(now);
+        let location_ready = location.valid;
+        if utc_anchor_ready && location_ready {
             record_log_outcome(log_info!(
                 logger,
-                "startup_gate_open utc_status={:?} source={:?} uncertainty_us={} accepted_anchors={} location_fixes={} satellites={:?} hdop_centi={:?} location_uncertainty_m={:?}",
+                "startup_gate_open utc_anchor_available=true utc_status={:?} source={:?} uncertainty_us={} accepted_anchors={} frequency_calibration_samples={} frequency_calibration_locked={} location_fixes={} satellites={:?} hdop_centi={:?} location_uncertainty_m={:?}",
                 time.utc_status,
                 time.active_time_source,
                 time.uncertainty_us,
                 time.accepted_anchors,
+                time.frequency_calibration_samples,
+                time.frequency_calibration_locked,
                 location.fix_count_used,
                 location.satellites,
                 location.hdop_centi,
@@ -520,12 +565,14 @@ async fn wait_for_initial_readiness(logger: TestLogger) {
         if now.saturating_duration_since(last_report) >= Duration::from_secs(5) {
             record_log_outcome(log_info!(
                 logger,
-                "startup_gate_wait utc_status={:?} source={:?} uncertainty_us={} location_valid={} location_ready={} fixes={} satellites={:?}",
+                "startup_gate_wait utc_anchor_available={} accepted_anchors={} utc_status={:?} source={:?} uncertainty_us={} frequency_calibration_locked={} location_valid={} fixes={} satellites={:?}",
+                utc_anchor_ready,
+                time.accepted_anchors,
                 time.utc_status,
                 time.active_time_source,
                 time.uncertainty_us,
+                time.frequency_calibration_locked,
                 location.valid,
-                location_ready,
                 location.fix_count_used,
                 location.satellites,
             ));
@@ -650,6 +697,42 @@ fn random_tx_interval(random: &mut XorShift32) -> Duration {
     Duration::from_secs(
         config::MIN_TX_INTERVAL_SECS + u64::from(random.next() % config::TX_INTERVAL_SPAN_SECS),
     )
+}
+
+fn schedule_next_tx(random: &mut XorShift32, logger: TestLogger, reason: &'static str) -> Instant {
+    let interval = random_tx_interval(random);
+    let scheduled_at = Instant::now() + interval;
+    record_log_outcome(log_info!(
+        logger,
+        "tx_scheduled reason={} jitter_interval_ms={} due_tick={}",
+        reason,
+        interval.as_millis(),
+        scheduled_at.as_ticks(),
+    ));
+    info!(
+        "TX scheduled reason={} jitter_interval_ms={} due_tick={}",
+        reason,
+        interval.as_millis(),
+        scheduled_at.as_ticks(),
+    );
+    scheduled_at
+}
+
+fn gps_utc_anchor_available(now: Instant) -> bool {
+    let time = common::TIME_RESOURCES.time_state();
+    time.accepted_anchors != 0
+        && time.last_anchor_system_time.is_some()
+        && time.last_anchor_utc.is_some()
+        && time.first_anchor_source == TimeSource::GpsPps
+        && common::TIME_RESOURCES.system_to_utc(now).is_ok()
+}
+
+fn position_error_name(value: position::PositionError) -> &'static str {
+    match value {
+        position::PositionError::Invalid => "invalid",
+        position::PositionError::Stale => "stale",
+        position::PositionError::OutsideConfiguredArea => "outside_configured_area",
+    }
 }
 
 struct XorShift32 {

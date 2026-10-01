@@ -146,10 +146,12 @@ hardware-supported frequency is permitted in a deployment region.
    logger.
 3. Keep the radio in standby while GPS time and filtered location are being
    acquired. Do not start RX or TX before the UTC gate is satisfied.
-4. Define initial UTC lock as a Time Service state with
-   `utc_status == Synchronized` and `active_time_source == GpsPps`. Do not wait
-   for the long-term oscillator calibration window to finish once the Time
-   Service has declared UTC synchronized.
+4. Open the UTC startup gate as soon as the Time Service has accepted at least
+   one GPS PPS anchor and can map the current monotonic instant to UTC. Do not
+   wait for `frequency_calibration_locked`, the long-term oscillator
+   calibration window, or a particular non-invalid UTC quality classification.
+   Record the current UTC status and uncertainty, which may improve while the
+   radio test is already running.
 5. Require `LocationState.valid` before entering the normal range-test loop.
    The Location Service's configured accepted-fix threshold (three fixes by
    default) applies. Log the UTC-lock and location-acquired transition,
@@ -340,8 +342,9 @@ delivery or deduplication service.
 
 ### Hardware tests
 
-- Confirm neither device starts RX or TX before GPS PPS UTC synchronization
-  and a valid filtered location are published.
+- Confirm neither device starts RX or TX before a usable GPS PPS UTC anchor
+  and a valid filtered location are published, and confirm radio activity
+  starts without waiting for frequency calibration to lock.
 - Confirm each device independently begins promiscuous RX, emits randomized
   TX packets, and returns to RX after every TX completion or timeout.
 - Run both boards with identical configuration and verify packets are decoded
