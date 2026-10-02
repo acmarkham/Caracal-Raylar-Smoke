@@ -26,7 +26,9 @@ use embassy_stm32::peripherals::{
 use embassy_stm32::peripherals::{PC10, PC11, PC12, PC8, PC9, PD2, SDMMC1};
 // Ebyte E80 LR1121 RF module imports
 use embassy_stm32::peripherals::{PE13, PE14, PE15, SPI1};
-use embassy_stm32::{bind_interrupts, interrupt, sdmmc, timer, usart, usb};
+// true random number generator import
+use embassy_stm32::peripherals::RNG;
+use embassy_stm32::{bind_interrupts, interrupt, rng, sdmmc, timer, usart, usb};
 
 // Full STM32U595VJT6Q pin map for Raylar v1.00, extracted from the KiCad U1
 // footprint/net assignments. This crate currently models only the subset needed
@@ -130,6 +132,7 @@ bind_interrupts!(pub struct Irqs {
     EXTI12 => exti::InterruptHandler<interrupt::typelevel::EXTI12>;
     SDMMC1 => sdmmc::InterruptHandler<SDMMC1>;
     OTG_HS => usb::InterruptHandler<USB_OTG_HS>;
+    RNG => rng::InterruptHandler<RNG>;
     USART2 => usart::BufferedInterruptHandler<USART2>;
     TIM4 => timer::CaptureCompareInterruptHandler<TIM4>;
 });
@@ -148,6 +151,7 @@ pub struct Board<'d> {
     pub sd: SdCard<'d>,
     pub ebyte_rf: EbyteRf<'d>,
     pub usb_cdc: UsbCdc<'d>,
+    pub trng: Peri<'d, RNG>,
 }
 
 pub struct Leds<'d> {
@@ -359,6 +363,8 @@ impl Board<'static> {
             PE13,
             PE14,
             PE15,
+            // true random number generator
+            RNG,
             ..
         } = p;
 
@@ -464,6 +470,7 @@ impl Board<'static> {
                 dp: PA12,
                 vbus: PA9,
             },
+            trng: RNG,
         }
     }
 }

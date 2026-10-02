@@ -44,6 +44,8 @@ use raylar_drivers::mic_array::{
 };
 use raylar_drivers::stm32_core::stm32::Stm32CoreDriver;
 use raylar_drivers::stm32_core::{CoreConfig, CoreSupply, CoreSupplyControl};
+use raylar_drivers::trng::stm32::Stm32Trng;
+use raylar_drivers::trng::TrngConfig;
 use raylar_drivers::voltagemonitor::stm32::Stm32VoltageMonitor;
 use raylar_drivers::voltagemonitor::{VoltageConfig, VoltageMonitorDriver, VoltageResources};
 use raylar_drivers::{buzzer, leds};
@@ -668,8 +670,15 @@ async fn main(spawner: Spawner) -> ! {
         sens_i2c,
         usb_cdc,
         pdm_mic_array,
+        trng,
         ..
     } = Board::new(peripherals);
+    let mut trng = Stm32Trng::new(trng, raylar_board_v1p0::Irqs, TrngConfig::default());
+    let boot_id = match trng.boot_id().await {
+        Ok(boot_id) => boot_id,
+        Err(error) => fail_forever("TRNG boot ID generation failed", error).await,
+    };
+    info!("TRNG boot ID: {=u32:#010x}", boot_id);
     let Leds {
         sys_gps_green,
         sys_gps_red,
@@ -784,7 +793,8 @@ async fn main(spawner: Spawner) -> ! {
     log_versioning(system_log, VERSIONING.state());
     record_outcome(log_info!(
         system_log,
-        "integration002 monoaudiolog started; format={}Hz mono, 60-second WAV files in hourly folders; gps_post_calibration_min_on_s={} gps_post_calibration_max_on_s={} gps_post_calibration_off_s={} gps_phase_residual_us={} gps_phase_uncertainty_us={} gps_phase_consecutive={}",
+        "integration002 monoaudiolog started; boot_id=0x{:08X}; format={}Hz mono, 60-second WAV files in hourly folders; gps_post_calibration_min_on_s={} gps_post_calibration_max_on_s={} gps_post_calibration_off_s={} gps_phase_residual_us={} gps_phase_uncertainty_us={} gps_phase_consecutive={}",
+        boot_id,
         SAMPLE_RATE_HZ,
         GPS_POST_CALIBRATION_ON_TIME.as_secs(),
         GPS_PHASE_MAXIMUM_ON_TIME.as_secs(),

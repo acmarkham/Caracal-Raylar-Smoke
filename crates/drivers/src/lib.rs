@@ -15,4 +15,5 @@ pub mod sensor_acc;
 pub mod sensor_mag;
 pub mod stm32_core;
 pub mod storage;
+pub mod trng;
 pub mod voltagemonitor;
