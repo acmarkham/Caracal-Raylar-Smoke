@@ -10,6 +10,7 @@ members = [
     "crates/services/audiorecorder",
     "crates/services/powermanagement",
     "crates/services/location",
+    "crates/services/radio",
     "crates/services/sensors",
     "crates/services/versioning",
     "drivertests/gps",

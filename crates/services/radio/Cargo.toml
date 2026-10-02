@@ -1,0 +1,37 @@
+[package]
+name = "raylar-radio-service"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "raylar_radio_service"
+path = "src/lib.rs"
+
+[features]
+default = []
+defmt = [
+    "dep:defmt",
+    "embassy-sync/defmt",
+    "raylar-drivers/defmt",
+    "raylar-location-service/defmt",
+    "raylar-time-service/defmt",
+]
+
+[dependencies]
+defmt = { workspace = true, optional = true }
+embassy-futures = "0.1.2"
+embassy-sync = "0.7.2"
+embassy-time.workspace = true
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
+heapless = "0.8.0"
+raylar-drivers = { path = "../../drivers" }
+raylar-location-service = { path = "../location" }
+raylar-time-service = { path = "../time", default-features = false }
+
+[dev-dependencies]
+critical-section = { version = "1.2.0", features = ["std"] }
+defmt = { workspace = true, features = ["unstable-test"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+
