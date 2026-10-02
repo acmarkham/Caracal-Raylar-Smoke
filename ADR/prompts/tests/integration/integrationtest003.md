@@ -44,8 +44,10 @@ randomized intervals. The device ID in every packet identifies its sender.
 The firmware uses the LR1121 Radio Driver for all RF operations, the GPS Time
 Service for UTC conversion, the Location Service for its own filtered
 coordinates, and the Logging Service for every transmit and receive event. It
-does not use the Audio Service. A short buzzer tone and a green system LED
-flash provide receive feedback.
+does not use the Audio Service. Local signs of life comprise an accepted-PPS
+flash on `SysGpsGreen`, a successful-TX flash on `SysSdBlue`, a short buzzer
+tone and `SysMainGreen` flash on receive, and distinct startup/error beep
+patterns.
 
 ## Goals
 
@@ -58,6 +60,9 @@ flash provide receive feedback.
 - Compute and report the distance between the sender and receiver positions
   for each successfully decoded packet.
 - Show a brief buzzer tone and green system LED flash for each received packet.
+- Flash the GPS green LED for each accepted GPS PPS anchor and the blue LED for
+  each successfully completed transmission.
+- Emit distinct audible startup and recoverable/fatal error patterns.
 - Make packet loss, counters, logging loss, time quality, and location age
   visible during a range test.
 - Use statically allocated, bounded resources and caller-owned radio buffers.
@@ -105,8 +110,9 @@ Integration Test 003
 - The Logging Service writes packet records to the standard system log stream
   through the Storage Service. Producers must check logging outcomes and make
   dropped or truncated diagnostic records observable.
-- The buzzer driver and LED control are used directly for the local receive
-  indication; there is no audio service in this test.
+- The buzzer driver and LED control are used directly by bounded indication
+  tasks; there is no audio service in this test. Radio processing only enqueues
+  indications and never waits for an LED pulse or tone to complete.
 
 ## Common configuration
 
@@ -299,7 +305,7 @@ unbounded write.
 Human-readable log formatting may evolve, but timestamps, units, device IDs,
 sequence numbers, and missing-value semantics must remain explicit.
 
-## Receive indication
+## Local indications
 
 After a valid packet has been captured and its essential event data has been
 queued for logging:
@@ -313,6 +319,19 @@ create audio recordings. Receive indication must not delay IRQ timestamp
 capture, packet extraction, or rearming RX. If several packets arrive close
 together, coalesce overlapping LED flashes and beeps rather than creating an
 unbounded indication queue; every packet is still logged.
+
+In addition:
+
+- pulse `SysGpsGreen` briefly whenever the Time Service publishes a newly
+  accepted GPS PPS anchor;
+- pulse `SysSdBlue` briefly after every successful TX completion;
+- play a short ascending pattern during firmware startup; and
+- play a distinct descending error pattern for radio recovery failures,
+  logging failures, and fatal startup failures. Fatal failures repeat the error
+  indication periodically.
+
+All indication delivery is bounded and best-effort. It must not block radio
+timing, packet processing, UTC capture, or logging.
 
 ## Configuration and invalid packets
 
@@ -360,6 +379,8 @@ delivery or deduplication service.
 - Verify a short beep and green LED flash occur on packet reception and that
   receive indication does not create RX gaps beyond the configured test
   tolerance.
+- Verify accepted GPS PPS anchors flash `SysGpsGreen`, successful transmissions
+  flash `SysSdBlue`, and startup/error beep patterns are distinguishable.
 - Repeat at increasing device separation and record channel, modulation,
   antenna orientation, environment, firmware/configuration ID, and observed
   packet delivery and signal metrics.

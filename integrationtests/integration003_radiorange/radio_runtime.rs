@@ -14,7 +14,10 @@ use raylar_time_service::{TimeSource, UtcStatus};
 use crate::packet::{DecodeError, RangePacket, PACKET_LEN};
 use crate::position::{self, LocalPosition};
 use crate::radio_test_config as config;
-use crate::{common, record_log_outcome, TestLogger, LOCATION, RECEIVE_INDICATION};
+use crate::{
+    common, record_log_outcome, signal_error_indication, signal_receive_indication,
+    signal_transmit_indication, TestLogger, LOCATION,
+};
 
 const MAX_TRACKED_PEERS: usize = 8;
 
@@ -54,6 +57,7 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
             "channel_prepare_failed error={:?}",
             value
         ));
+        signal_error_indication();
         recover_and_prepare(&mut radio, &channel, logger).await;
     }
     let startup_time = common::TIME_RESOURCES.time_state();
@@ -157,6 +161,7 @@ pub async fn run(rf: EbyteRf<'static>, device_id: u64, logger: TestLogger) -> ! 
                         LogLevel::Warn,
                         format_args!("rx_failed error={:?} tick={}", value, at.as_ticks()),
                     ));
+                    signal_error_indication();
                     recover_and_prepare(&mut radio, &channel, logger).await;
                     continue;
                 }
@@ -203,14 +208,7 @@ where
     let location = match position::from_location(location_state, now) {
         Ok(value) => value,
         Err(value) => {
-            let north_offset_m = (i64::from(location_state.latitude.degrees_e7)
-                - i64::from(config::ORIGIN_LATITUDE_E7))
-            .saturating_mul(config::NORTH_MM_PER_E7)
-                / 1_000;
-            let east_offset_m = (i64::from(location_state.longitude.degrees_e7)
-                - i64::from(config::ORIGIN_LONGITUDE_E7))
-            .saturating_mul(config::EAST_MM_PER_E7)
-                / 1_000;
+            let (north_offset_m, east_offset_m) = position::offsets_metres(location_state);
             let location_age_ms = now
                 .saturating_duration_since(location_state.last_fix_system_time)
                 .as_millis();
@@ -319,6 +317,7 @@ where
                 report.requested_start.as_ticks(),
                 report.tx_done_at.as_ticks(),
             );
+            signal_transmit_indication();
             Ok(true)
         }
         Err(value) => {
@@ -334,6 +333,7 @@ where
                 ),
             ));
             warn!("TX failed sequence={} error={:?}", sequence, value);
+            signal_error_indication();
             Err(())
         }
     }
@@ -411,7 +411,7 @@ fn handle_rx(
         time.uncertainty_us,
         logger,
     );
-    RECEIVE_INDICATION.signal(());
+    signal_receive_indication();
     display_rx(packet, metadata, *rx_count, distance, rx_utc);
 }
 
@@ -601,6 +601,7 @@ async fn initialize_radio<SPI, BUSY, RESET, IRQ>(
                     value
                 ));
                 error!("Radio initialization failed: {:?}", value);
+                signal_error_indication();
                 Timer::after_secs(1).await;
             }
         }
@@ -629,6 +630,7 @@ async fn recover_and_prepare<SPI, BUSY, RESET, IRQ>(
             }
             Err(value) => {
                 record_log_outcome(log_warn!(logger, "radio_recovery_failed error={:?}", value));
+                signal_error_indication();
                 Timer::after_secs(1).await;
             }
         }

@@ -3,8 +3,10 @@
 This firmware runs the same role on both Raylar boards. It waits for GPS/PPS
 UTC synchronization and a valid filtered location, then listens continuously
 between independently jittered transmissions. Received packets are reported
-over RTT, written to `/syslog.txt`, and indicated with a short green LED flash
-and buzzer beep.
+over RTT, written to `/syslog.txt`, and indicated with a short main-green LED
+flash and buzzer beep. Accepted GPS PPS anchors pulse the GPS-green LED,
+successful transmissions pulse the blue LED, and distinct beep patterns report
+startup and error conditions.
 
 An exFAT-formatted microSD card and a GPS antenna with a view of the sky are
 required. Radio activity begins once the Time Service has accepted a GPS/PPS
@@ -18,8 +20,10 @@ Edit `radio_test_config.rs` before building both boards. In particular, set the
 local coordinate origin and its east/west scale for the campaign area. The
 checked-in defaults are centred at 52 N, 0 E and accept positions within 20 km
 of that origin. Packet coordinates are signed east/north offsets quantized to
-10 m. `REMOTE_POSITION_ERROR_BUDGET_METRES` accounts for transmitter GPS error
-that is not carried in the compact packet; the logged distance uncertainty is
+10 m. The legacy `NORTH_MM_PER_E7` and `EAST_MM_PER_E7` configuration names
+contain scale values expressed in micrometres per `1e-7` degree.
+`REMOTE_POSITION_ERROR_BUDGET_METRES` accounts for transmitter GPS error that
+is not carried in the compact packet; the logged distance uncertainty is
 therefore an estimate, not surveyed accuracy.
 
 Increment `CONFIGURATION_ID` whenever an interoperability-affecting radio,

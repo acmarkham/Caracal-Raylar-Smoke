@@ -17,7 +17,7 @@ use defmt::{error, info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::Output;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::signal::Signal;
+use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
 use embedded_alloc::LlffHeap as Heap;
 use raylar_board_v1p0::{Board, Leds};
@@ -28,7 +28,7 @@ use raylar_logging_service::{
     StorageLogSink,
 };
 use raylar_storage_service::StorageService;
-use raylar_time_service::TimeResources;
+use raylar_time_service::{TimeResources, TimeSource};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -60,11 +60,20 @@ type BoardLogging = LoggingService<'static, BoardLogSink, MESSAGE_LENGTH, QUEUE_
 
 pub(crate) static LOCATION: LocationResources<4> = LocationResources::new();
 static LOGGING: LoggingResources<MESSAGE_LENGTH, QUEUE_DEPTH> = LoggingResources::new();
-pub(crate) static RECEIVE_INDICATION: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static INDICATION_COMMANDS: Channel<CriticalSectionRawMutex, IndicationCommand, 16> =
+    Channel::new();
 static STORAGE: StaticCell<BoardStorage> = StaticCell::new();
 static LOGGING_SERVICE: StaticCell<BoardLogging> = StaticCell::new();
 static LOG_DROPS: AtomicU32 = AtomicU32::new(0);
 static LOG_TRUNCATIONS: AtomicU32 = AtomicU32::new(0);
+
+#[derive(Clone, Copy)]
+enum IndicationCommand {
+    Startup,
+    Receive,
+    Transmit,
+    Error,
+}
 
 #[global_allocator]
 static HEAP: Heap = Heap::empty();
@@ -84,14 +93,25 @@ async fn main(spawner: Spawner) -> ! {
         ebyte_rf,
         ..
     } = Board::new(peripherals);
-    let Leds { sys_main_green, .. } = leds;
+    let Leds {
+        sys_gps_green,
+        sys_main_green,
+        sys_sd_blue,
+        ..
+    } = leds;
     let buzzer_driver = buzzer::init(buzzer::BuzzerResources {
         timer: board_buzzer.tim,
         pin: board_buzzer.pin,
     });
-    spawner.spawn(unwrap!(indication_task(sys_main_green, buzzer_driver)));
+    spawner.spawn(unwrap!(indication_task(
+        sys_main_green,
+        sys_sd_blue,
+        buzzer_driver
+    )));
+    INDICATION_COMMANDS.send(IndicationCommand::Startup).await;
 
     common::start_time(spawner, gps).await;
+    spawner.spawn(unwrap!(pps_led_task(sys_gps_green)));
     let location_service = LocationService::<4, LOCATION_HISTORY>::new(
         &LOCATION,
         unwrap!(common::GPS_RESOURCES.fix_receiver()).as_dyn(),
@@ -156,9 +176,22 @@ pub(crate) fn record_log_outcome(outcome: LogOutcome) -> bool {
         LogOutcome::DroppedQueueFull => {
             LOG_DROPS.fetch_add(1, Ordering::Relaxed);
             error!("range-test log record dropped: queue full");
+            signal_error_indication();
             false
         }
     }
+}
+
+pub(crate) fn signal_receive_indication() {
+    let _ = INDICATION_COMMANDS.try_send(IndicationCommand::Receive);
+}
+
+pub(crate) fn signal_transmit_indication() {
+    let _ = INDICATION_COMMANDS.try_send(IndicationCommand::Transmit);
+}
+
+pub(crate) fn signal_error_indication() {
+    let _ = INDICATION_COMMANDS.try_send(IndicationCommand::Error);
 }
 
 #[embassy_executor::task]
@@ -170,6 +203,7 @@ async fn logging_task(logging: &'static mut BoardLogging, diagnostics: TestLogge
         if Instant::now() >= next_flush {
             if let Err(value) = logging.flush().await {
                 error!("range-test log flush failed: {:?}", value);
+                signal_error_indication();
             }
             let stats = logging.stats();
             let drops = LOG_DROPS.load(Ordering::Relaxed);
@@ -206,6 +240,7 @@ async fn logging_task(logging: &'static mut BoardLogging, diagnostics: TestLogge
             Ok(ProcessOutcome::Empty) => Timer::after_millis(10).await,
             Err(value) => {
                 error!("range-test log append failed: {:?}", value);
+                signal_error_indication();
                 Timer::after_millis(100).await;
             }
         }
@@ -218,30 +253,94 @@ async fn location_service_task(service: LocationService<4, LOCATION_HISTORY>) ->
 }
 
 #[embassy_executor::task]
+async fn pps_led_task(mut led: Output<'static>) -> ! {
+    let mut states = unwrap!(common::TIME_RESOURCES.state_receiver());
+    let mut observed_anchors = common::TIME_RESOURCES.time_state().accepted_anchors;
+    led.set_low();
+    loop {
+        let state = states.changed().await;
+        let accepted_gps_pps = state.active_time_source == TimeSource::GpsPps
+            && state.accepted_anchors != observed_anchors;
+        observed_anchors = state.accepted_anchors;
+        if accepted_gps_pps {
+            led.set_high();
+            Timer::after_millis(50).await;
+            led.set_low();
+        }
+    }
+}
+
+#[embassy_executor::task]
 async fn indication_task(
-    mut led: Output<'static>,
+    mut receive_led: Output<'static>,
+    mut transmit_led: Output<'static>,
     mut buzzer_driver: buzzer::BuzzerDriver<'static>,
 ) -> ! {
+    receive_led.set_low();
+    transmit_led.set_low();
     loop {
-        RECEIVE_INDICATION.wait().await;
-        led.set_high();
-        if let Err(value) = buzzer_driver
+        match INDICATION_COMMANDS.receive().await {
+            IndicationCommand::Startup => play_startup_beeps(&mut buzzer_driver).await,
+            IndicationCommand::Receive => {
+                receive_led.set_high();
+                if let Err(value) = buzzer_driver
+                    .play_tone(
+                        buzzer::PitchHz(radio_test_config::INDICATION_PITCH_HZ),
+                        radio_test_config::INDICATION_DURATION,
+                        buzzer::Volume(radio_test_config::INDICATION_VOLUME),
+                    )
+                    .await
+                {
+                    warn!("receive beep failed: {:?}", value);
+                }
+                receive_led.set_low();
+            }
+            IndicationCommand::Transmit => {
+                transmit_led.set_high();
+                Timer::after_millis(50).await;
+                transmit_led.set_low();
+            }
+            IndicationCommand::Error => play_error_beeps(&mut buzzer_driver).await,
+        }
+    }
+}
+
+async fn play_startup_beeps(driver: &mut buzzer::BuzzerDriver<'static>) {
+    for pitch_hz in [1_047, 1_319, 1_568] {
+        if let Err(value) = driver
             .play_tone(
-                buzzer::PitchHz(radio_test_config::INDICATION_PITCH_HZ),
-                radio_test_config::INDICATION_DURATION,
+                buzzer::PitchHz(pitch_hz),
+                Duration::from_millis(70),
                 buzzer::Volume(radio_test_config::INDICATION_VOLUME),
             )
             .await
         {
-            warn!("receive beep failed: {:?}", value);
+            warn!("startup beep failed: {:?}", value);
         }
-        led.set_low();
+        Timer::after_millis(35).await;
+    }
+}
+
+async fn play_error_beeps(driver: &mut buzzer::BuzzerDriver<'static>) {
+    for pitch_hz in [440, 330, 220] {
+        if let Err(value) = driver
+            .play_tone(
+                buzzer::PitchHz(pitch_hz),
+                Duration::from_millis(140),
+                buzzer::Volume(radio_test_config::INDICATION_VOLUME),
+            )
+            .await
+        {
+            warn!("error beep failed: {:?}", value);
+        }
+        Timer::after_millis(70).await;
     }
 }
 
 async fn fail_forever<E: defmt::Format>(message: &str, value: E) -> ! {
     error!("{}: {:?}", message, value);
     loop {
-        Timer::after_secs(60).await;
+        INDICATION_COMMANDS.send(IndicationCommand::Error).await;
+        Timer::after_secs(10).await;
     }
 }

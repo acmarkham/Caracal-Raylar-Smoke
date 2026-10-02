@@ -1,0 +1,14 @@
+{
+    "schema_version":  1,
+    "package":  "integration-test-003-radio-range",
+    "binary":  "integration-test-003-radio-range",
+    "firmware_version":  "0.1.0",
+    "source_git":  "ad19abf706afba013cc92135b154526f865cda87-dirty",
+    "source_tree_dirty":  true,
+    "build_timestamp_utc":  "2026-10-01T11:20:50Z",
+    "build_profile":  "release",
+    "board_revision":  "Raylar v1.0",
+    "target":  "thumbv8m.main-none-eabihf",
+    "artifact_sha256":  "0ad92464eac72c730b37fc5d96a06cdde2f749373ba569e1531445cf680e010a",
+    "runtime_crc32":  null
+}
