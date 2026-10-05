@@ -19,6 +19,11 @@ around its own transmissions. Nodes scan the complete active window during
 bootstrap, after time degradation or base expiry, and every fifth epoch; other
 epochs merge guarded windows predicted from discovered peers.
 
+Schedule version 3 derives a separate deterministic permutation of all 20
+slots for every node and frame purpose. During each aligned 20-epoch block a
+node visits every slot exactly once; the following block receives a newly
+derived permutation. This removes the previous four-epoch lockstep pattern.
+
 Local indications are deliberately short and best-effort. Boot plays an
 ascending three-note sound, first GPS lock plays one confirmation tone, and
 full UTC frequency calibration plays two ascending tones. Every decoded

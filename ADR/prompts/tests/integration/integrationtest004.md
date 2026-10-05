@@ -52,19 +52,24 @@ The test uses a 60-second UTC epoch with a 20-second common active window:
 epoch start                                              next epoch
     |---------------------------------------------------------|
     | presence rendezvous | heartbeat rendezvous | inactive  |
-    |      0 to 10 s      |      10 to 20 s      | 20 to 60 s|
+    |      0 to 20 s      |      20 to 40 s      | 40 to 60 s|
 ```
 
 Presence and heartbeat use distinct purpose values and subwindows. Each
-subwindow contains ten one-second slots. A node independently derives its slot
-from the Radio Messaging Service rendezvous algorithm using the shared network
-ID, schedule version, purpose, node ID, epoch, and occurrence. The heartbeat
-subwindow offset is added only after the heartbeat slot is derived.
+subwindow contains twenty one-second slots. For each node and purpose, the
+Radio Messaging Service derives a deterministic permutation of all twenty
+slots from the shared network ID, schedule version, purpose, node ID,
+occurrence, and twenty-epoch block number. Epoch position within that block
+selects an element of the permutation. Every node therefore visits every slot
+exactly once per block, while all receivers can independently derive the same
+schedule. A new permutation is derived for each block. The heartbeat subwindow
+offset is added only after the heartbeat slot is derived.
 
 This split prevents a node's own presence advertisement from conflicting with
 its own heartbeat. Transmissions from different nodes can still collide; that
-is expected for an unacknowledged contention-based protocol. Because the hash
-includes the epoch, repeated collisions should not remain locked to one slot.
+is expected for an unacknowledged contention-based protocol. Independent
+permutations spread those collisions across epochs and prevent the short
+lockstep cycles caused by reducing the previous hash directly modulo twenty.
 
 ## Goals
 
@@ -211,7 +216,7 @@ initial configuration is:
 | --- | ---: |
 | Network ID | dedicated Integration Test 004 constant |
 | Wire version | 1 |
-| Schedule version | 2 |
+| Schedule version | 3 |
 | Epoch duration | 60 s |
 | Common active window | 40 s |
 | Presence subwindow | epoch offset 0-20 s |

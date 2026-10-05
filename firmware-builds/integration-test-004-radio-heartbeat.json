@@ -3,12 +3,12 @@
     "package":  "integration-test-004-radio-heartbeat",
     "binary":  "integration-test-004-radio-heartbeat",
     "firmware_version":  "0.1.0",
-    "source_git":  "de694c0382f54d3a13e79b5075d2267b2649bb21-dirty",
+    "source_git":  "e73674e49d8093b0e22dbb9680b3f6751b5e296b-dirty",
     "source_tree_dirty":  true,
-    "build_timestamp_utc":  "2026-10-05T09:18:48Z",
+    "build_timestamp_utc":  "2026-10-05T12:21:55Z",
     "build_profile":  "release",
     "board_revision":  "Raylar v1.0",
     "target":  "thumbv8m.main-none-eabihf",
-    "artifact_sha256":  "cb545107d35ad5129a9c277a8d8aceb4efec1c4e666c5284deab37d55094e6c1",
+    "artifact_sha256":  "145776867633c07aceb2e89b8cc29c43b14a2bbbbc541394fe5657a26952b10e",
     "runtime_crc32":  null
 }

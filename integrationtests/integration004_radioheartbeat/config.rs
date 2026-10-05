@@ -10,7 +10,7 @@ use raylar_time_service::UtcTimestamp;
 
 pub const CONFIGURATION_ID: u16 = 0x0004;
 pub const NETWORK_ID: u32 = 0x4954_0004;
-pub const SCHEDULE_VERSION: ScheduleVersion = ScheduleVersion(2);
+pub const SCHEDULE_VERSION: ScheduleVersion = ScheduleVersion(3);
 pub const BASE_STATION_CAPABILITY: u16 = 1 << 0;
 
 pub const EPOCH_DURATION: Duration = Duration::from_secs(60);
@@ -115,13 +115,8 @@ pub fn derived_slot(
     epoch: Epoch,
     purpose: RendezvousPurpose,
 ) -> Result<u32, ScheduleError> {
-    Rendezvous::new(NETWORK_ID, SCHEDULE_VERSION.0).slot(
-        purpose,
-        node,
-        epoch,
-        0,
-        SLOTS_PER_SUBWINDOW,
-    )
+    Rendezvous::new(NETWORK_ID, SCHEDULE_VERSION.0)
+        .permuted_slot::<{ SLOTS_PER_SUBWINDOW as usize }>(purpose, node, epoch, 0)
 }
 
 pub fn absolute_slot(
@@ -183,19 +178,19 @@ mod tests {
         let epoch = Epoch(12_345);
         assert_eq!(
             derived_slot(node, epoch, RendezvousPurpose::Presence),
-            Ok(16)
+            Ok(11)
         );
         assert_eq!(
             derived_slot(node, epoch, RendezvousPurpose::Heartbeat),
-            Ok(3)
+            Ok(0)
         );
         assert_eq!(
             absolute_slot(node, epoch, RendezvousPurpose::Presence),
-            Ok(16)
+            Ok(11)
         );
         assert_eq!(
             absolute_slot(node, epoch, RendezvousPurpose::Heartbeat),
-            Ok(23)
+            Ok(20)
         );
     }
 
@@ -210,5 +205,33 @@ mod tests {
                 absolute_slot(peer, epoch, RendezvousPurpose::Heartbeat),
             );
         }
+    }
+
+    #[test]
+    fn every_node_and_purpose_visits_all_slots_without_lockstep() {
+        let nodes = [
+            NodeId(0x381f_e484),
+            NodeId(0xcc14_55b0),
+            NodeId(0xAABB_CCDD),
+        ];
+        for node in nodes {
+            for purpose in [RendezvousPurpose::Presence, RendezvousPurpose::Heartbeat] {
+                let mut seen = [false; SLOTS_PER_SUBWINDOW as usize];
+                for epoch in 0..u64::from(SLOTS_PER_SUBWINDOW) {
+                    let slot = derived_slot(node, Epoch(epoch), purpose).unwrap() as usize;
+                    assert!(!seen[slot], "node={node:?} purpose={purpose:?} slot={slot}");
+                    seen[slot] = true;
+                }
+                assert!(seen.into_iter().all(|visited| visited));
+            }
+        }
+
+        let first: [u32; 20] = core::array::from_fn(|epoch| {
+            derived_slot(nodes[0], Epoch(epoch as u64), RendezvousPurpose::Presence).unwrap()
+        });
+        let second: [u32; 20] = core::array::from_fn(|epoch| {
+            derived_slot(nodes[1], Epoch(epoch as u64), RendezvousPurpose::Presence).unwrap()
+        });
+        assert_ne!(first, second);
     }
 }
