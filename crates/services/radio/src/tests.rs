@@ -602,3 +602,11 @@ fn neighbour_count_is_published_through_latest_state() {
     resources.set_neighbour_count(3);
     assert_eq!(resources.state().stats.neighbour_count, 3);
 }
+
+#[test]
+fn handle_enqueues_explicit_best_effort_cancellation() {
+    let resources = RadioResources::<1, 1, 1>::new();
+    let handle = resources.handle();
+    assert_eq!(handle.try_cancel(JobId(42)), Ok(()));
+    assert_eq!(handle.try_cancel(JobId(43)), Err(ScheduleError::QueueFull));
+}

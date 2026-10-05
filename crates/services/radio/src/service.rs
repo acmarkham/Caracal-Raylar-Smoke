@@ -152,12 +152,13 @@ impl RadioRxJob {
 pub enum RadioJob {
     Transmit { id: JobId, job: RadioTxJob },
     Receive { id: JobId, job: RadioRxJob },
+    Cancel { id: JobId },
 }
 
 impl RadioJob {
     pub const fn id(&self) -> JobId {
         match self {
-            Self::Transmit { id, .. } | Self::Receive { id, .. } => *id,
+            Self::Transmit { id, .. } | Self::Receive { id, .. } | Self::Cancel { id } => *id,
         }
     }
 
@@ -175,6 +176,7 @@ impl RadioJob {
                 end: job.end,
                 priority: job.priority,
             },
+            Self::Cancel { .. } => unreachable!("cancel requests are never scheduled"),
         }
     }
 }
@@ -203,6 +205,9 @@ pub enum RadioEvent {
         id: JobId,
     },
     PacketRejected {
+        id: JobId,
+    },
+    Cancelled {
         id: JobId,
     },
     Rejected {
@@ -357,6 +362,14 @@ impl<'a, const JOBS: usize> RadioHandle<'a, JOBS> {
         let id = self.allocate_id();
         self.requests.send(RadioJob::Receive { id, job }).await;
         id
+    }
+
+    /// Cancel a queued reservation. Cancellation is best-effort: a driver
+    /// operation that has already started cannot be interrupted safely.
+    pub fn try_cancel(&self, id: JobId) -> Result<(), ScheduleError> {
+        self.requests
+            .try_send(RadioJob::Cancel { id })
+            .map_err(|_| ScheduleError::QueueFull)
     }
 
     fn allocate_id(&self) -> JobId {
@@ -551,6 +564,15 @@ where
 
     fn accept(&mut self, job: RadioJob) {
         let id = job.id();
+        if matches!(&job, RadioJob::Cancel { .. }) {
+            self.scheduler.release(id);
+            if let Some(index) = self.pending.iter().position(|pending| pending.id() == id) {
+                self.pending.remove(index);
+            }
+            self.emit(RadioEvent::Cancelled { id });
+            self.publish();
+            return;
+        }
         if let RadioJob::Transmit { job: tx, .. } = &job {
             if let Err(error) = FrameHeader::decode(tx.payload.as_slice()) {
                 self.record_frame_error(error);
@@ -629,6 +651,7 @@ where
         let profile = match &job {
             RadioJob::Transmit { job, .. } => &job.profile,
             RadioJob::Receive { job, .. } => &job.profile,
+            RadioJob::Cancel { .. } => unreachable!("cancel requests are never executed"),
         };
         if let Err(error) = self.driver.prepare(profile).await {
             self.handle_driver_error(id, error).await;
@@ -709,6 +732,7 @@ where
                     }
                 }
             }
+            RadioJob::Cancel { .. } => unreachable!("cancel requests are never executed"),
         }
         self.state.current_job = None;
         self.state.mode = RadioMode::Idle;
