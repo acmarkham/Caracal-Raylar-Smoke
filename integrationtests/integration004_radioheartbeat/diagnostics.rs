@@ -1,9 +1,11 @@
+use core::fmt::Write as _;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use defmt::{error, info, warn};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_time::{Duration, Instant, Timer};
+use heapless::String;
 use raylar_board_v1p0::SdCard;
 use raylar_logging_service::{
     LogLevel, LogOutcome, LoggingResources, LoggingService, ProcessOutcome, StorageLogSink,
@@ -13,7 +15,7 @@ use raylar_radio_service::{
     RendezvousPurpose, ScheduleError, Sequence,
 };
 use raylar_storage_service::StorageService;
-use raylar_time_service::{UtcStatus, UtcTimestamp};
+use raylar_time_service::{TimeSource, UtcStatus, UtcTimestamp};
 use static_cell::StaticCell;
 
 use crate::common;
@@ -25,6 +27,8 @@ const LINE_LENGTH: usize = 640;
 const RECORD_QUEUE_DEPTH: usize = 128;
 const LOG_WRITE_BUFFER_BYTES: usize = 8 * 1024;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(10);
+const FORMATTED_RECORD_LENGTH: usize = 2_048;
+const LOG_PART_LENGTH: usize = 448;
 
 type BoardStorage = StorageService<
     common::BoardStorageBackend,
@@ -50,11 +54,15 @@ static BOOT_ID: AtomicU32 = AtomicU32::new(0);
 static ENQUEUE_DROPS: AtomicU32 = AtomicU32::new(0);
 static LOG_DROPS: AtomicU32 = AtomicU32::new(0);
 static LOG_TRUNCATIONS: AtomicU32 = AtomicU32::new(0);
+static RECORD_SEQUENCE: AtomicU32 = AtomicU32::new(0);
 
 #[allow(dead_code)] // Fields are consumed by the derived Debug formatter in the logger task.
 #[derive(Clone, Copy, Debug)]
 pub enum DiagnosticKind {
     Boot {
+        test_name: &'static str,
+        firmware_version: &'static str,
+        firmware_hash: Option<&'static str>,
         role: Role,
         network_id: u32,
         schedule_version: u8,
@@ -65,6 +73,26 @@ pub enum DiagnosticKind {
     TimeTransition {
         previous: UtcStatus,
         current: UtcStatus,
+    },
+    TimeCalibration {
+        status: UtcStatus,
+        source: TimeSource,
+        uncertainty_us: u64,
+        accepted_anchors: u32,
+        rejected_anchors: u32,
+        calibration_samples: u8,
+        calibration_locked: bool,
+        calibrated_error_ppb: i64,
+    },
+    LocationStatus {
+        valid: bool,
+        latitude_e7: i32,
+        longitude_e7: i32,
+        fixes_seen: u64,
+        fixes_used: u8,
+        satellites: Option<u8>,
+        hdop_centi: Option<u16>,
+        uncertainty_meters: Option<u32>,
     },
     EpochScheduled {
         epoch: Epoch,
@@ -141,6 +169,25 @@ pub enum DiagnosticKind {
     NeighboursExpired {
         count: u16,
     },
+    NeighbourTable {
+        epoch: Epoch,
+        count: u16,
+    },
+    NeighbourEntry {
+        epoch: Epoch,
+        index: u16,
+        node: NodeId,
+        boot: BootId,
+        base_station: bool,
+        schedule_version: u8,
+        last_seen_utc: UtcTimestamp,
+        location: Option<raylar_radio_service::CompactLocation>,
+        location_uncertainty_meters: Option<u32>,
+        rssi_dbm_x2: Option<i16>,
+        snr_db_x4: Option<i16>,
+        received_packets: u32,
+        failed_packets: u32,
+    },
     TopologyWarning {
         base_station_count: u8,
     },
@@ -173,6 +220,7 @@ pub enum DiagnosticKind {
 
 #[derive(Clone, Copy, Debug)]
 struct Record {
+    sequence: u32,
     at: Instant,
     node_id: NodeId,
     boot_id: BootId,
@@ -191,6 +239,7 @@ pub fn emit(kind: DiagnosticKind) -> bool {
     let at = Instant::now();
     let time = common::TIME_RESOURCES.time_state();
     let record = Record {
+        sequence: RECORD_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         at,
         node_id: NodeId(NODE_ID.load(Ordering::Acquire)),
         boot_id: BootId(BOOT_ID.load(Ordering::Acquire)),
@@ -272,10 +321,9 @@ pub async fn logging_task(sd: SdCard<'static>) -> ! {
     loop {
         let mut progressed = false;
         while let Ok(record) = RECORDS.try_receive() {
-            account(logger.log_at(
-                record.at,
-                LogLevel::Info,
-                format_args!(
+            let mut formatted = String::<FORMATTED_RECORD_LENGTH>::new();
+            let format_result = write!(
+                formatted,
                 "node={:#010x} boot={:#010x} utc={:?} utc_status={:?} utc_uncertainty_us={} event={:?}",
                 record.node_id.0,
                 record.boot_id.0,
@@ -283,8 +331,33 @@ pub async fn logging_task(sd: SdCard<'static>) -> ! {
                 record.utc_status,
                 record.utc_uncertainty_us,
                 record.kind,
-                ),
-            ));
+            );
+            if format_result.is_err() {
+                LOG_TRUNCATIONS.fetch_add(1, Ordering::Relaxed);
+                error!("integration004 diagnostic formatting capacity exceeded");
+            }
+            let part_count = formatted.len().max(1).div_ceil(LOG_PART_LENGTH);
+            let mut start = 0;
+            let mut part = 1;
+            while start < formatted.len() {
+                let mut end = (start + LOG_PART_LENGTH).min(formatted.len());
+                while !formatted.is_char_boundary(end) {
+                    end -= 1;
+                }
+                account(logger.log_at(
+                    record.at,
+                    LogLevel::Info,
+                    format_args!(
+                        "record={} part={}/{} {}",
+                        record.sequence,
+                        part,
+                        part_count,
+                        &formatted[start..end],
+                    ),
+                ));
+                start = end;
+                part += 1;
+            }
             progressed = true;
             if LOGGING.stats().queue_depth >= LOG_QUEUE_DEPTH / 2 {
                 break;

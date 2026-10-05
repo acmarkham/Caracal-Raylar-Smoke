@@ -14,8 +14,8 @@ exercising:
 3. deterministic UTC rendezvous prediction.
 
 The test deliberately runs faster than a deployment configuration. Every node
-shall advertise presence and transmit one heartbeat during a 20-second active
-window in each 60-second UTC epoch.
+shall advertise presence and transmit one heartbeat during a 40-second active
+window followed by 20 idle seconds in each 60-second UTC epoch.
 
 All boards run the identical firmware image. A board becomes the base station
 only when the `USER` button is held during boot role selection. The base
@@ -145,15 +145,18 @@ authoritative.
 
 Persist at minimum:
 
-- boot/startup, role selection, node/boot IDs, network and schedule versions,
-  radio profile, and UTC readiness/degradation/recovery transitions;
+- boot/startup with test name and firmware version/hash, role selection,
+  node/boot IDs, network and schedule versions, radio profile, and UTC
+  readiness/degradation/recovery transitions;
+- sampled GPS location/fix quality and UTC frequency-calibration progress,
+  including lock transitions without duplicating every terminal update;
 - every scheduled presence and heartbeat TX attempt and completion/rejection,
   including epoch, purpose, derived slot, sequence, and scheduler outcome;
 - every received frame relevant to the test, including decoded type/source/
   boot ID/sequence, packet-complete timestamp, RSSI/SNR, validation result, and
   observed-versus-predicted slot classification;
-- peer discovery, refresh, boot-session change, expiry, neighbour-table state
-  changes, and base-station capability observations;
+- peer discovery, refresh, boot-session change, expiry, per-epoch neighbour
+  table snapshots, and base-station capability observations;
 - rendezvous windows opened/skipped, scan-versus-predicted mode, rendezvous
   successes/misses, UTC guard decisions, and scheduler conflicts;
 - periodic per-epoch summaries and final counters for TX/RX, neighbour count,
@@ -170,6 +173,8 @@ radio operation without blocking, retain bounded loss/error counters, and
 report that the run's persistent record is incomplete. Such a run cannot pass
 the logging acceptance criterion. Size the queue and verify sustained SD write
 throughput against the configured event rate before the hardware campaign.
+Records longer than one Logging Service message shall be emitted as numbered,
+reconstructable parts rather than silently truncated.
 
 ## Identical firmware and boot role selection
 
@@ -206,11 +211,12 @@ initial configuration is:
 | --- | ---: |
 | Network ID | dedicated Integration Test 004 constant |
 | Wire version | 1 |
-| Schedule version | 1 |
+| Schedule version | 2 |
 | Epoch duration | 60 s |
-| Common active window | 20 s |
-| Presence subwindow | epoch offset 0-10 s |
-| Heartbeat subwindow | epoch offset 10-20 s |
+| Common active window | 40 s |
+| Presence subwindow | epoch offset 0-20 s |
+| Heartbeat subwindow | epoch offset 20-40 s |
+| Idle interval | epoch offset 40-60 s |
 | Slot duration | 1 s |
 | Presence transmissions | 1 per epoch |
 | Heartbeat transmissions | 1 per epoch |
@@ -266,7 +272,7 @@ again; it must not invent an independent UTC estimate.
 
 If UTC uncertainty exceeds the configured narrow-rendezvous threshold, normal
 nodes shall not claim a rendezvous success or failure from a narrow window.
-They may widen the guard within the 20-second active window or fall back to a
+They may widen the guard within the 40-second active window or fall back to a
 full-window scan. The derived guard shall include local uncertainty, expected
 remote uncertainty, scheduler uncertainty, propagation allowance, and an
 engineering margin.
@@ -340,7 +346,7 @@ A normal node operates in two modes.
 ### Bootstrap scan
 
 Until it has discovered a base station, the node listens for the complete
-20-second active window. It also uses a full active-window scan:
+40-second active window. It also uses a full active-window scan:
 
 - for the first two complete epochs after startup;
 - after UTC invalidity or excessive uncertainty;
@@ -455,8 +461,9 @@ Use at least two boards and preferably three.
    epoch duration, active window, and slot duration.
 5. Wait for usable Time Service UTC and the next full epoch.
 6. Run for at least ten complete epochs (ten minutes).
-7. Confirm each board transmits one presence advert in seconds 0-10 and one
-   heartbeat in seconds 10-20 of each usable epoch.
+7. Confirm each board transmits one presence advert in seconds 0-20 and one
+   heartbeat in seconds 20-40 of each usable epoch, then remains idle from
+   seconds 40-60.
 8. Confirm the base station remains in chained promiscuous RX except for its
    own TX and bounded radio maintenance.
 9. Confirm every peer appears in the base-station neighbour table and every

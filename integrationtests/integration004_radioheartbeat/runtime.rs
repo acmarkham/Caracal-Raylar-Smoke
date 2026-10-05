@@ -723,7 +723,6 @@ impl Coordinator {
                 let mut context = self.take_rx(id);
                 let valid = self.process_received(frame, metadata, context);
                 if valid {
-                    indication::receive();
                     if let Some(context) = context.as_mut() {
                         context.receptions = context.receptions.saturating_add(1);
                     }
@@ -812,6 +811,7 @@ impl Coordinator {
             self.local.application_malformed = self.local.application_malformed.saturating_add(1);
             return false;
         };
+        indication::packet_received(decoded.header.frame_type);
         let time = common::TIME_RESOURCES.time_state();
         let received_utc = time.system_to_utc(metadata.packet_complete_at).ok();
         let epoch = received_utc
@@ -1104,6 +1104,33 @@ impl Coordinator {
         self.last_finished = Some(epoch);
         self.completed_epochs = self.completed_epochs.saturating_add(1);
         let state = RADIO.state();
+        diagnostics::emit(DiagnosticKind::NeighbourTable {
+            epoch,
+            count: self.neighbours.len().min(u16::MAX as usize) as u16,
+        });
+        for (index, entry) in self.neighbours.iter().enumerate() {
+            let base_station = self
+                .peers
+                .iter()
+                .find(|peer| peer.node_id == entry.node_id)
+                .map(|peer| peer.capabilities.0 & config::BASE_STATION_CAPABILITY != 0)
+                .unwrap_or(false);
+            diagnostics::emit(DiagnosticKind::NeighbourEntry {
+                epoch,
+                index: index.min(u16::MAX as usize) as u16,
+                node: entry.node_id,
+                boot: entry.boot_id,
+                base_station,
+                schedule_version: entry.schedule_version.0,
+                last_seen_utc: entry.last_seen_utc,
+                location: entry.location,
+                location_uncertainty_meters: entry.location_uncertainty_meters,
+                rssi_dbm_x2: entry.last_rssi_dbm_x2,
+                snr_db_x4: entry.last_snr_db_x4,
+                received_packets: entry.link_state.received_packets,
+                failed_packets: entry.link_state.failed_packets,
+            });
+        }
         diagnostics::emit(DiagnosticKind::Summary {
             epoch,
             mode: state.mode,

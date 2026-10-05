@@ -10,15 +10,15 @@ use raylar_time_service::UtcTimestamp;
 
 pub const CONFIGURATION_ID: u16 = 0x0004;
 pub const NETWORK_ID: u32 = 0x4954_0004;
-pub const SCHEDULE_VERSION: ScheduleVersion = ScheduleVersion(1);
+pub const SCHEDULE_VERSION: ScheduleVersion = ScheduleVersion(2);
 pub const BASE_STATION_CAPABILITY: u16 = 1 << 0;
 
 pub const EPOCH_DURATION: Duration = Duration::from_secs(60);
-pub const ACTIVE_WINDOW: Duration = Duration::from_secs(20);
-pub const SUBWINDOW_DURATION: Duration = Duration::from_secs(10);
-pub const HEARTBEAT_OFFSET: Duration = Duration::from_secs(10);
+pub const ACTIVE_WINDOW: Duration = Duration::from_secs(40);
+pub const SUBWINDOW_DURATION: Duration = Duration::from_secs(20);
+pub const HEARTBEAT_OFFSET: Duration = Duration::from_secs(20);
 pub const SLOT_DURATION: Duration = Duration::from_secs(1);
-pub const SLOTS_PER_SUBWINDOW: u32 = 10;
+pub const SLOTS_PER_SUBWINDOW: u32 = 20;
 pub const TX_RESERVATION: Duration = Duration::from_millis(750);
 
 pub const EXPECTED_REMOTE_UNCERTAINTY: Duration = Duration::from_millis(20);
@@ -154,13 +154,14 @@ mod tests {
     fn accelerated_epoch_and_subwindow_boundaries_are_exact() {
         validate().unwrap();
         let epoch = epoch_config();
-        assert_eq!(epoch.broadcast_slot_count().unwrap(), 20);
+        assert_eq!(epoch.broadcast_slot_count().unwrap(), 40);
         for (micros, expected_epoch, expected_offset, in_window) in [
             (0, 0, 0, true),
-            (9_999_999, 0, 9_999_999, true),
-            (10_000_000, 0, 10_000_000, true),
             (19_999_999, 0, 19_999_999, true),
-            (20_000_000, 0, 20_000_000, false),
+            (20_000_000, 0, 20_000_000, true),
+            (39_999_999, 0, 39_999_999, true),
+            (40_000_000, 0, 40_000_000, false),
+            (59_999_999, 0, 59_999_999, false),
             (60_000_000, 1, 0, true),
         ] {
             let position = epoch.position(UtcTimestamp::from_micros(micros)).unwrap();
@@ -182,19 +183,32 @@ mod tests {
         let epoch = Epoch(12_345);
         assert_eq!(
             derived_slot(node, epoch, RendezvousPurpose::Presence),
-            Ok(7)
+            Ok(16)
         );
         assert_eq!(
             derived_slot(node, epoch, RendezvousPurpose::Heartbeat),
-            Ok(0)
+            Ok(3)
         );
         assert_eq!(
             absolute_slot(node, epoch, RendezvousPurpose::Presence),
-            Ok(7)
+            Ok(16)
         );
         assert_eq!(
             absolute_slot(node, epoch, RendezvousPurpose::Heartbeat),
-            Ok(10)
+            Ok(23)
         );
+    }
+
+    #[test]
+    fn observed_campaign_pair_has_distinct_heartbeat_slots() {
+        let base_station = NodeId(0x381f_e484);
+        let peer = NodeId(3_423_884_720);
+        for epoch in 29_853_200..29_853_203 {
+            let epoch = Epoch(epoch);
+            assert_ne!(
+                absolute_slot(base_station, epoch, RendezvousPurpose::Heartbeat),
+                absolute_slot(peer, epoch, RendezvousPurpose::Heartbeat),
+            );
+        }
     }
 }
