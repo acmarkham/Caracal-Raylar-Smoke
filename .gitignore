@@ -5,3 +5,5 @@ debug.log
 /.trialdata
 /.probe-rs-logs/
 integrationtests/integration003_radiorange/radio_test_config.rs
+/analysis/integration004/20261005_1447/analysis
+/analysis/integration004/20261005_1447/logs
