@@ -44,6 +44,8 @@ The driver shall:
 - support LoRa and GFSK packet transmission and reception;
 - support both sub-GHz and 2.4 GHz operation where supported by the LR1121 and
   the fitted Ebyte module;
+- support LoRa and GFSK on the 2.4 GHz RF path with band-specific modulation
+  parameters, without substituting a different bandwidth or bitrate;
 - validate complete channel configurations before changing radio state;
 - timestamp every reported receive event from the `RF_IRQ` edge;
 - attach modulation-appropriate packet metadata, including RSSI;
@@ -186,6 +188,56 @@ A channel is an immutable, complete description of receive/transmit waveform
 compatibility. Frequency and packet format belong to the channel; TX power and
 ramp behavior belong to each transmission.
 
+### LR1121 2.4 GHz modulation envelope
+
+Table 3-9 of the LR1121 datasheet is the receiver specification for the
+`RFIO_HF` path. It specifies 2400–2500 MHz reception for both LoRa and FSK.
+Its 2.4 GHz test points are distinct from the S-band LoRa rows in the same
+table and from the general programmable limits in Table 3-7:
+
+| Table 3-9 2.4 GHz condition | Typical RX sensitivity |
+| --- | --- |
+| LoRa BW406 kHz, SF5 | -111 dBm |
+| LoRa BW406 kHz, SF7 | -114 dBm |
+| LoRa BW812 kHz, SF5 | -108 dBm |
+| LoRa BW812 kHz, SF7 | -112 dBm |
+| 2-FSK 1.2 kb/s, 5 kHz deviation, 20 kHz nominal RX BW | -117 dBm |
+| 2-FSK 4.8 kb/s, 5 kHz deviation, 20 kHz nominal RX BW | -112 dBm |
+| 2-FSK 38.4 kb/s, 40 kHz deviation, 160 kHz nominal RX BW | -103 dBm |
+| 2-FSK 250 kb/s, 125 kHz deviation, 500 kHz nominal RX BW | -97.5 dBm |
+
+These are receiver measurements, not an exhaustive list of programmable
+profiles. Table 3-9 also characterizes LoRa rejection at BW406/BW812 with
+SF7/SF12. It gives neither LoRa coding rates nor raw data rates. Table 3-7
+separately gives the 2.4 GHz LoRa range BW203–BW812 and raw-rate endpoints
+SF12/BW203/CR4/5 at 0.476 kb/s and SF5/BW812/CR4/5 at 101.5 kb/s. Its
+general (G)FSK programmable limits are 0.6–300 kb/s bitrate and 0.6–200 kHz
+deviation; the published 2.4 GHz receiver points above reach 250 kb/s.
+
+The LR1121 user manual defines 2.4 GHz LoRa BW203/BW406/BW812 command
+values `0x0D`/`0x0E`/`0x0F`, SF5–SF12, short-interleaver CR4/5, 4/6,
+4/7, 4/8, and long-interleaver CR4/5, 4/6, 4/8. Long-interleaver payload
+limits apply. The driver must preserve BW, SF, CR, and interleaver mode
+exactly and validate band-specific bandwidths. GFSK has no LoRa SF or CR.
+
+The datasheet's 20/160/500 kHz FSK sensitivity bandwidths are nominal test
+conditions for unfiltered 2-FSK; they are not GFSK sensitivity guarantees.
+Use an explicit Gaussian pulse shape for GFSK profiles. The LR1121
+`SetModulationParams` filter table exposes 19.5,
+156.2, and at most 467 kHz DSB settings, respectively; it has no exact
+20/160/500 kHz settings. In particular, the current driver's conservative
+`bitrate + 2 * deviation <= RX bandwidth` check rejects 250 kb/s with
+125 kHz deviation even at 467 kHz. Do not invent a 500 kHz enum or silently
+map the 500 kHz condition to 467 kHz. Verify the 250 kb/s operating point
+against the LR1121 user manual and hardware, then document the selected
+filter, frequency-error allowance, and any justified validation change before
+enabling that profile. The lower-rate examples may use documented 19.5 and
+156.2 kHz filter settings after validation and on-board RX testing; record
+the actual setting alongside the nominal datasheet condition.
+
+Sources: [Semtech LR1121 Datasheet, Rev 2.1, Tables 3-7 and 3-9](https://static6.arrow.com/aropdfconversion/558d7379c488375138d6317a5a5c06f1a144bd3/61252685.lr1121_v2_1_data_sheet.pdf)
+and [Semtech LR1121 User Manual, Rev 1.1, Sections 8.3.1 and 8.5.1](https://www.mouser.com/pdfdocs/usermanual_lr1121_v1_1.pdf).
+
 Conceptually:
 
 ```rust
@@ -245,7 +297,8 @@ Configuration validation occurs before any register changes and covers at
 least:
 
 - chipset and module frequency limits;
-- supported bandwidth, spreading-factor and coding-rate combinations;
+- supported bandwidth, spreading-factor and coding-rate combinations for the
+  selected band, including 2.4 GHz-only LoRa BW203/BW406/BW812;
 - LoRa implicit-header payload requirements;
 - GFSK bitrate, deviation and receiver-bandwidth relationships;
 - preamble, sync-word and payload bounds;
@@ -461,6 +514,10 @@ verification should include:
 ### Host tests
 
 - valid and invalid LoRa/GFSK configuration combinations;
+- 2.4 GHz LoRa BW203/BW406/BW812 with SF5/SF12 and CR4/5, rejection of those
+  bandwidths on sub-GHz, and rejection of unsupported 2.4 GHz bandwidths;
+- the documented 2.4 GHz FSK reference triples, including an explicit result
+  for the unresolved 250 kb/s / 125 kHz deviation / nominal 500 kHz case;
 - band and PA selection at all boundaries;
 - low-data-rate optimization derivation;
 - state-machine transitions and invalid operations;
@@ -475,6 +532,8 @@ Build on `unitsmoke/15_ebyte_crate` and `unitsmoke/16_ebyte_crate_rx` to verify:
 
 - LoRa TX/RX at 868 MHz, then at another supported band;
 - GFSK TX/RX with matching complete channel configurations;
+- 2.4 GHz LoRa and GFSK TX/RX at the documented settings, including the
+  actual programmable GFSK RX filter used for each nominal test condition;
 - RSSI and modulation-specific metadata on every valid packet;
 - a unique monotonic RX-done timestamp for each packet;
 - channel changes between LoRa/GFSK and sub-GHz/2.4 GHz;

@@ -116,7 +116,8 @@ The Radio Messaging Service shall:
 - support an always-defined common broadcast/control mechanism;
 - maintain bounded soft-state knowledge of neighbouring nodes;
 - support link-profile selection through a dedicated Link Estimator abstraction;
-- permit static link behaviour initially and adaptive/multiband behaviour later;
+- permit static sub-GHz and 2.4 GHz LoRa/GFSK profiles initially and adaptive
+  profile selection later;
 - support hop-by-hop reliable communication without requiring end-to-end acknowledgement;
 - allow different traffic classes to occupy different logical slots, channels, and reliability mechanisms;
 - support future geographically informed routing;
@@ -833,14 +834,74 @@ Conceptually it resolves to:
 ```text
 frequency
 modulation
-bandwidth
-spreading factor / bitrate
-coding
+LoRa bandwidth, spreading factor, and coding rate, or GFSK bitrate, deviation,
+  RX filter bandwidth, and pulse shape
 TX power policy
 other PHY compatibility parameters
 ```
 
 The radio scheduler receives a fully resolved profile and does not need to understand why it was selected.
+
+### 2.4 GHz LoRa and GFSK profiles
+
+The service shall accept policy-approved, complete `ChannelProfile`s for both
+LoRa and GFSK at 2400–2500 MHz and resolve them to the driver's matching
+`ChannelConfig` and `TxConfig`. A profile's stable identifier shall distinguish
+frequency, modulation, and all waveform/packet compatibility fields. Nodes
+must agree on the exact profile and schedule before a transmit or receive
+window; a node cannot infer a peer's modulation merely from the band. The
+common bootstrap profile may remain sub-GHz while a configured 2.4 GHz
+profile is used for a scheduled window. Profile changes include measured
+retune, RF-path/calibration, and preparation guards, and the scheduler must
+restore the agreed bootstrap profile for its next window.
+
+Use the 2.4 GHz `RFIO_HF` rows of LR1121 datasheet Table 3-9 for the
+reference receive profiles. The 125/250/500 kHz LoRa rows in that table
+describe S-band operation; they are not the 2.4 GHz reference rows.
+
+| Table 3-9 2.4 GHz condition | Typical RX sensitivity |
+| --- | --- |
+| LoRa BW406 kHz, SF5 / SF7 | -111 / -114 dBm |
+| LoRa BW812 kHz, SF5 / SF7 | -108 / -112 dBm |
+| 2-FSK 1.2 / 4.8 kb/s, 5 kHz deviation, 20 kHz nominal RX BW | -117 / -112 dBm |
+| 2-FSK 38.4 kb/s, 40 kHz deviation, 160 kHz nominal RX BW | -103 dBm |
+| 2-FSK 250 kb/s, 125 kHz deviation, 500 kHz nominal RX BW | -97.5 dBm |
+
+Table 3-9 also characterizes LoRa BW406/BW812 at SF7/SF12 for rejection,
+but does not specify CR or raw data rate. Table 3-7 supplies the wider
+2.4 GHz LoRa BW203–BW812 capability and CR4/5 raw-rate endpoints:
+SF12/BW203 at 0.476 kb/s and SF5/BW812 at 101.5 kb/s. The user manual
+specifies BW203/BW406/BW812, SF5–SF12, short-interleaver CR4/5, 4/6,
+4/7, 4/8, and long-interleaver CR4/5, 4/6, 4/8 with payload limits.
+Preserve BW, SF, CR, and interleaver mode exactly; calculate packet airtime
+separately from raw rate.
+
+Table 3-7 gives general (G)FSK programmable limits of 0.6–300 kb/s and
+0.6–200 kHz deviation, while Table 3-9's 2.4 GHz test points reach
+250 kb/s. Preserve bitrate, deviation, RX filter, Gaussian pulse shape,
+and packet format exactly. The Table 3-9 sensitivity results are for
+unfiltered 2-FSK, so they are not GFSK sensitivity guarantees. GFSK has no
+LoRa SF or CR.
+
+The LR1121 filter command offers 19.5, 156.2, and up to 467 kHz DSB,
+respectively, for the datasheet's nominal 20/160/500 kHz FSK conditions.
+The 250 kb/s / 125 kHz deviation point cannot pass the current driver's
+`bitrate + 2 * deviation <= RX bandwidth` check with its 467 kHz maximum.
+Do not offer it as an enabled service profile until the driver ADR's
+hardware/manual validation is resolved. Do not round a requested bandwidth
+or substitute another bitrate, deviation, SF, or CR without changing the
+declared profile and making that change explicit to peers. The service must
+report an unsupported profile as an error rather than skip its scheduled
+window silently.
+
+GFSK profiles also require agreed preamble, sync word, address filtering,
+packet length mode, CRC, whitening, and pulse shaping. TX and RX must use the
+same packet contract, and received GFSK RSSI/status must feed the service's
+normal receive, framing, and link-observation paths without requiring LoRa
+SNR. Keep profile sets bounded and approved by the regional radio policy.
+
+Sources: [Semtech LR1121 Datasheet, Rev 2.1, Tables 3-7 and 3-9](https://static6.arrow.com/aropdfconversion/558d7379c488375138d6317a5a5c06f1a144bd3/61252685.lr1121_v2_1_data_sheet.pdf)
+and [Semtech LR1121 User Manual, Rev 1.1, Sections 8.3.1 and 8.5.1](https://www.mouser.com/pdfdocs/usermanual_lr1121_v1_1.pdf).
 
 Phase I may implement the extreme static case:
 
@@ -856,6 +917,12 @@ DEFAULT_DATA_PROFILE
 ```
 
 without performing any adaptive estimation.
+
+Static selection does not restrict the set of representable profiles to
+sub-GHz LoRa. Add a GFSK profile construction path and the 2.4 GHz LoRa
+bandwidths to the service/driver adapter before scheduling either modulation
+on 2.4 GHz. The existing LoRa-only profile constructor and 62.5–500 kHz
+bandwidth mapping do not cover these cases.
 
 This allows the rest of the architecture to stabilise before link optimisation is introduced.
 
@@ -879,14 +946,16 @@ A node must not require a successful unicast negotiation merely to discover the 
 
 The Link Estimator shall eventually consume observations from ordinary traffic.
 
-Every successfully received radio packet already provides useful PHY information such as RSSI and LoRa SNR through the underlying driver.
+Every successfully received radio packet provides modulation-specific PHY
+information through the driver: RSSI for LoRa and GFSK, LoRa SNR for LoRa,
+and GFSK packet status for GFSK.
 
 Passive observations may include:
 
 ```text
 profile used
 RSSI
-SNR
+LoRa SNR or GFSK packet status, as applicable
 successful packet count
 CRC/header failures where attributable
 ACK success/failure
@@ -1375,6 +1444,8 @@ Implement:
 - bounded neighbour table;
 - peer activity prediction;
 - static `LinkEstimator`;
+- bounded, complete sub-GHz and 2.4 GHz LoRa/GFSK profile representation and
+  explicit rejection of any profile the driver cannot apply;
 - passive RSSI/SNR observation hooks;
 - service statistics and diagnostics.
 
@@ -1418,7 +1489,8 @@ Add:
 - richer passive link statistics;
 - per-peer/per-profile link state;
 - active probe exchanges;
-- sub-GHz and 2.4 GHz profile exploration;
+- adaptive exploration of the already representable sub-GHz and 2.4 GHz
+  LoRa/GFSK profiles;
 - deterministic channel hopping;
 - profile ranking;
 - expected-delivery and energy-cost estimates;
@@ -2102,6 +2174,9 @@ The results become part of the protocol compatibility contract.
 - broadcast requests select the bootstrap profile;
 - supported data requests select the expected profile;
 - impossible constraints fail cleanly.
+- complete 2.4 GHz LoRa BW203/BW406/BW812 and GFSK profiles resolve without
+  losing their modulation parameters; unsupported or unresolved profiles fail
+  explicitly.
 
 ### Scheduler
 
@@ -2139,6 +2214,12 @@ Test:
 11. verify sleep/wake behaviour outside required windows;
 12. deliberately degrade or remove GPS and observe behaviour as UTC uncertainty increases.
 
+Also run scheduled TX/RX windows for an agreed 2.4 GHz LoRa profile and an
+agreed 2.4 GHz GFSK profile, switching back to the bootstrap profile between
+them. Record the actual RX filter, packet format, retune guard, TX/RX outcome,
+and modulation-specific receive metrics. The 250 kb/s datasheet FSK case
+requires the driver validation described above before it can be enabled.
+
 A useful diagnostic mode should print:
 
 ```text
@@ -2171,6 +2252,8 @@ Phase I is complete when:
 - future peer rendezvous opportunities can be predicted;
 - the common frame envelope is compact and measured;
 - the Link Estimator selects the Phase I static profile;
+- the service can resolve and schedule agreed 2.4 GHz LoRa and GFSK profiles,
+  and rejects unresolved profiles explicitly;
 - received packets update passive link observations;
 - time uncertainty is consumed from the Time Service;
 - location is consumed from the Location Service rather than GPS directly;
