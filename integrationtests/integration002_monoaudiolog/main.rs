@@ -765,13 +765,23 @@ async fn main(spawner: Spawner) -> ! {
         IdentityVersioningService::new(&VERSIONING, IdentityConfig::default());
     let sd_card_identity = storage
         .device_identity()
+        .map(|identity| raylar_drivers::storage::StorageDeviceIdentity {
+            manufacturer_id: identity.manufacturer_id,
+            oem_id: identity.oem_id,
+            product_name: identity.product_name,
+            product_revision: identity.product_revision,
+            serial_number: identity.serial_number,
+            manufacture_year: identity.manufacture_year,
+            manufacture_month: identity.manufacture_month,
+            capacity_bytes: identity.capacity_bytes,
+        });
+    let card_identity = sd_card_identity
         .map(|identity| IdentityField::Known(identity.into()))
         .unwrap_or(IdentityField::Unavailable);
-    versioning_service.set_sd_card_identity(sd_card_identity);
-    // Publish the complete device/firmware/card snapshot before opening the
-    // system log. The service owns future GPS/radio/card identity updates.
-    versioning_service.publish();
-    spawner.spawn(unwrap!(identity_versioning_task(versioning_service)));
+    versioning_service.set_sd_card_identity(card_identity);
+    let identity = raylar_drivers::identity::init();
+    let node_id = identity.serial_32();
+    let firmware_hash = identity.firmware_identity().git_hash;
     let storage = SHARED_STORAGE.init(SharedStorage::new(storage));
     let sink = match SharedLogSink::open(storage).await {
         Ok(sink) => sink,
@@ -854,7 +864,9 @@ async fn main(spawner: Spawner) -> ! {
     let recorder = match AudioRecorder::<_, _, AUDIO_CAPACITY, 2>::new(
         &AUDIO,
         SharedRecording { storage },
-        TimeMetadataSource::new(&common::TIME_RESOURCES),
+        TimeMetadataSource::new(&common::TIME_RESOURCES)
+            .with_traceability(Some(node_id), sd_card_identity, firmware_hash, Some(boot_id))
+            .with_location_source(current_location_e7),
         AudioRecorderConfig {
             recording_seconds: 60,
             storage_layout: StorageLayout::HourlyFolders,
@@ -864,6 +876,11 @@ async fn main(spawner: Spawner) -> ! {
         Err(error) => fail_forever("audio recorder creation failed", error).await,
     };
     run_services(logging, recorder).await
+}
+
+fn current_location_e7() -> Option<(i32, i32)> {
+    let state = LOCATION.state();
+    state.valid.then_some((state.latitude.degrees_e7, state.longitude.degrees_e7))
 }
 
 fn log_versioning(system_log: TestLogger, state: IdentityState) {

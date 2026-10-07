@@ -106,19 +106,62 @@ impl WavContainer {
 
 fn write_comment(header: &mut [u8; WAV_HEADER_BYTES], metadata: &RecordingMetadata) {
     let mut comment = String::<COMMENT_BYTES>::new();
+    let pps_utc = metadata.last_gps_pps_utc.map(format_utc);
+    let calibration_ppb = metadata.calibration_ppb.map(format_ppb);
     let _ = write!(
         comment,
-        "start_utc={}.{:06};device={};firmware={}",
+        "start_utc={}.{:06};system_timestamp={};node_id={};card_id={};firmware_hash={};boot_id={};last_gps_pps_utc={};calibration_ppb={}",
         metadata.started_utc.seconds,
         metadata.started_utc.microseconds,
-        metadata.device_id,
-        metadata.firmware_version
+        optional_u64(metadata.started_system_ticks),
+        optional_u64(metadata.node_id.map(u64::from)),
+        metadata.card_id.as_ref().map(|v| v.as_str()).unwrap_or("unknown"),
+        if metadata.firmware_hash.is_empty() { metadata.firmware_version.as_str() } else { metadata.firmware_hash.as_str() },
+        optional_u64(metadata.boot_id.map(u64::from)),
+        pps_utc.as_ref().map(|v| v.as_str()).unwrap_or("unknown"),
+        calibration_ppb.as_ref().map(|v| v.as_str()).unwrap_or("unknown")
     );
     if let (Some(latitude), Some(longitude)) = (metadata.latitude_e7, metadata.longitude_e7) {
-        let _ = write!(comment, ";latitude_e7={latitude};longitude_e7={longitude}");
+        let digest = location_digest(latitude, longitude, metadata.node_id.unwrap_or(0));
+        let _ = write!(comment, ";location_hash={digest:016x}");
     }
     let bytes = comment.as_bytes();
     header[COMMENT_OFFSET..COMMENT_OFFSET + bytes.len()].copy_from_slice(bytes);
+}
+
+fn optional_u64(value: Option<u64>) -> heapless::String<20> {
+    let mut output = heapless::String::new();
+    if let Some(value) = value { let _ = write!(output, "{value}"); } else { let _ = output.push_str("unknown"); }
+    output
+}
+
+fn format_utc(value: raylar_time_service::UtcTimestamp) -> heapless::String<32> {
+    let mut output = heapless::String::new();
+    let _ = write!(output, "{}.{:06}", value.seconds, value.microseconds);
+    output
+}
+
+fn format_ppb(value: i64) -> heapless::String<24> {
+    let mut output = heapless::String::new();
+    let _ = write!(output, "{value}");
+    output
+}
+
+// FNV-1a over a domain tag, NodeID and signed E7 coordinates. This obscures
+// coordinates from casual inspection but is not cryptographic protection.
+fn location_digest(latitude_e7: i32, longitude_e7: i32, node_id: u32) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    let build_salt = option_env!("RAYLAR_LOCATION_HASH_SALT").unwrap_or("raylar-public-salt");
+    for byte in b"raylar-location-v1".iter()
+        .chain(build_salt.as_bytes().iter())
+        .chain(node_id.to_le_bytes().iter())
+        .chain(latitude_e7.to_le_bytes().iter())
+        .chain(longitude_e7.to_le_bytes().iter())
+    {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn put_id(target: &mut [u8], offset: usize, id: &[u8; 4]) {

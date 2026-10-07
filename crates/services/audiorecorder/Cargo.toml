@@ -23,6 +23,8 @@ heapless = "0.8.0"
 raylar-audiosource = { path = "../../metadrivers/audiosource" }
 raylar-storage-service = { path = "../storage" }
 raylar-time-service = { path = "../time", default-features = false }
+raylar-drivers = { path = "../../drivers" }
+embassy-time.workspace = true
 
 [dev-dependencies]
 critical-section = { version = "1.2.0", features = ["std"] }
