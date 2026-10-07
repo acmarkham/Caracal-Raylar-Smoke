@@ -915,13 +915,14 @@ impl Coordinator {
         let previous = self.neighbours.get(header.source).copied();
         if self
             .neighbours
-            .observe_presence_frame(
+            .observe_presence_frame_with_gfsk_status(
                 frame,
                 received_utc,
                 metadata.packet_complete_at,
                 self.profile.id(),
                 metadata.rssi_dbm_x2,
                 metadata.snr_db_x4,
+                metadata.gfsk_status,
             )
             .is_err()
         {
@@ -985,6 +986,7 @@ impl Coordinator {
             profile: self.profile.id(),
             rssi_dbm_x2: Some(metadata.rssi_dbm_x2),
             snr_db_x4: metadata.snr_db_x4,
+            gfsk_status: metadata.gfsk_status,
             outcome: LinkOutcome::Received,
             observed_at: metadata.packet_complete_at,
         };

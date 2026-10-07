@@ -885,14 +885,16 @@ LoRa SF or CR.
 
 The LR1121 filter command offers 19.5, 156.2, and up to 467 kHz DSB,
 respectively, for the datasheet's nominal 20/160/500 kHz FSK conditions.
-The 250 kb/s / 125 kHz deviation point cannot pass the current driver's
-`bitrate + 2 * deviation <= RX bandwidth` check with its 467 kHz maximum.
-Do not offer it as an enabled service profile until the driver ADR's
-hardware/manual validation is resolved. Do not round a requested bandwidth
-or substitute another bitrate, deviation, SF, or CR without changing the
-declared profile and making that change explicit to peers. The service must
-report an unsupported profile as an error rather than skip its scheduled
-window silently.
+The driver permits the exact 250 kb/s / 125 kHz deviation / 467 kHz
+filter combination as a documented exception to its conservative
+`bitrate + 2 * deviation <= RX bandwidth` check. The service can construct
+this profile explicitly for hardware characterization, but static deployment
+policy shall not select it by default until packet error rate and frequency
+error tolerance are measured on the fitted Ebyte board. Do not round a
+requested bandwidth or substitute another bitrate, deviation, SF, or CR
+without changing the declared profile and making that change explicit to
+peers. Report unsupported profiles as errors rather than silently skipping
+their scheduled windows.
 
 GFSK profiles also require agreed preamble, sync word, address filtering,
 packet length mode, CRC, whitening, and pulse shaping. TX and RX must use the
@@ -2217,8 +2219,8 @@ Test:
 Also run scheduled TX/RX windows for an agreed 2.4 GHz LoRa profile and an
 agreed 2.4 GHz GFSK profile, switching back to the bootstrap profile between
 them. Record the actual RX filter, packet format, retune guard, TX/RX outcome,
-and modulation-specific receive metrics. The 250 kb/s datasheet FSK case
-requires the driver validation described above before it can be enabled.
+and modulation-specific receive metrics. Characterize the 250 kb/s FSK case
+at the actual 467 kHz filter before selecting it in deployment policy.
 
 A useful diagnostic mode should print:
 

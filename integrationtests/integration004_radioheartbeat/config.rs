@@ -8,7 +8,7 @@ use raylar_radio_service::{
 };
 use raylar_time_service::UtcTimestamp;
 
-pub const CONFIGURATION_ID: u16 = 0x0004;
+pub const CONFIGURATION_ID: u16 = 0x0005;
 pub const NETWORK_ID: u32 = 0x4954_0004;
 pub const SCHEDULE_VERSION: ScheduleVersion = ScheduleVersion(3);
 pub const BASE_STATION_CAPABILITY: u16 = 1 << 0;
@@ -82,7 +82,11 @@ pub fn profile() -> Result<ChannelProfile, LinkError> {
         ProfileId(CONFIGURATION_ID as u8),
         FREQUENCY_HZ,
         SpreadingFactor::Sf7,
-        125_000,
+        if FREQUENCY_HZ >= 2_400_000_000 {
+            406_000
+        } else {
+            125_000
+        },
         CodingRate::Cr4_5,
         TX_POWER_DBM,
         0x12,

@@ -1,4 +1,5 @@
 use embassy_time::Instant;
+use raylar_drivers::radio::GfskPacketStatus;
 
 use crate::NodeId;
 
@@ -16,6 +17,7 @@ pub struct LinkObservation {
     pub profile: ProfileId,
     pub rssi_dbm_x2: Option<i16>,
     pub snr_db_x4: Option<i16>,
+    pub gfsk_status: Option<GfskPacketStatus>,
     pub outcome: LinkOutcome,
     pub observed_at: Instant,
 }

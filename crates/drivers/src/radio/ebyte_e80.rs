@@ -147,14 +147,16 @@ where
     async fn apply_lora(&mut self, config: &LoRaChannel) -> Result<(), BackendError> {
         self.write_command(SET_PACKET_TYPE, &[ops::PacketType::LoRa.raw_value()])
             .await?;
-        let modulation = ops::LoRaModulation::builder()
-            .with_sf(map_lora_sf(config.spreading_factor))
-            .with_bwl(map_lora_bw(config.bandwidth))
-            .with_cr(map_lora_cr(config.coding_rate))
-            .with_low_data_rate_optimize(config.low_data_rate_optimization_enabled())
-            .build();
-        self.write_command(SET_MODULATION, &modulation.raw_value().to_be_bytes())
-            .await?;
+        // lr11xx 0.1.0 omits the LR1121's 2.4 GHz LoRa bandwidth enum
+        // values. SetModulationParams takes SF, BW, CR, and LDRO as four
+        // bytes (LR1121 user manual section 8.3.1).
+        let modulation = [
+            map_lora_sf(config.spreading_factor).raw_value(),
+            map_lora_bw(config.bandwidth),
+            map_lora_cr(config.coding_rate).raw_value().into(),
+            u8::from(config.low_data_rate_optimization_enabled()),
+        ];
+        self.write_command(SET_MODULATION, &modulation).await?;
         self.write_command(SET_LORA_SYNC_WORD, &[config.sync_word])
             .await?;
         self.write_lora_packet(config, config.payload_length.unwrap_or(u8::MAX))
@@ -456,12 +458,15 @@ fn map_lora_sf(value: LoRaSpreadingFactor) -> ops::SpreadingFactor {
     }
 }
 
-fn map_lora_bw(value: LoRaBandwidth) -> ops::LoRaBandwidth {
+fn map_lora_bw(value: LoRaBandwidth) -> u8 {
     match value {
-        LoRaBandwidth::Khz62_5 => ops::LoRaBandwidth::KHz62,
-        LoRaBandwidth::Khz125 => ops::LoRaBandwidth::KHz125,
-        LoRaBandwidth::Khz250 => ops::LoRaBandwidth::KHz250,
-        LoRaBandwidth::Khz500 => ops::LoRaBandwidth::KHz500,
+        LoRaBandwidth::Khz62_5 => 0x03,
+        LoRaBandwidth::Khz125 => 0x04,
+        LoRaBandwidth::Khz250 => 0x05,
+        LoRaBandwidth::Khz500 => 0x06,
+        LoRaBandwidth::Khz203 => 0x0D,
+        LoRaBandwidth::Khz406 => 0x0E,
+        LoRaBandwidth::Khz812 => 0x0F,
     }
 }
 
@@ -512,6 +517,18 @@ fn map_gfsk_shape(value: GfskPulseShape) -> ops::GfskShape {
         GfskPulseShape::GaussianBt0_7 => ops::GfskShape::GaussianBt07,
         GfskPulseShape::GaussianBt1 => ops::GfskShape::GaussianBt1,
         GfskPulseShape::RaisedCosineBt0_7 => ops::GfskShape::RaisedCosineBt07,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lr1121_2_4_ghz_lora_bandwidths_have_the_documented_command_values() {
+        assert_eq!(map_lora_bw(LoRaBandwidth::Khz203), 0x0D);
+        assert_eq!(map_lora_bw(LoRaBandwidth::Khz406), 0x0E);
+        assert_eq!(map_lora_bw(LoRaBandwidth::Khz812), 0x0F);
     }
 }
 

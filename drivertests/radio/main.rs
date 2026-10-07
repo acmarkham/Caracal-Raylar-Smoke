@@ -316,7 +316,11 @@ fn selected_channel() -> ChannelConfig {
         frequency_hz: FREQUENCY_HZ,
         modulation: ModulationConfig::LoRa(LoRaChannel {
             spreading_factor: LoRaSpreadingFactor::Sf7,
-            bandwidth: LoRaBandwidth::Khz125,
+            bandwidth: if FREQUENCY_HZ >= 2_400_000_000 {
+                LoRaBandwidth::Khz406
+            } else {
+                LoRaBandwidth::Khz125
+            },
             coding_rate: LoRaCodingRate::Cr4_5,
             low_data_rate_optimization: LowDataRateOptimization::Auto,
             preamble_symbols: 12,
@@ -337,9 +341,21 @@ fn selected_channel() -> ChannelConfig {
     ChannelConfig {
         frequency_hz: FREQUENCY_HZ,
         modulation: ModulationConfig::Gfsk(GfskChannel {
-            bit_rate_bps: 50_000,
-            frequency_deviation_hz: 25_000,
-            receiver_bandwidth: GfskBandwidth::Hz117_300,
+            bit_rate_bps: if FREQUENCY_HZ >= 2_400_000_000 {
+                38_400
+            } else {
+                50_000
+            },
+            frequency_deviation_hz: if FREQUENCY_HZ >= 2_400_000_000 {
+                40_000
+            } else {
+                25_000
+            },
+            receiver_bandwidth: if FREQUENCY_HZ >= 2_400_000_000 {
+                GfskBandwidth::Hz156_200
+            } else {
+                GfskBandwidth::Hz117_300
+            },
             pulse_shape: GfskPulseShape::GaussianBt0_5,
             preamble_bits: 32,
             preamble_detector: GfskPreambleDetector::Bits16,

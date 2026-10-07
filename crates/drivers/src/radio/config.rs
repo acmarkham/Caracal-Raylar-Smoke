@@ -26,7 +26,12 @@ impl ChannelConfig {
     pub fn validate(&self) -> Result<ValidatedChannel, ConfigError> {
         let band = band_for_frequency(self.frequency_hz)?;
         match &self.modulation {
-            ModulationConfig::LoRa(config) => config.validate()?,
+            ModulationConfig::LoRa(config) => {
+                config.validate()?;
+                if !config.bandwidth.supports(band) {
+                    return Err(ConfigError::UnsupportedLoRaBandwidth);
+                }
+            }
             ModulationConfig::Gfsk(config) => config.validate()?,
         }
         Ok(ValidatedChannel { band })
@@ -162,6 +167,9 @@ pub enum LoRaBandwidth {
     Khz125,
     Khz250,
     Khz500,
+    Khz203,
+    Khz406,
+    Khz812,
 }
 
 impl LoRaBandwidth {
@@ -171,7 +179,23 @@ impl LoRaBandwidth {
             Self::Khz125 => 125_000,
             Self::Khz250 => 250_000,
             Self::Khz500 => 500_000,
+            Self::Khz203 => 203_000,
+            Self::Khz406 => 406_000,
+            Self::Khz812 => 812_000,
         }
+    }
+
+    pub const fn supports(self, band: RadioBand) -> bool {
+        matches!(
+            (band, self),
+            (
+                RadioBand::SubGhz,
+                Self::Khz62_5 | Self::Khz125 | Self::Khz250 | Self::Khz500
+            ) | (
+                RadioBand::Ghz2_4,
+                Self::Khz203 | Self::Khz406 | Self::Khz812
+            )
+        )
     }
 }
 
@@ -225,7 +249,14 @@ impl GfskChannel {
         }
         let occupied =
             u64::from(self.bit_rate_bps).saturating_add(2 * u64::from(self.frequency_deviation_hz));
-        if occupied > u64::from(self.receiver_bandwidth.hz()) {
+        // Table 3-9 characterizes 250 kb/s / 125 kHz deviation with a
+        // nominal 500 kHz RX filter. The largest programmable LR1121 filter
+        // is 467 kHz (user manual Table 8-14), so allow this exact reference
+        // point while keeping the conservative check for all other settings.
+        let documented_fast_fsk = self.bit_rate_bps == 250_000
+            && self.frequency_deviation_hz == 125_000
+            && self.receiver_bandwidth == GfskBandwidth::Hz467_000;
+        if occupied > u64::from(self.receiver_bandwidth.hz()) && !documented_fast_fsk {
             return Err(ConfigError::GfskReceiverBandwidthTooNarrow);
         }
         if self.preamble_bits == 0 {

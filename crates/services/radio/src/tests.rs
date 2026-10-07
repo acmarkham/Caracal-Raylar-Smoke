@@ -1,10 +1,15 @@
 use embassy_time::{Duration, Instant};
+use raylar_drivers::radio::{
+    GfskBandwidth, GfskPacketStatus, GfskPulseShape, LoRaBandwidth, LoRaChannel, LoRaCodingRate,
+    ModulationConfig,
+};
 use raylar_time_service::{TimeState, UtcStatus, UtcTimestamp};
 
 use super::*;
 use crate::link::{
-    BandMask, ChannelProfile, CodingRate, LinkConstraints, LinkEstimator, LinkPurpose, LinkRequest,
-    LinkTarget, PassiveLinkState, ProfileId, SpreadingFactor, StaticLinkEstimator,
+    BandMask, ChannelProfile, CodingRate, GfskReferenceRate, LinkConstraints, LinkEstimator,
+    LinkPurpose, LinkRequest, LinkTarget, PassiveLinkState, ProfileId, SpreadingFactor,
+    StaticLinkEstimator,
 };
 
 fn profile(id: u8, frequency_hz: u32) -> ChannelProfile {
@@ -12,7 +17,11 @@ fn profile(id: u8, frequency_hz: u32) -> ChannelProfile {
         ProfileId(id),
         frequency_hz,
         SpreadingFactor::Sf9,
-        125_000,
+        if frequency_hz >= 2_400_000_000 {
+            406_000
+        } else {
+            125_000
+        },
         CodingRate::Cr4_5,
         if frequency_hz >= 2_400_000_000 {
             13
@@ -334,6 +343,55 @@ fn received_presence_refreshes_neighbour_and_passive_link_state() {
     assert_eq!(entry.link_state.received_packets, 1);
 }
 
+#[test]
+fn gfsk_presence_observation_retains_packet_status_without_lora_snr() {
+    let channel = ChannelProfile::gfsk_reference_2_4(
+        ProfileId(7),
+        2_445_000_000,
+        GfskReferenceRate::Bps38_400,
+        10,
+        &[0x2D, 0xD4],
+    )
+    .unwrap();
+    let mut protocol = PresenceProtocol::new(
+        NodeId(77),
+        BootId(88),
+        channel.clone(),
+        0x1234,
+        ScheduleVersion(1),
+    );
+    let frame = protocol
+        .encode_frame(PresenceAdvert {
+            schedule_version: ScheduleVersion(1),
+            capabilities: CapabilityFlags(1),
+        })
+        .unwrap();
+    let status = GfskPacketStatus {
+        sync_rssi_dbm_x2: -190,
+        length_error: false,
+        crc_error: false,
+        abort_error: false,
+        address_error: false,
+        sync_error: false,
+    };
+    let mut table = NeighbourTable::<2>::new(Duration::from_secs(10));
+    table
+        .observe_presence_frame_with_gfsk_status(
+            frame.as_slice(),
+            UtcTimestamp::from_micros(2_000_000),
+            Instant::from_ticks(123),
+            channel.id(),
+            -180,
+            None,
+            Some(status),
+        )
+        .unwrap();
+    let entry = table.get(NodeId(77)).unwrap();
+    let observation = entry.link_state.last_observation.unwrap();
+    assert_eq!(observation.snr_db_x4, None);
+    assert_eq!(observation.gfsk_status, Some(status));
+}
+
 fn neighbour(node: u32, boot: u32, seen_us: i64) -> NeighbourEntry {
     NeighbourEntry {
         node_id: NodeId(node),
@@ -418,6 +476,134 @@ fn static_link_estimator_selects_profiles_and_honours_band_constraints() {
         estimator.select_profile(&impossible),
         Err(LinkError::NoAcceptableProfile)
     );
+}
+
+#[test]
+fn service_resolves_all_2_4_ghz_lora_bandwidths_and_rejects_sub_ghz_bandwidth() {
+    for bandwidth_hz in [203_000, 406_000, 812_000] {
+        let profile = ChannelProfile::lora(
+            ProfileId(9),
+            2_445_000_000,
+            SpreadingFactor::Sf7,
+            bandwidth_hz,
+            CodingRate::Cr4_5,
+            10,
+            0x12,
+        )
+        .unwrap();
+        let ModulationConfig::LoRa(config) = &profile.driver_channel().modulation else {
+            panic!("expected LoRa profile");
+        };
+        assert_eq!(config.bandwidth.hz(), bandwidth_hz);
+    }
+    assert_eq!(
+        ChannelProfile::lora(
+            ProfileId(9),
+            2_445_000_000,
+            SpreadingFactor::Sf7,
+            125_000,
+            CodingRate::Cr4_5,
+            10,
+            0x12,
+        ),
+        Err(LinkError::InvalidProfile)
+    );
+}
+
+#[test]
+fn service_retains_long_interleaver_coding_rate_and_payload_contract() {
+    let modulation = LoRaChannel {
+        bandwidth: LoRaBandwidth::Khz406,
+        coding_rate: LoRaCodingRate::LongInterleaver4_6,
+        payload_length: Some(32),
+        ..LoRaChannel::default()
+    };
+    let profile =
+        ChannelProfile::lora_config(ProfileId(8), 2_445_000_000, modulation, true, 10).unwrap();
+    assert_eq!(
+        profile.driver_channel().modulation,
+        ModulationConfig::LoRa(modulation)
+    );
+    assert_eq!(
+        ChannelProfile::lora(
+            ProfileId(8),
+            2_445_000_000,
+            SpreadingFactor::Sf7,
+            406_000,
+            CodingRate::LongInterleaver4_6,
+            10,
+            0x12,
+        ),
+        Err(LinkError::InvalidProfile)
+    );
+}
+
+#[test]
+fn service_preserves_table_3_9_gfsk_profiles_and_selects_one_for_data() {
+    let reference_cases = [
+        (
+            GfskReferenceRate::Bps1_200,
+            1_200,
+            5_000,
+            GfskBandwidth::Hz19_500,
+        ),
+        (
+            GfskReferenceRate::Bps4_800,
+            4_800,
+            5_000,
+            GfskBandwidth::Hz19_500,
+        ),
+        (
+            GfskReferenceRate::Bps38_400,
+            38_400,
+            40_000,
+            GfskBandwidth::Hz156_200,
+        ),
+        (
+            GfskReferenceRate::Bps250_000,
+            250_000,
+            125_000,
+            GfskBandwidth::Hz467_000,
+        ),
+    ];
+    for (rate, bitrate, deviation, bandwidth) in reference_cases {
+        let profile = ChannelProfile::gfsk_reference_2_4(
+            ProfileId(7),
+            2_445_000_000,
+            rate,
+            10,
+            &[0x2D, 0xD4],
+        )
+        .unwrap();
+        let ModulationConfig::Gfsk(config) = &profile.driver_channel().modulation else {
+            panic!("expected GFSK profile");
+        };
+        assert_eq!(config.bit_rate_bps, bitrate);
+        assert_eq!(config.frequency_deviation_hz, deviation);
+        assert_eq!(config.receiver_bandwidth, bandwidth);
+        assert_eq!(config.pulse_shape, GfskPulseShape::GaussianBt0_5);
+        assert_eq!(config.sync_word.as_slice(), &[0x2D, 0xD4]);
+        assert_eq!(profile.band(), crate::link::ProfileBand::Ghz2_4);
+    }
+    let data = ChannelProfile::gfsk_reference_2_4(
+        ProfileId(7),
+        2_445_000_000,
+        GfskReferenceRate::Bps38_400,
+        10,
+        &[0x2D, 0xD4],
+    )
+    .unwrap();
+    let estimator = StaticLinkEstimator::new(profile(1, 868_100_000), data.clone());
+    let request = LinkRequest {
+        target: LinkTarget::Gateway,
+        purpose: LinkPurpose::FastData,
+        constraints: LinkConstraints {
+            allowed_bands: BandMask::GHZ_2_4,
+            maximum_airtime: None,
+        },
+        system_slot: None,
+    };
+    assert_eq!(estimator.select_profile(&request), Ok(data));
 }
 
 #[test]

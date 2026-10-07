@@ -7,6 +7,7 @@ use super::state::RadioState;
 pub enum ConfigError {
     UnsupportedFrequency,
     UnsupportedTxPower,
+    UnsupportedLoRaBandwidth,
     LoRaPreambleTooShort,
     ImplicitHeaderNeedsPayloadLength,
     LongInterleaverNeedsPayloadLength,

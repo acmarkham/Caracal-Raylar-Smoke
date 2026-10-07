@@ -1,5 +1,6 @@
 use embassy_time::{Duration, Instant};
 use heapless::Vec;
+use raylar_drivers::radio::GfskPacketStatus;
 use raylar_time_service::UtcTimestamp;
 
 use crate::link::{LinkObservation, LinkOutcome, PassiveLinkState, ProfileId};
@@ -130,6 +131,29 @@ impl<const CAPACITY: usize> NeighbourTable<CAPACITY> {
         rssi_dbm_x2: i16,
         snr_db_x4: Option<i16>,
     ) -> Result<NodeId, FrameError> {
+        self.observe_presence_frame_with_gfsk_status(
+            frame,
+            received_utc,
+            received_at,
+            profile,
+            rssi_dbm_x2,
+            snr_db_x4,
+            None,
+        )
+    }
+
+    /// As above, retaining modulation-specific GFSK packet status when present.
+    #[allow(clippy::too_many_arguments)]
+    pub fn observe_presence_frame_with_gfsk_status(
+        &mut self,
+        frame: &[u8],
+        received_utc: UtcTimestamp,
+        received_at: Instant,
+        profile: ProfileId,
+        rssi_dbm_x2: i16,
+        snr_db_x4: Option<i16>,
+        gfsk_status: Option<GfskPacketStatus>,
+    ) -> Result<NodeId, FrameError> {
         let decoded = FrameHeader::decode(frame)?;
         if decoded.header.frame_type != FrameType::Presence || decoded.header.destination.is_some()
         {
@@ -141,6 +165,7 @@ impl<const CAPACITY: usize> NeighbourTable<CAPACITY> {
             profile,
             rssi_dbm_x2: Some(rssi_dbm_x2),
             snr_db_x4,
+            gfsk_status,
             outcome: LinkOutcome::Received,
             observed_at: received_at,
         };

@@ -8,6 +8,6 @@ pub use estimator::{
 };
 pub use observation::{LinkObservation, LinkOutcome, PassiveLinkState};
 pub use profile::{
-    ChannelProfile, CodingRate, ProfileBand, ProfileId, SpreadingFactor,
+    ChannelProfile, CodingRate, GfskReferenceRate, ProfileBand, ProfileId, SpreadingFactor,
     PHASE_ONE_BOOTSTRAP_PROFILE_ID,
 };

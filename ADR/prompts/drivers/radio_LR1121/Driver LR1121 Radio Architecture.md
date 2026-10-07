@@ -223,17 +223,18 @@ exactly and validate band-specific bandwidths. GFSK has no LoRa SF or CR.
 The datasheet's 20/160/500 kHz FSK sensitivity bandwidths are nominal test
 conditions for unfiltered 2-FSK; they are not GFSK sensitivity guarantees.
 Use an explicit Gaussian pulse shape for GFSK profiles. The LR1121
-`SetModulationParams` filter table exposes 19.5,
-156.2, and at most 467 kHz DSB settings, respectively; it has no exact
-20/160/500 kHz settings. In particular, the current driver's conservative
-`bitrate + 2 * deviation <= RX bandwidth` check rejects 250 kb/s with
-125 kHz deviation even at 467 kHz. Do not invent a 500 kHz enum or silently
-map the 500 kHz condition to 467 kHz. Verify the 250 kb/s operating point
-against the LR1121 user manual and hardware, then document the selected
-filter, frequency-error allowance, and any justified validation change before
-enabling that profile. The lower-rate examples may use documented 19.5 and
-156.2 kHz filter settings after validation and on-board RX testing; record
-the actual setting alongside the nominal datasheet condition.
+`SetModulationParams` filter table exposes 19.5, 156.2, and at most 467 kHz
+DSB settings, respectively; it has no exact 20/160/500 kHz settings. The
+service reference profiles map the four Table 3-9 bitrate/deviation pairs
+to 19.5, 19.5, 156.2, and 467 kHz. The driver allows the exact
+250 kb/s / 125 kHz / 467 kHz
+combination as a documented exception to its conservative
+`bitrate + 2 * deviation <= RX bandwidth` check. Do not invent a 500 kHz
+enum or silently substitute other values. The 250 kb/s profile is available
+for explicit hardware characterization, but its packet error rate and
+frequency-error allowance on the fitted Ebyte board remain unverified;
+deployment policy must not select it by default until those measurements
+are recorded. Record the actual filter setting for every enabled profile.
 
 Sources: [Semtech LR1121 Datasheet, Rev 2.1, Tables 3-7 and 3-9](https://static6.arrow.com/aropdfconversion/558d7379c488375138d6317a5a5c06f1a144bd3/61252685.lr1121_v2_1_data_sheet.pdf)
 and [Semtech LR1121 User Manual, Rev 1.1, Sections 8.3.1 and 8.5.1](https://www.mouser.com/pdfdocs/usermanual_lr1121_v1_1.pdf).
@@ -516,8 +517,8 @@ verification should include:
 - valid and invalid LoRa/GFSK configuration combinations;
 - 2.4 GHz LoRa BW203/BW406/BW812 with SF5/SF12 and CR4/5, rejection of those
   bandwidths on sub-GHz, and rejection of unsupported 2.4 GHz bandwidths;
-- the documented 2.4 GHz FSK reference triples, including an explicit result
-  for the unresolved 250 kb/s / 125 kHz deviation / nominal 500 kHz case;
+- the documented 2.4 GHz FSK reference triples, including the exact
+  250 kb/s / 125 kHz deviation / 467 kHz filter exception;
 - band and PA selection at all boundaries;
 - low-data-rate optimization derivation;
 - state-machine transitions and invalid operations;

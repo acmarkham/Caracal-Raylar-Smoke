@@ -8,7 +8,7 @@ use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{digital::Wait, spi::SpiDevice};
 use heapless::Vec;
-use raylar_drivers::radio::{Error as DriverError, RadioDriver, RxMetrics};
+use raylar_drivers::radio::{Error as DriverError, GfskPacketStatus, RadioDriver, RxMetrics};
 use raylar_time_service::{TimeState, UtcStatus, UtcTimestamp};
 
 use crate::link::ChannelProfile;
@@ -187,6 +187,7 @@ pub struct DriverPacketMetadata {
     pub frequency_hz: u32,
     pub rssi_dbm_x2: i16,
     pub snr_db_x4: Option<i16>,
+    pub gfsk_status: Option<GfskPacketStatus>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -445,13 +446,16 @@ where
             .receive_at(start, end, buffer)
             .await
             .map_err(map_driver_error)?;
-        let (rssi_dbm_x2, snr_db_x4) = match packet.metadata.metrics {
+        let (rssi_dbm_x2, snr_db_x4, gfsk_status) = match packet.metadata.metrics {
             RxMetrics::LoRa {
                 rssi_dbm_x2,
                 snr_db_x4,
                 ..
-            } => (rssi_dbm_x2, Some(snr_db_x4)),
-            RxMetrics::Gfsk { rssi_dbm_x2, .. } => (rssi_dbm_x2, None),
+            } => (rssi_dbm_x2, Some(snr_db_x4), None),
+            RxMetrics::Gfsk {
+                rssi_dbm_x2,
+                status,
+            } => (rssi_dbm_x2, None, Some(status)),
         };
         Ok((
             packet.payload.len(),
@@ -460,6 +464,7 @@ where
                 frequency_hz: packet.metadata.frequency_hz,
                 rssi_dbm_x2,
                 snr_db_x4,
+                gfsk_status,
             },
         ))
     }
