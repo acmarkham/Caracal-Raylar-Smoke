@@ -1,4 +1,4 @@
-use raylar_drivers::storage::{StorageDeviceIdentity, BLOCK_BYTES};
+use raylar_drivers::storage::{BLOCK_BYTES, StorageDeviceIdentity, StorageTimestamp};
 use raylar_time_service::{TimeResources, UtcTimestamp};
 
 use crate::backend::StorageBackend;
@@ -83,7 +83,7 @@ where
         kind: StreamKind,
         layout: StorageLayout,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        let timestamp = self.clock.current_utc().map(|now| now.seconds);
+        let timestamp = self.clock.current_utc();
         self.begin_stream_with_timestamp(kind, layout, timestamp)
             .await
     }
@@ -98,7 +98,7 @@ where
         layout: StorageLayout,
         started_utc: UtcTimestamp,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.begin_stream_with_timestamp(kind, layout, Some(started_utc.seconds))
+        self.begin_stream_with_timestamp(kind, layout, Some(started_utc))
             .await
     }
 
@@ -106,7 +106,7 @@ where
         &mut self,
         kind: StreamKind,
         layout: StorageLayout,
-        timestamp: Option<i64>,
+        timestamp: Option<UtcTimestamp>,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         let index = self
             .slots
@@ -115,16 +115,17 @@ where
             .ok_or(StorageServiceError::TooManyStreams)?;
         let generation = self.generations[index].wrapping_add(1);
         let sequence = self.stream_sequence.wrapping_add(1);
-        let path = stream_path(kind, layout, timestamp, sequence)?;
+        let path = stream_path(kind, layout, timestamp.map(|time| time.seconds), sequence)?;
+        let file_timestamp = timestamp.and_then(to_storage_timestamp);
         if let Some(folder) = folder_path::<B::Error>(path.as_str())? {
             self.backend
-                .create_directory(folder.as_str())
+                .create_directory_at(folder.as_str(), file_timestamp)
                 .await
                 .map_err(StorageServiceError::Backend)?;
         }
         let file = self
             .backend
-            .open_for_append(path.as_str())
+            .open_for_append_at(path.as_str(), file_timestamp)
             .await
             .map_err(StorageServiceError::Backend)?;
 
@@ -165,7 +166,10 @@ where
             slot.pending_len = 0;
         }
         self.backend
-            .flush(handle)
+            .flush_at(
+                handle,
+                self.clock.current_utc().and_then(to_storage_timestamp),
+            )
             .await
             .map_err(StorageServiceError::Backend)
     }
@@ -194,7 +198,10 @@ where
             slot.pending_len = remaining;
         }
         self.backend
-            .flush(handle)
+            .flush_at(
+                handle,
+                self.clock.current_utc().and_then(to_storage_timestamp),
+            )
             .await
             .map_err(StorageServiceError::Backend)
     }
@@ -207,7 +214,12 @@ where
         let mut slot = self.slots[index]
             .take()
             .ok_or(StorageServiceError::InvalidStream)?;
-        close_slot_file::<_, BLOCK_SIZE, WRITE_BUFFER_BYTES>(&mut self.backend, &mut slot).await
+        close_slot_file::<_, BLOCK_SIZE, WRITE_BUFFER_BYTES>(
+            &mut self.backend,
+            &mut slot,
+            self.clock.current_utc().and_then(to_storage_timestamp),
+        )
+        .await
     }
 
     fn validate(&self, stream: StreamHandle) -> Result<usize, StorageServiceError<B::Error>> {
@@ -262,6 +274,7 @@ where
 async fn close_slot_file<B, const BLOCK_SIZE: usize, const WRITE_BUFFER_BYTES: usize>(
     backend: &mut B,
     slot: &mut StreamSlot<WRITE_BUFFER_BYTES>,
+    timestamp: Option<StorageTimestamp>,
 ) -> Result<(), StorageServiceError<B::Error>>
 where
     B: StorageBackend<BLOCK_SIZE>,
@@ -277,7 +290,11 @@ where
         slot.pending_len = 0;
     }
     backend
-        .close(handle)
+        .close_at(handle, timestamp)
         .await
         .map_err(StorageServiceError::Backend)
+}
+
+fn to_storage_timestamp(utc: UtcTimestamp) -> Option<StorageTimestamp> {
+    StorageTimestamp::from_unix(utc.seconds, utc.microseconds)
 }

@@ -15,7 +15,8 @@ use raylar_drivers::gps::{
 };
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
-    FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver, detect_exfat_volume,
+    FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver, StorageTimestamp,
+    detect_exfat_volume,
 };
 use raylar_storage_service::StorageBackend;
 use raylar_time_service::gps::run_gps_time_source;
@@ -194,8 +195,24 @@ where
         self.inner.create_directory(path).await
     }
 
+    async fn create_directory_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        self.inner.create_directory_at(path, timestamp).await
+    }
+
     async fn open_for_append(&mut self, path: &str) -> Result<FileHandle, Self::Error> {
         self.inner.open_for_append(path).await
+    }
+
+    async fn open_for_append_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<FileHandle, Self::Error> {
+        self.inner.open_for_append_at(path, timestamp).await
     }
 
     async fn append(&mut self, handle: FileHandle, data: &[u8]) -> Result<(), Self::Error> {
@@ -206,8 +223,24 @@ where
         self.inner.flush(handle).await
     }
 
+    async fn flush_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        self.inner.flush_at(handle, timestamp).await
+    }
+
     async fn close(&mut self, handle: FileHandle) -> Result<(), Self::Error> {
         self.inner.close(handle).await
+    }
+
+    async fn close_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        self.inner.close_at(handle, timestamp).await
     }
 }
 

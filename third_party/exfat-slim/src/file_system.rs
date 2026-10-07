@@ -23,6 +23,7 @@ use super::{
     upcase_table::UpcaseTable,
     utils::{calc_dir_entry_set_len, encode_utf16_and_hash, split_path},
 };
+use crate::timestamp::Timestamp;
 
 pub type ExFatResult<T, D, const SIZE: usize> =
     core::result::Result<T, ExFatError<<D as BlockDevice<SIZE>>::Error>>;
@@ -201,7 +202,7 @@ where
             }
             Err(ExFatError::FileNotFound) => {
                 if options.create || options.create_new {
-                    self.create_file(path).await?
+                    self.create_file(path, options.timestamp).await?
                 } else {
                     return Err(ExFatError::FileNotFound);
                 }
@@ -303,11 +304,23 @@ where
     /// The dir path can be nested
     #[bisync]
     pub async fn create_directory(&mut self, path: &str) -> ExFatResult<(), D, SIZE> {
+        self.create_directory_at(path, None).await
+    }
+
+    /// Creates a directory, recording UTC time on newly created components.
+    #[bisync]
+    pub async fn create_directory_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<Timestamp>,
+    ) -> ExFatResult<(), D, SIZE> {
         self.mount().await?;
         let mut touched = FileDirty::new();
 
         // find directory or recursively create it if it does not already exist
-        let _cluster_id = self.get_or_create_directory(&mut touched, path).await?;
+        let _cluster_id = self
+            .get_or_create_directory(&mut touched, path, timestamp)
+            .await?;
 
         touched.flush(self).await?;
         Ok(())
@@ -358,7 +371,9 @@ where
             .await?;
 
         // find directory or recursively create it if it does not already exist
-        let mut directory = self.get_or_create_directory(&mut touched, dir_path).await?;
+        let mut directory = self
+            .get_or_create_directory(&mut touched, dir_path, None)
+            .await?;
 
         self.create_file_dir_entry_at(
             file_or_dir_name,
@@ -368,6 +383,7 @@ where
             file_details.flags,
             file_details.valid_data_length,
             file_details.data_length,
+            None,
         )
         .await?;
 
@@ -523,12 +539,18 @@ where
     }
 
     #[bisync]
-    pub(crate) async fn create_file(&mut self, path: &str) -> ExFatResult<FileDetails, D, SIZE> {
+    pub(crate) async fn create_file(
+        &mut self,
+        path: &str,
+        timestamp: Option<Timestamp>,
+    ) -> ExFatResult<FileDetails, D, SIZE> {
         let (dir_path, file_or_dir_name) = split_path(path);
         let mut touched = FileDirty::new();
 
         // find directory or recursively create it if it does not already exist
-        let mut directory = self.get_or_create_directory(&mut touched, dir_path).await?;
+        let mut directory = self
+            .get_or_create_directory(&mut touched, dir_path, timestamp)
+            .await?;
         let flags = GeneralSecondaryFlags::AllocationPossible | GeneralSecondaryFlags::NoFatChain;
 
         let attributes = FileAttributes::Archive;
@@ -542,6 +564,7 @@ where
                 flags,
                 0,
                 0,
+                timestamp,
             )
             .await?;
 
@@ -555,6 +578,7 @@ where
         &mut self,
         touched: &mut impl Touched,
         path: &str,
+        timestamp: Option<Timestamp>,
     ) -> ExFatResult<DirectoryDetails, D, SIZE> {
         let mut names = path_to_iter(path).peekable();
         let mut directory = DirectoryDetails::root(self.fs.first_cluster_of_root_dir);
@@ -599,6 +623,7 @@ where
                                 | GeneralSecondaryFlags::NoFatChain,
                             self.fs.cluster_length as u64,
                             self.fs.cluster_length as u64,
+                            timestamp,
                         )
                         .await?;
 
@@ -629,6 +654,7 @@ where
         stream_ext_flags: GeneralSecondaryFlags,
         valid_data_length: u64,
         data_length: u64,
+        timestamp: Option<Timestamp>,
     ) -> ExFatResult<FileDetails, D, SIZE> {
         let (utf16_name, name_hash) = encode_utf16_and_hash(name, &self.upcase_table);
         let dir_entry_set_len = calc_dir_entry_set_len(&utf16_name);
@@ -640,19 +666,7 @@ where
         let secondary_count = dir_entry_set_len as u8 - 1;
 
         // write file directory entry set
-        let file = FileDirEntry {
-            secondary_count,
-            set_checksum: 0,
-            file_attributes,
-            create_timestamp: 0,
-            last_modified_timestamp: 0,
-            last_accessed_timestamp: 0,
-            create_10ms_increment: 0,
-            last_modified_10ms_increment: 0,
-            create_utc_offset: 0,
-            last_modified_utc_offset: 0,
-            last_accessed_utc_offset: 0,
-        };
+        let file = FileDirEntry::new(secondary_count, file_attributes, timestamp);
         dir_entries.push(file.serialize());
 
         // write stream extension directory entry
@@ -863,11 +877,7 @@ where
         let first_cluster = directory.cluster_id;
 
         let last_cluster = match directory.file_details.as_ref() {
-            Some(details)
-                if details
-                    .flags
-                    .contains(GeneralSecondaryFlags::NoFatChain) =>
-            {
+            Some(details) if details.flags.contains(GeneralSecondaryFlags::NoFatChain) => {
                 let cluster_count = details
                     .data_length
                     .div_ceil(self.fs.cluster_length as u64)
@@ -891,44 +901,27 @@ where
             .mark_allocated(&mut self.dev, &mut touched, &run, true)
             .await?;
         self.fat
-            .set(
-                &mut self.dev,
-                &mut touched,
-                last_cluster,
-                run.first_cluster,
-            )
+            .set(&mut self.dev, &mut touched, last_cluster, run.first_cluster)
             .await?;
         self.fat
-            .set(
-                &mut self.dev,
-                &mut touched,
-                run.first_cluster,
-                END_OF_CHAIN,
-            )
+            .set(&mut self.dev, &mut touched, run.first_cluster, END_OF_CHAIN)
             .await?;
         self.zero_cluster(run.first_cluster, &mut touched).await?;
 
         if let Some(details) = directory.file_details.as_mut() {
-            details
-                .flags
-                .set(GeneralSecondaryFlags::NoFatChain, false);
+            details.flags.set(GeneralSecondaryFlags::NoFatChain, false);
             details.data_length += self.fs.cluster_length as u64;
             details.valid_data_length += self.fs.cluster_length as u64;
             self.write_directory_details(details, &mut touched).await?;
         }
 
         touched.flush(self).await?;
-        let sector_id = self
-            .fs
-            .get_heap_sector_id::<D, SIZE>(run.first_cluster)?;
+        let sector_id = self.fs.get_heap_sector_id::<D, SIZE>(run.first_cluster)?;
         Ok(Location::new(sector_id, 0))
     }
 
     #[bisync]
-    async fn last_cluster_in_fat_chain(
-        &mut self,
-        first_cluster: u32,
-    ) -> ExFatResult<u32, D, SIZE> {
+    async fn last_cluster_in_fat_chain(&mut self, first_cluster: u32) -> ExFatResult<u32, D, SIZE> {
         let mut cluster_id = first_cluster;
         while let Some(next_cluster) = self
             .fat

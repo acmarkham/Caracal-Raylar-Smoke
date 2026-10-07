@@ -97,6 +97,32 @@ pub(crate) struct FileDirEntry {
 }
 
 impl FileDirEntry {
+    pub(crate) fn new(
+        secondary_count: u8,
+        file_attributes: FileAttributes,
+        timestamp: Option<crate::timestamp::Timestamp>,
+    ) -> Self {
+        Self {
+            secondary_count,
+            set_checksum: 0,
+            file_attributes,
+            create_timestamp: timestamp.map_or(0, |time| time.packed),
+            last_modified_timestamp: timestamp.map_or(0, |time| time.packed),
+            last_accessed_timestamp: timestamp.map_or(0, |time| time.packed),
+            create_10ms_increment: timestamp.map_or(0, |time| time.ten_ms),
+            last_modified_10ms_increment: timestamp.map_or(0, |time| time.ten_ms),
+            create_utc_offset: timestamp.map_or(0, |_| 0x80),
+            last_modified_utc_offset: timestamp.map_or(0, |_| 0x80),
+            last_accessed_utc_offset: timestamp.map_or(0, |_| 0x80),
+        }
+    }
+
+    pub(crate) fn set_modified_timestamp(&mut self, timestamp: crate::timestamp::Timestamp) {
+        self.last_modified_timestamp = timestamp.packed;
+        self.last_modified_10ms_increment = timestamp.ten_ms;
+        self.last_modified_utc_offset = 0x80;
+    }
+
     pub(crate) fn serialize(&self) -> RawDirEntry {
         let mut raw = [0u8; RAW_ENTRY_LEN];
         raw[0] = EntryType::FileAndDirectory.serialize();
@@ -112,6 +138,39 @@ impl FileDirEntry {
         raw[23] = self.last_modified_utc_offset;
         raw[24] = self.last_accessed_utc_offset;
         raw
+    }
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use super::{FileAttributes, FileDirEntry};
+    use crate::timestamp::Timestamp;
+
+    #[test]
+    fn entry_timestamps_are_blank_without_utc() {
+        let raw = FileDirEntry::new(2, FileAttributes::Archive, None).serialize();
+        assert_eq!(&raw[8..25], &[0; 17]);
+    }
+
+    #[test]
+    fn entry_timestamps_use_utc_with_valid_offsets() {
+        let time = Timestamp::from_unix(1_704_067_199, 990_000).unwrap();
+        let raw = FileDirEntry::new(2, FileAttributes::Archive, Some(time)).serialize();
+        assert_eq!(&raw[8..12], &time.packed.to_le_bytes());
+        assert_eq!(&raw[12..16], &time.packed.to_le_bytes());
+        assert_eq!(&raw[16..20], &time.packed.to_le_bytes());
+        assert_eq!(&raw[20..25], &[199, 199, 0x80, 0x80, 0x80]);
+    }
+
+    #[test]
+    fn later_fix_only_sets_modified_timestamp() {
+        let time = Timestamp::from_unix(1_704_067_199, 990_000).unwrap();
+        let mut entry = FileDirEntry::new(2, FileAttributes::Archive, None);
+        entry.set_modified_timestamp(time);
+        let raw = entry.serialize();
+        assert_eq!(&raw[8..12], &[0; 4]);
+        assert_eq!(&raw[12..16], &time.packed.to_le_bytes());
+        assert_eq!(&raw[20..25], &[0, 199, 0, 0x80, 0]);
     }
 }
 

@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+pub mod timestamp;
+
 #[path = "."]
 pub mod blocking {
     pub use bisync::synchronous::*;

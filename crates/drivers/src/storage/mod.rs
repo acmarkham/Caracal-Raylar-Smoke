@@ -15,9 +15,10 @@ pub mod stm32;
 mod volume;
 mod write;
 
-pub use driver::{StorageDriver, BLOCK_BYTES, CACHE_BLOCKS, MAX_WRITE_HANDLES};
+pub use driver::{BLOCK_BYTES, CACHE_BLOCKS, MAX_WRITE_HANDLES, StorageDriver};
 pub use error::{PartitionedDeviceError, StorageError, StorageResult, VolumeDetectError};
 pub use exfat_slim::asynchronous::BlockDevice as StorageBlockDevice;
+pub use exfat_slim::timestamp::Timestamp as StorageTimestamp;
 pub use handles::{FileHandle, ReadHandle};
 pub use identity::StorageDeviceIdentity;
-pub use volume::{detect_exfat_volume, ExfatVolume, PartitionedBlockDevice};
+pub use volume::{ExfatVolume, PartitionedBlockDevice, detect_exfat_volume};

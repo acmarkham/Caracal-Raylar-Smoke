@@ -1,5 +1,6 @@
 use raylar_drivers::storage::{
     FileHandle, StorageBlockDevice, StorageDeviceIdentity, StorageDriver, StorageError,
+    StorageTimestamp,
 };
 
 /// Filesystem operations required by the storage service.
@@ -17,11 +18,31 @@ pub trait StorageBackend<const BLOCK_SIZE: usize> {
 
     async fn mount(&mut self) -> Result<(), Self::Error>;
     async fn create_directory(&mut self, path: &str) -> Result<(), Self::Error>;
+    async fn create_directory_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error>;
     async fn open_for_append(&mut self, path: &str) -> Result<FileHandle, Self::Error>;
+    async fn open_for_append_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<FileHandle, Self::Error>;
     /// Append exactly `data.len()` bytes. Callers may use multi-block buffers.
     async fn append(&mut self, handle: FileHandle, data: &[u8]) -> Result<(), Self::Error>;
     async fn flush(&mut self, handle: FileHandle) -> Result<(), Self::Error>;
+    async fn flush_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error>;
     async fn close(&mut self, handle: FileHandle) -> Result<(), Self::Error>;
+    async fn close_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error>;
 }
 
 impl<D, const BLOCK_SIZE: usize, const CACHE: usize, const PATH_LEN: usize>
@@ -43,8 +64,24 @@ where
         StorageDriver::create_directory(self, path).await
     }
 
+    async fn create_directory_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        StorageDriver::create_directory_at(self, path, timestamp).await
+    }
+
     async fn open_for_append(&mut self, path: &str) -> Result<FileHandle, Self::Error> {
         StorageDriver::open_for_append(self, path).await
+    }
+
+    async fn open_for_append_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<FileHandle, Self::Error> {
+        StorageDriver::open_for_append_at(self, path, timestamp).await
     }
 
     async fn append(&mut self, handle: FileHandle, data: &[u8]) -> Result<(), Self::Error> {
@@ -55,7 +92,23 @@ where
         StorageDriver::flush(self, handle).await
     }
 
+    async fn flush_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        StorageDriver::flush_at(self, handle, timestamp).await
+    }
+
     async fn close(&mut self, handle: FileHandle) -> Result<(), Self::Error> {
         StorageDriver::close(self, handle).await
+    }
+
+    async fn close_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        StorageDriver::close_at(self, handle, timestamp).await
     }
 }

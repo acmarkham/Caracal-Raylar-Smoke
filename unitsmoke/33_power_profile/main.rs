@@ -32,7 +32,7 @@ use embassy_stm32::rcc::mux::Sdmmcsel;
 use embassy_stm32::rcc::*;
 use embassy_stm32::sdmmc::sd::{CmdBlock, StorageDevice};
 use embassy_stm32::sdmmc::{Config as SdmmcConfig, Sdmmc};
-use embassy_stm32::time::{mhz, Hertz};
+use embassy_stm32::time::{Hertz, mhz};
 use embassy_stm32::usart::{Config as UartConfig, DataBits, Parity, StopBits, UartTx};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{Duration, Instant, Timer};
@@ -46,7 +46,7 @@ use raylar_drivers::stm32_core::stm32::Stm32CoreDriver;
 use raylar_drivers::stm32_core::{CoreConfig, CoreSupply};
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
-    detect_exfat_volume, FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver,
+    FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver, detect_exfat_volume,
 };
 use raylar_storage_service::{StorageBackend, StorageLayout, StorageService, StreamKind, UtcClock};
 use raylar_time_service::UtcTimestamp;
@@ -131,8 +131,24 @@ where
         self.inner.create_directory(path).await
     }
 
+    async fn create_directory_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<raylar_drivers::storage::StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        self.inner.create_directory_at(path, timestamp).await
+    }
+
     async fn open_for_append(&mut self, path: &str) -> Result<FileHandle, Self::Error> {
         self.inner.open_for_append(path).await
+    }
+
+    async fn open_for_append_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<raylar_drivers::storage::StorageTimestamp>,
+    ) -> Result<FileHandle, Self::Error> {
+        self.inner.open_for_append_at(path, timestamp).await
     }
 
     async fn append(&mut self, handle: FileHandle, data: &[u8]) -> Result<(), Self::Error> {
@@ -143,8 +159,24 @@ where
         self.inner.flush(handle).await
     }
 
+    async fn flush_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<raylar_drivers::storage::StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        self.inner.flush_at(handle, timestamp).await
+    }
+
     async fn close(&mut self, handle: FileHandle) -> Result<(), Self::Error> {
         self.inner.close(handle).await
+    }
+
+    async fn close_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<raylar_drivers::storage::StorageTimestamp>,
+    ) -> Result<(), Self::Error> {
+        self.inner.close_at(handle, timestamp).await
     }
 }
 
@@ -502,8 +534,8 @@ fn set_pll3_enabled(enabled: bool) {
 }
 
 fn set_sd_detect_active(active: bool) {
-    use embassy_stm32::pac::gpio::vals::{Moder, Pupdr};
     use embassy_stm32::pac::GPIOD;
+    use embassy_stm32::pac::gpio::vals::{Moder, Pupdr};
 
     if active {
         GPIOD.pupdr().modify(|w| w.set_pupdr(4, Pupdr::PULL_UP));

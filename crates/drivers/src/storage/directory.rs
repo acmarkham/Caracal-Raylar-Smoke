@@ -1,6 +1,6 @@
-use super::{StorageDriver, StorageError, StorageResult};
-use exfat_slim::asynchronous::file::OpenOptions;
+use super::{StorageDriver, StorageError, StorageResult, StorageTimestamp};
 use exfat_slim::asynchronous::BlockDevice;
+use exfat_slim::asynchronous::file::OpenOptions;
 use heapless::String;
 
 impl<D, const SIZE: usize, const CACHE: usize, const PATH_LEN: usize>
@@ -9,16 +9,35 @@ where
     D: BlockDevice<SIZE>,
 {
     pub async fn create_directory(&mut self, path: &str) -> StorageResult<(), D::Error> {
+        self.create_directory_at(path, None).await
+    }
+
+    pub async fn create_directory_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> StorageResult<(), D::Error> {
         let path = normalize_path::<PATH_LEN, D::Error>(path)?;
         self.fs
-            .create_directory(path.as_str())
+            .create_directory_at(path.as_str(), timestamp)
             .await
             .map_err(StorageError::from)
     }
 
     pub async fn create_file(&mut self, path: &str) -> StorageResult<(), D::Error> {
+        self.create_file_at(path, None).await
+    }
+
+    pub async fn create_file_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> StorageResult<(), D::Error> {
         let path = normalize_path::<PATH_LEN, D::Error>(path)?;
-        let options = OpenOptions::new().create_new(true).write(true);
+        let options = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .timestamp(timestamp);
         let mut file = self
             .fs
             .open(path.as_str(), options)

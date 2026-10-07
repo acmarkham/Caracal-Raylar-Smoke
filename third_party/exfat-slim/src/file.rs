@@ -15,6 +15,7 @@ use super::{
     file_system::{ExFatResult, FileSystem},
     utils::split_path,
 };
+use crate::timestamp::Timestamp;
 
 // Match the storage service's default 64 KiB aggregation window. A full,
 // physically contiguous run is handed to the block device in one call so an
@@ -29,6 +30,8 @@ pub struct OpenOptions {
     pub truncate: bool,
     pub create: bool,
     pub create_new: bool,
+    /// UTC time to use if this open creates a new file or parent directory.
+    pub timestamp: Option<Timestamp>,
 }
 
 pub(crate) const NO_CLUSTER_ID: u32 = 0;
@@ -43,6 +46,7 @@ impl OpenOptions {
             truncate: false,
             create: false,
             create_new: false,
+            timestamp: None,
         }
     }
 
@@ -96,6 +100,11 @@ impl OpenOptions {
     /// If true `.create()` and `.truncate()` are ignored
     pub const fn create_new(mut self, create_new: bool) -> Self {
         self.create_new = create_new;
+        self
+    }
+
+    pub const fn timestamp(mut self, timestamp: Option<Timestamp>) -> Self {
+        self.timestamp = timestamp;
         self
     }
 }
@@ -274,6 +283,7 @@ pub struct File {
     open_options: OpenOptions,
     chain: StoredChain,
     touched: FileDirty<DEFAULT_TOUCHED_SECTORS>,
+    modified_timestamp: Option<Timestamp>,
 }
 
 impl File {
@@ -303,7 +313,14 @@ impl File {
             open_options: open_options.clone(),
             chain,
             touched: FileDirty::new(),
+            modified_timestamp: None,
         }
+    }
+
+    /// Set the modified time for the next flush. Does not change creation time.
+    pub fn set_modified_timestamp(&mut self, timestamp: Timestamp) {
+        self.modified_timestamp = Some(timestamp);
+        self.touched.is_dir_entry_dirty = true;
     }
 
     /// Gets the metadata about the file
@@ -325,6 +342,12 @@ impl File {
         if self.touched.is_dir_entry_dirty {
             // read dir entries for this file from disk
             let mut dir_entries = self.get_file_dir_entry_set(fs).await?;
+
+            if let Some(timestamp) = self.modified_timestamp {
+                let mut file_entry: super::directory_entry::FileDirEntry = (&dir_entries[0]).into();
+                file_entry.set_modified_timestamp(timestamp);
+                dir_entries[0] = file_entry.serialize();
+            }
 
             // the stream ext is always the second entry
             let mut stream_ext: StreamExtensionDirEntry = (&dir_entries[1]).into();
@@ -799,7 +822,7 @@ impl File {
 
         // find directory or recursively create it if it does not already exist
         let mut directory = fs
-            .get_or_create_directory(&mut self.touched, dir_path)
+            .get_or_create_directory(&mut self.touched, dir_path, None)
             .await?;
 
         let flags = GeneralSecondaryFlags::AllocationPossible | GeneralSecondaryFlags::NoFatChain;
@@ -812,6 +835,7 @@ impl File {
             flags,
             self.details.valid_data_length,
             self.details.data_length,
+            None,
         )
         .await?;
 
@@ -1061,7 +1085,7 @@ fn remaining_bytes_at_cursor(cursor: u64, cluster_length: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{remaining_bytes_at_cursor, WRITE_BATCH_BLOCKS};
+    use super::{WRITE_BATCH_BLOCKS, remaining_bytes_at_cursor};
 
     #[test]
     fn write_batch_matches_64_kib_storage_window() {

@@ -1,8 +1,8 @@
 use super::directory::normalize_path;
-use super::driver::{StorageDriver, WriteSlot, MAX_WRITE_HANDLES};
-use super::{FileHandle, StorageError, StorageResult};
-use exfat_slim::asynchronous::file::OpenOptions;
+use super::driver::{MAX_WRITE_HANDLES, StorageDriver, WriteSlot};
+use super::{FileHandle, StorageError, StorageResult, StorageTimestamp};
 use exfat_slim::asynchronous::BlockDevice;
+use exfat_slim::asynchronous::file::OpenOptions;
 use heapless::String;
 
 impl<D, const SIZE: usize, const CACHE: usize, const PATH_LEN: usize>
@@ -11,6 +11,14 @@ where
     D: BlockDevice<SIZE>,
 {
     pub async fn open_for_append(&mut self, path: &str) -> StorageResult<FileHandle, D::Error> {
+        self.open_for_append_at(path, None).await
+    }
+
+    pub async fn open_for_append_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> StorageResult<FileHandle, D::Error> {
         let normalized_path = normalize_path::<PATH_LEN, D::Error>(path)?;
 
         let slot_index = self
@@ -33,7 +41,11 @@ where
             .push_str(normalized_path.as_str())
             .map_err(|_| StorageError::InvalidPath)?;
 
-        let options = OpenOptions::new().create(true).append(true).write(true);
+        let options = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .write(true)
+            .timestamp(timestamp);
         let file = self
             .fs
             .open(normalized_path.as_str(), options)
@@ -86,6 +98,14 @@ where
     }
 
     pub async fn flush(&mut self, handle: FileHandle) -> StorageResult<(), D::Error> {
+        self.flush_at(handle, None).await
+    }
+
+    pub async fn flush_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> StorageResult<(), D::Error> {
         let index = self.validate_write_handle(handle)?;
         let Self {
             fs, write_slots, ..
@@ -94,6 +114,11 @@ where
             .as_mut()
             .ok_or(StorageError::InvalidHandle)?;
 
+        if slot.dirty {
+            if let Some(timestamp) = timestamp {
+                slot.file.set_modified_timestamp(timestamp);
+            }
+        }
         slot.file.flush(fs).await.map_err(StorageError::from)?;
         slot.last_flushed_len = slot.committed_len;
         slot.dirty = false;
@@ -101,11 +126,24 @@ where
     }
 
     pub async fn close(&mut self, handle: FileHandle) -> StorageResult<(), D::Error> {
+        self.close_at(handle, None).await
+    }
+
+    pub async fn close_at(
+        &mut self,
+        handle: FileHandle,
+        timestamp: Option<StorageTimestamp>,
+    ) -> StorageResult<(), D::Error> {
         let index = self.validate_write_handle(handle)?;
         let mut slot = self.write_slots[index]
             .take()
             .ok_or(StorageError::InvalidHandle)?;
         let fs = &mut self.fs;
+        if slot.dirty {
+            if let Some(timestamp) = timestamp {
+                slot.file.set_modified_timestamp(timestamp);
+            }
+        }
         slot.file.flush(fs).await.map_err(StorageError::from)?;
         Ok(())
     }
