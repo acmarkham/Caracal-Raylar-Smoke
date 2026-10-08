@@ -233,6 +233,15 @@ impl TimeState {
         if self.utc_status == UtcStatus::Invalid {
             return Err(TimeError::NotValid);
         }
+        self.system_to_utc_holdover(system_time)
+    }
+
+    /// Explicit deployment holdover conversion. Never invents UTC before the
+    /// first admitted anchor; callers must retain the published quality state.
+    pub fn system_to_utc_holdover(&self, system_time: Instant) -> Result<UtcTimestamp, TimeError> {
+        if self.utc_status == UtcStatus::Invalid && self.last_anchor_system_time.is_none() {
+            return Err(TimeError::NotValid);
+        }
         let delta_ticks =
             system_time.as_ticks() as i128 - self.reference_system_time.as_ticks() as i128;
         let scale = NANOS_PER_SECOND + self.estimated_frequency_error_ppb as i128;
@@ -251,6 +260,13 @@ impl TimeState {
 
     pub fn utc_to_system(&self, utc: UtcTimestamp) -> Result<Instant, TimeError> {
         if self.utc_status == UtcStatus::Invalid {
+            return Err(TimeError::NotValid);
+        }
+        self.utc_to_system_holdover(utc)
+    }
+
+    pub fn utc_to_system_holdover(&self, utc: UtcTimestamp) -> Result<Instant, TimeError> {
+        if self.utc_status == UtcStatus::Invalid && self.last_anchor_system_time.is_none() {
             return Err(TimeError::NotValid);
         }
         let scale = NANOS_PER_SECOND + self.estimated_frequency_error_ppb as i128;

@@ -23,7 +23,7 @@ The radio campaign varies LoRa spreading factor and band over time so long-term 
 - Persist useful system, location, power, time, audio, and radio diagnostics.
 - Exercise both 868 MHz and 2.4 GHz LR1121 operation across SF7, SF8, SF10, and SF12 profiles.
 - Let nodes hear other nodes' scheduled heartbeats and retain passive link measurements over time.
-- Use sleep for the inactive portion of the probe epoch to support solar and battery-life evaluation.
+- Use sleep for the inactive portion of the probe epoch and battery hysteresis to support solar and battery-life evaluation.
 - Remain heapless, statically allocated, and non-blocking across service boundaries.
 
 ## Non-goals
@@ -40,7 +40,7 @@ The application composes existing services and drivers. It shall not access radi
 
 ```text
 Aardwolf application
-  - seven-day run policy and 30-minute probe epoch
+  - continuous run policy and 30-minute probe epoch
   - audio segment policy and application-level diagnostics
   - radio profile schedule and heartbeat orchestration
   - sleep policy and run summaries
@@ -60,12 +60,12 @@ Aardwolf application
 - GPS/PPS acquisition and oscillator calibration follow the Time Service and GPS Driver contracts established by Integration Test 002. NMEA arrival time is not a time anchor.
 - Audio is consumed through the Audio Service/AudioSource and recorded through the recorder and Storage Services. Aardwolf does not operate microphone DMA or write the filesystem directly.
 - Location comes from the Location Service's filtered estimate.
-- Power state comes from the Power Management Service. The application observes battery/solar state and reports it; adaptive changes to the radio schedule are outside this first version.
+- Power state comes from the Power Management Service. The application observes battery/solar state, reports it, and applies the battery hysteresis below. It does not change the radio profile order based on link quality.
 - Shared latest state uses watches. Events that must be accounted for, such as radio TX/RX results and diagnostic records, use bounded channels.
 
 ## Probe schedule
 
-Use a repeating 30-minute epoch aligned to a valid UTC half-hour boundary. The first 12 minutes select one radio profile each, in this order:
+Use a repeating 30-minute epoch aligned to a UTC half-hour boundary. The first 12 minutes select one radio profile each, in this order:
 
 | Minute in epoch | Band | PHY / modulation | Activity |
 | ---: | --- | --- | --- |
@@ -77,24 +77,25 @@ Use a repeating 30-minute epoch aligned to a valid UTC half-hour boundary. The f
 | 6 | 2.4 GHz | LoRa SF8, BW812k, CR4/5 | Heartbeat and receive/listen |
 | 7 | 2.4 GHz | LoRa SF10, BW812k, CR4/5 | Heartbeat and receive/listen |
 | 8 | 2.4 GHz | LoRa SF12, BW812k, CR4/5 | Heartbeat and receive/listen |
-| 9 | 2.4 GHz | GFSK 250 kbps, Fdev 125k, RX BW500k | Heartbeat and receive/listen |
-| 10 | 2.4 GHz | GFSK 38.4 kbps, Fdev 40k, RX BW160k | Heartbeat and receive/listen |
-| 11 | 2.4 GHz | GFSK 4.8 kbps, Fdev 5k, RX BW20k | Heartbeat and receive/listen |
+| 9 | 2.4 GHz | GFSK 250 kbps, Fdev 125k, RX BW467k (nominal 500k) | Heartbeat and receive/listen |
+| 10 | 2.4 GHz | GFSK 38.4 kbps, Fdev 40k, RX BW156.2k (nominal 160k) | Heartbeat and receive/listen |
+| 11 | 2.4 GHz | GFSK 4.8 kbps, Fdev 5k, RX BW19.5k (nominal 20k) | Heartbeat and receive/listen |
 | 12 | 2.4 GHz | LoRa SF12, BW203k, CR4/5 | Heartbeat and receive/listen |
 | 13–30 | — | — | Radio asleep |
 
-Set output powers to: 
+Use +14 dBm conducted output power at 868 MHz and +13 dBm at 2.4 GHz. Keep these values fixed for the run and record antenna/path configuration. Fixed conducted power gives a repeatable comparison; antenna gain and propagation differ between bands.
 
-868 MHz  = +14 dBm
-2.4 GHz  = +13 dBm
+The minute numbers are one-based relative to the epoch start. Minute 1 begins at second zero. While `Active`, each active minute uses exactly its listed band/profile. Each node sends one heartbeat and listens for peer broadcasts throughout the available receive time, except during its own TX, profile switching, and necessary radio recovery. Seconds 0–58 are available for scheduled radio activity; second 59 is unavailable for transmission and is reserved for profile switching and settling. At the end of minute 12, transition the radio to sleep. During minutes 13–30 the radio enters the service's supported low-power/off state; no background receive duty cycle is requested. Prepare the minute-1 profile before the next epoch boundary so it is ready at second zero.
 
-to enable fair comparison
+All participating nodes share the same schedule, network parameters, and schedule version. Use Integration Test 004's deterministic per-node permutation, seeded with network ID, schedule version, purpose, NodeId, occurrence, and epoch block. Each profile minute has its own slot grid. The 16-byte heartbeat airtime below supports one-second slots except for minutes 4 and 12, which use two-second slots to leave practical scheduling guard after the long SF12 packet. One-second minutes have 59 candidate TX slots; two-second minutes have 29 candidate TX slots and a final RX-only second before the switch guard. The permutation visits every candidate slot once per block of that many 30-minute epochs. Slot length and algorithm version are shared configuration and are logged. Up to ten nodes are expected; collisions remain possible and are measured rather than hidden by unscheduled retries.
 
-The minute numbers are one-based relative to the epoch start. Each active minute uses exactly its listed band/profile for its radio window. The window permits each participating node to send its scheduled heartbeat and listen for peer broadcasts. During the other 17 minutes the radio enters the service's supported low-power/off state; no background receive duty cycle is requested.
+The node joins the next full epoch after its first usable GPS/PPS-derived UTC mapping. During a later GPS outage, continue the same heartbeat schedule using the last calibrated mapping and monotonic holdover, even as uncertainty grows. Keep listening during the active minutes. Mark transmitted heartbeats and local records as holdover or UTC-invalid as appropriate, with uncertainty and time since the last PPS. Receivers retain packet timestamps to measure holdover drift after the run; they widen receive coverage to the full available minute as needed rather than claiming a narrow rendezvous was met. If the Time Service cannot retain a mapping when UTC becomes invalid, extend its interface and the Radio Service scheduler to support this explicit holdover policy. After a reset with no retained mapping, acquire UTC before joining a schedule; do not guess the epoch phase.
 
-All participating nodes share the same schedule, network parameters, and schedule version. The schedule and heartbeat rendezvous are deterministic from shared configuration and stable node identity so receivers can predict when to listen. Transmissions may collide; the protocol remains unacknowledged and collision outcomes are measured rather than hidden by unscheduled retries.
+### Common radio configuration
 
-UTC may start or label an epoch only when the Time Service reports configured validity/uncertainty criteria. If time is not ready at startup, the node acquires/calibrates time while preserving the audio/logging startup policy, then joins at the next full epoch. On time degradation, it records the state and follows a documented safe radio behavior; it does not claim accurate UTC rendezvous from monotonic time alone.
+Use a dedicated Aardwolf network ID, schedule version, and configuration ID shared by all nodes. The initial LoRa packet configuration follows Integration Test 004: 12-symbol preamble, explicit header, CRC enabled, and sync word `0x12`. Use 868.1 MHz as the proposed UK sub-GHz center frequency for the 125 kHz profiles; 868.000 MHz from Integration Test 004 would place part of a 125 kHz signal below the 868.0 MHz band edge. Use one common 2.4 GHz center frequency that supports the widest selected profile, provisionally 2441 MHz. Freeze both exact frequencies in the checked-in run configuration before deployment, together with regional duty-cycle/EIRP limits and antenna details.
+
+For GFSK use the Radio Service reference packet settings: Gaussian BT 0.5 shaping, 32-bit preamble with 16-bit detection, four-byte sync word, address filtering disabled, variable packet length, two-byte CRC (`init=0xFFFF`, `poly=0x1021`, not inverted), and whitening with seed `0x01FF`. Fix the four sync bytes in the shared run configuration. The chosen sync word changes neither the 16-byte frame length nor the airtime calculation as long as it remains four bytes.
 
 ## Receive and link observations
 
@@ -103,46 +104,82 @@ During each profile's active minute, every node opens receive windows according 
 For each relevant received frame, retain:
 
 - monotonic packet-complete timestamp and UTC mapping/status/uncertainty when available;
-- epoch number, active minute, band, SF, and configured radio profile;
+- epoch number, active minute, band, modulation, SF or GFSK bitrate/deviation, and configured radio profile;
 - decoded frame type, source NodeId, BootId, sequence, and validation result;
-- RSSI and LoRa SNR, or corresponding radio-specific metrics for the 2.4 GHz mode;
+- RSSI and LoRa SNR for LoRa, and supported RSSI/quality metrics for GFSK;
 - observed TX/rendezvous slot and predicted slot where available; and
 - receive-window, scheduler, and radio recovery/error context.
 
-For each scheduled local heartbeat, record intended epoch/minute/profile, derived rendezvous, enqueue result, TX completion/rejection, airtime where available, and sequence. Heartbeat payloads remain compact and identify the source node and boot session; do not add audio or large telemetry payloads.
+For each scheduled local heartbeat, record intended epoch/minute/profile, derived rendezvous, enqueue result, TX completion/rejection, airtime where available, and sequence. Use the fixed 16-byte V4 frame below. The current Radio Service still uses wire version 1 with a 32-bit BootId, so Aardwolf needs a versioned V4 encoder/decoder and corresponding session handling. Do not truncate a V1 frame's BootId without changing its declared wire version. Generate each 16-bit on-air BootId randomly at boot and log it with the local reset context; detect and report a reused BootId for the same NodeId when possible.
 
-Profile comparisons must be interpretable across the week. Every record and summary identifies exact band, frequency/configuration, SF, bandwidth, coding rate, transmit power, antenna/configuration identifier, and radio firmware when available. The common profile configuration is fixed for a run and persisted at startup; a change requires a schedule/configuration version change.
+Profile comparisons must be interpretable across the week. Every record and summary identifies exact band, frequency/configuration, modulation and its complete parameters, transmit power, antenna/configuration identifier, and radio firmware when available. The common profile configuration is fixed for a run and persisted at startup; a change requires a schedule/configuration version change.
+
+The Radio Service and LR1121 Driver now represent 2.4 GHz LoRa BW203/BW406/BW812 and the requested GFSK reference rates. The reference builder uses the actual programmable GFSK RX filters of 467, 156.2, and 19.5 kHz; the larger round numbers in the original profile request are nominal datasheet labels. Aardwolf must configure and log the actual values. The V4 frame remains application work and is not yet implemented by the service.
+
+### Proposed V4 heartbeat frame
+
+Use a fixed 16-byte broadcast frame at every profile so packet length and airtime are stable even when location or storage state changes. All multi-byte fields use network byte order. The 16 bytes are the radio payload; LoRa preamble/header/CRC and GFSK preamble/sync/length/CRC are additional on-air bits.
+
+| Offset | Size | Field | Encoding |
+| ---: | ---: | --- | --- |
+| 0 | 1 | Version and type | High nibble `4`, low nibble `1` for heartbeat (`0x41`). |
+| 1 | 1 | Frame flags | Zero for broadcast heartbeat; reject unknown bits. |
+| 2 | 4 | NodeId | Stable 32-bit identity. |
+| 6 | 2 | BootId | Random 16-bit ID generated each boot. |
+| 8 | 2 | Sequence | 16-bit counter, wrapping within one BootId. |
+| 10 | 1 | Battery SOC | `0..100` percent; `0xFF` means unavailable. |
+| 11 | 1 | Charging/source | Existing `ChargingState` codes: none 0, solar 1, USB 2, external 3, unknown 4. |
+| 12 | 2 | Error flags | Bit 0: storage full; 1: storage unavailable; 2: recovering from low-SOC pause; 3: audio/storage write fault; 4: logging impaired. Remaining bits zero until assigned in V4. |
+| 14 | 1 | Storage use | `0..100` percent; `0xFF` means unavailable. |
+| 15 | 1 | GPS/time status | Existing `GpsStatus` bit layout: UTC valid, fix-quality class, uncertainty class, and holdover flag; reserved bits zero. |
+
+This is a 10-byte header and 6-byte status payload, without an optional location field. Keep full filtered location and location quality in the SD log. Use one 16-byte heartbeat per node per active minute while `Active`; there is no per-profile padding, repetition, or retry. A V1 decoder must reject V4 unless it explicitly implements that version, and the V4 decoder must reject malformed lengths and reserved bits. The shorter BootId increases collision risk across reboots of one NodeId, so sequence and receiver state must be reset on a newly observed boot session.
+
+### Heartbeat time on air and slots
+
+For LoRa, calculate symbol time as `2^SF / BW` and packet time as `(12 + 4.25 + payload_symbols) × symbol_time`. With explicit header, CRC enabled, CR4/5, 16 PHY payload bytes, and low-data-rate optimization enabled when symbol time is at least 16 ms, use `payload_symbols = 8 + 5 × ceil((8×16 − 4×SF + 28 + 16) / (4×(SF − 2×DE)))`, where `DE` is 1 when low-data-rate optimization is enabled and 0 otherwise. These are calculated radio packet durations, excluding profile setup, TX ramp, scheduler latency, and receive re-arming.
+
+For GFSK, use the Radio Service's reference packet configuration: 32-bit preamble, a four-byte sync word fixed in the common run configuration, variable-length mode with one on-air length byte, a 16-byte frame, and a two-byte CRC. Total on-air size is `32 + 32 + 8 + 128 + 16 = 216 bits`; packet time is `216 / bitrate`. Gaussian shaping, whitening, deviation, and RX bandwidth do not add packet bits.
+
+| Minute | Profile | Calculated packet airtime | TX slot |
+| ---: | --- | ---: | ---: |
+| 1 | 868 MHz LoRa SF7/BW125k | 55.552 ms | 1 s |
+| 2 | 868 MHz LoRa SF8/BW125k | 100.864 ms | 1 s |
+| 3 | 868 MHz LoRa SF10/BW125k | 362.496 ms | 1 s |
+| 4 | 868 MHz LoRa SF12/BW125k, DE=1 | 1,449.984 ms | 2 s |
+| 5 | 2.4 GHz LoRa SF7/BW812k | 8.552 ms | 1 s |
+| 6 | 2.4 GHz LoRa SF8/BW812k | 15.527 ms | 1 s |
+| 7 | 2.4 GHz LoRa SF10/BW812k | 55.803 ms | 1 s |
+| 8 | 2.4 GHz LoRa SF12/BW812k | 197.990 ms | 1 s |
+| 9 | 2.4 GHz GFSK 250 kbps | 0.864 ms | 1 s |
+| 10 | 2.4 GHz GFSK 38.4 kbps | 5.625 ms | 1 s |
+| 11 | 2.4 GHz GFSK 4.8 kbps | 45.000 ms | 1 s |
+| 12 | 2.4 GHz LoRa SF12/BW203k, DE=1 | 892.847 ms | 2 s |
+
+One node transmits about 1.969 s at 868 MHz and 1.222 s at 2.4 GHz per 30-minute epoch, or about 3.191 s total, before radio setup overhead. Use the calculated airtime to set the TX deadlines and pre-switch guard; confirm packet-complete timing and slot margins on hardware before the week-long run. Any change to frame length, preamble, sync length, CRC, or PHY parameters requires recalculating this table and changing the schedule/configuration version.
 
 ## Audio capture and time correlation
 
-Use the Audio Service and Audio Recorder Service to record mono 16 kHz audio as 32-bit integer WAV data, using the agreed high-quality decimation/filter configuration. Segment files on UTC minute boundaries after GPS/PPS-derived time is valid. Place segments in time-organized folders through the Storage Service. Every file's metadata/log record includes UTC file start time, monotonic system start, time validity/uncertainty, hashed location snapshot, and relevant firmware/device identity, as well as any other useful fields such as calibration status, calibration_ppb, last PPS time (relative to system time).
+Use the Audio Service and Audio Recorder Service to record mono 16 kHz audio as 32-bit integer WAV data, using the agreed high-quality decimation/filter configuration. Segment files on UTC minute boundaries after GPS/PPS-derived time is valid. Retain every completed file without overwrite, using minute-long WAV files in hour-long folders through the Storage Service. Each file's metadata/log record includes UTC file start time, monotonic system start, time validity/uncertainty, a hash of the Location Service estimate, firmware/device identity, calibration status, calibration correction in ppb, and the last PPS time relative to monotonic system time. Record the hash algorithm and input representation so files from the same location can be compared. During GPS holdover, continue recording on the calibrated minute boundaries and mark the increased time uncertainty.
+
+At 16,000 samples/s × 4 bytes/sample, audio uses 3.84 MB per minute, 230.4 MB per hour, and 38.7 GB for seven days before WAV headers and filesystem overhead. A seven-day run creates 10,080 minute files in 168 hour folders. Plan for a card with sufficient usable capacity for those files, a system log below 1 GB, and a protected 100 MB log reserve; a nominal 64 GB card has sufficient nominal capacity if its usable free space is verified at startup.
 
 Audio recording continues through radio probe windows unless power or a recording/storage fault requires a documented degraded mode. Radio scheduling, receive processing, and log draining do not block audio acquisition. Audio packet loss, timestamp gaps, overruns, file-finalization failures, and storage errors are surfaced in durable diagnostics when possible.
 
 ## UI
 
-Use LEDS and buzzer to indicate device health and status:
+Use LEDs and the buzzer to indicate device health and status. Indications must be short, asynchronous, and must not delay audio or radio work.
 
-Buzzer:
-- Startup beep
-- First fix beep
-- UTC calibrated beep
-- Error beep
-- Optional packet rx beep (used for bench debugging, will be disabled for field testing to prevent irritation)
+| Device | Indication |
+| --- | --- |
+| Buzzer | Distinct startup, first GPS fix, UTC calibration locked, and severe-error patterns. Optional packet-RX beep is a bench configuration and is disabled in field builds. |
+| `SysGpsGreen` | Solid while GPS is powered and waiting for PPS; brief PPS indication when edges arrive; off when GPS is powered down. |
+| `SysMainRed` | Severe error. |
+| `SysSdBlue` | Brief pulse when an audio packet is ready for recording; pulse rate follows the actual packet rate. |
+| `SysMainGreen` | Brief pulse on valid radio RX. |
+| `SysGpsRed` | Brief pulse on radio TX. |
 
-LEDs:
-- GPS green LED: 
-  - solid on: gps powered up, waiting
-  - pulse: brief flash on PPS
-  - off: GPS off
-- System RED
-  - Error
-- Blue LED
-  - Brief flash on audio packet ready (typically ~5Hz)
-- System Green
-  - Radio RX
-- GPS red LED:
-  - Flash on radio TX
+When `SysGpsGreen` is already solid, make PPS visible as a brief off/on blink rather than an indistinguishable additional on pulse. Preserve `SysMainRed` for severe errors; recoverable GPS unavailability is reported in logs and heartbeat status.
 
 ## Long-run logging and power
 
@@ -153,20 +190,32 @@ Create a standard system log through the Storage and Logging Services. Persist s
 - location estimates and fix quality periodically and on validity changes;
 - periodic PowerState snapshots including battery, solar input, charging, and power-source/status fields exposed by the service;
 - audio segment start/end, packet/sample counts, timestamp bounds, and gaps;
-- every heartbeat attempt and relevant reception with link metrics;
+- every heartbeat attempt and relevant reception with link metrics and the V4 frame length;
 - profile changes, skipped windows, sleep/wake transitions, scheduler conflicts, queue pressure, radio errors/recoveries, and periodic summaries; and
 - logging/storage errors, enqueue failures, dropped/truncated records, and media availability transitions.
 
+Emit a bounded health/power/time/radio summary every 10 seconds, plus per-event records for heartbeat TX/RX, audio segment boundaries, and significant state changes. Keep the seven-day system log below 1 GB; the expected volume from comparable runs is about 200 MB, but actual event volume and queue capacity must be checked against the chosen node count and packet rate.
+
 The event path is bounded and sized for sustained traffic. Radio and audio timing do not wait on SD writes. Check every enqueue/write result and account for loss in a later summary if storage recovers. If persistent logging is unavailable, retain bounded loss counters and mark the run incomplete. A deployment run cannot pass data-integrity acceptance with unaccounted log or audio loss.
 
-The application exposes enough periodic power information to assess solar charging and energy balance over the week. Sleep the radio for minutes 9–30 of each epoch and use service-supported low-power behavior elsewhere. The application must not claim that the entire device sleeps while audio recording is active. Any deeper system sleep requires compatible audio, time, storage, and wakeup behavior to be specified and validated separately.
+Before starting each new WAV file, check free space and stop audio cleanly when starting the next segment would cross a protected 100 MB free-space reserve. Never overwrite an earlier file. Continue system logging and heartbeats while `Active`, with the storage-full flag in each heartbeat. If the card is unavailable or logging itself fails, continue heartbeats with a storage-unavailable flag and bounded in-memory loss counters. Do not claim durable records during that interval. If the log consumes the reserve too, report its failure over heartbeat and retain loss counters until storage recovers or reset occurs. The low-SOC `EnergyRecovery` state takes precedence over this storage-fault radio policy.
+
+The application exposes enough periodic power information to assess solar charging and energy balance over the week. Sleep the radio for minutes 13–30 of each epoch and use service-supported low-power behavior elsewhere. The application must not claim that the entire device sleeps while audio recording is active. Any deeper system sleep requires compatible audio, time, storage, and wakeup behavior to be specified and validated separately.
+
+### Battery hysteresis
+
+Use `PowerState.battery_percent` from the Power Management Service as the SOC input. Maintain a latched `Active` or `EnergyRecovery` state; the thresholds are strict. In `Active`, enter `EnergyRecovery` when a valid SOC is **below 10%**. In `EnergyRecovery`, return to `Active` only when a valid SOC is **above 20%**. Values of exactly 10% or 20% retain the current state. A missing SOC value does not imply either threshold: retain the current state and log that SOC is unavailable. At boot, start in `EnergyRecovery` until a valid SOC above 20% is observed. An explicit externally powered bench configuration may bypass this startup gate, but must be recorded and must not be used for the solar campaign.
+
+On entry to `EnergyRecovery`, finalize the current WAV, record the transition and audio gap, stop scheduled radio TX/RX, put the LR1121 into its service-supported sleep state, and power down GPS through its service/driver policy. Keep charging, low-rate Power Management Service sampling, and enough timekeeping alive to decide when to resume. Avoid claiming the whole MCU is off unless a wake path from charger/RTC/power monitor is implemented. Log the low-power interval when storage is available. No heartbeat is sent while radio is asleep; this is an intentional, separately counted gap rather than a packet-loss event.
+
+On return to `Active`, restart GPS/time acquisition as needed, resume WAV recording at the next valid UTC minute boundary, and resume the radio at the next complete 30-minute epoch using the available calibrated mapping. Set error flag bit 2 on the first successful post-recovery heartbeat to tell peers why the node was absent, then clear it. Log SOC, raw battery voltage, power source, and both transition times so solar recharge and hysteresis behavior can be reconstructed. The Power Management Service's SOC is currently estimated from battery voltage; the threshold policy uses that published estimate and records the voltage for review.
 
 ## Error behavior
 
-- Recoverable GPS, time, radio, sensor, queue, or storage issues are counted and reported without panicking.
-- The Radio Messaging Service performs its documented recovery and returns to the scheduled profile/window policy.
-- An unusable SD card or filesystem error stops creation of invalid WAV files and marks recording/logging as impaired. Whether the full app latches a severe fault or continues radio/power testing must be decided before hardware testing.
-- A reset or brownout starts a new BootId/run segment and records the reason when available; persistent sequence continuity across reset is not assumed.
+- GPS unavailability is a service degradation while `Active`. Continue holdover scheduling after the first valid anchor, retain the last location estimate with age, and flag degraded timing in heartbeat and logs. GPS shutdown in `EnergyRecovery` is intentional.
+- The Radio Messaging Service attempts its documented bounded recovery. An unrecoverable radio failure triggers a self-reset through the supported platform reset path, with the reset cause recorded before reset where possible.
+- An unusable or full SD card stops new WAV files without overwrite. Heartbeats continue, carrying distinct full/unavailable status. The severe-error indication may report storage impairment, but it must not stop the radio service.
+- On each startup, read and persist the hardware reset reason and start a new BootId/run segment. If the previous shutdown was a brownout, watchdog, or deliberate radio-fault reset, identify that explicitly when available. Persistent sequence continuity across reset is not assumed.
 - Schedule/configuration mismatch, invalid UTC for a rendezvous, and profile setup failures are visible and are not reported as successful link observations.
 
 ## Test procedure
@@ -174,21 +223,29 @@ The application exposes enough periodic power information to assess solar chargi
 1. Use at least two nodes with identical Aardwolf firmware and common configuration.
 2. Confirm the startup log captures device, firmware, storage-card, GPS, and radio identity/version states through the Versioning Service.
 3. Confirm PPS-derived time reaches the defined valid state and recording begins on the next UTC minute boundary.
-4. Observe a complete 30-minute probe epoch and verify all eight active profiles occur in order and radio sleep occupies minutes 9–30.
-5. Confirm both nodes transmit heartbeats and receive peer broadcasts during each profile's active minute, with timestamps and link metrics persisted.
+4. Observe a complete 30-minute probe epoch and verify all 12 active profiles occur in order, the two-second slots are used for minutes 4 and 12, second 59 of each active minute is unavailable for TX, and radio sleep occupies minutes 13–30.
+5. Confirm both nodes transmit 16-byte V4 heartbeats and receive peer broadcasts during each profile's active minute, with timestamps and link metrics persisted. Compare measured packet-complete timing with the airtime table and account for profile setup and scheduling overhead.
 6. Confirm WAV files remain correctly segmented and timestamped while radio windows execute.
-7. Run a short soak first, then the planned seven-day solar/battery campaign.
-8. Inspect summaries for audio continuity, profile-specific reception statistics, power trends, queue pressure, recoveries, and complete logs.
+7. Remove GPS reception after initial calibration; confirm heartbeats continue on monotonic holdover, are marked degraded, and can be compared against peers' receive timestamps.
+8. Fill the card toward the protected reserve or simulate SD unavailability; confirm audio stops, prior files remain intact, and heartbeats continue with the correct storage status.
+9. Drive reported SOC below 10%, through the 10–20% band, and above 20%. Confirm one transition into recovery, no oscillation in the band, clean WAV finalization, intentional radio silence, and aligned resumption with a recovery flag in the first heartbeat.
+10. Exercise a recoverable radio fault and an unrecoverable radio fault; confirm recovery or a reasoned self-reset and new BootId.
+11. Run a short soak first, then the planned seven-day solar/battery campaign.
+12. Inspect summaries for audio continuity, profile-specific reception statistics, power trends, queue pressure, recoveries, reset reasons, and complete logs.
 
 ## Acceptance criteria
 
 - Aardwolf runs continuously for the configured target duration without unhandled panic or memory allocation during normal operation.
 - Audio files are valid mono 16 kHz/32-bit WAV segments with GPS/PPS-calibrated minute boundaries and auditable time metadata.
-- Every 30-minute epoch follows the eight-profile order, then keeps the radio inactive for the remaining 22 minutes.
-- Every transmitted and received heartbeat is associated with its profile, epoch/minute, monotonic timestamp, and available UTC/link metadata.
-- Link metrics are retained per band/SF so variability can be analyzed after the run; missed packets and radio/scheduler errors have explicit counters.
+- Every 30-minute epoch in `Active` follows the 12-profile order, then keeps the radio inactive for the remaining 18 minutes.
+- Every transmitted and received heartbeat uses the 16-byte V4 frame and is associated with its profile, epoch/minute, monotonic timestamp, and available UTC/link metadata.
+- Measured packet-complete timing is consistent with the calculated airtime plus bounded radio setup and scheduler overhead; minutes 4 and 12 fit their two-second TX slots.
+- Link metrics are retained per LoRa band/SF and GFSK bitrate/deviation so variability can be analyzed after the run; missed packets and radio/scheduler errors have explicit counters.
 - Radio receive activity causes no unexplained audio loss and does not block audio acquisition or persistent log draining.
 - PowerState, solar/battery observations, radio sleep windows, and run summaries are available to evaluate week-long operation.
+- Battery SOC below 10% latches `EnergyRecovery`; activity resumes only above 20%, with transitions and intentional audio/radio gaps recorded. Exact-threshold and unknown-SOC behavior follows the stated policy.
+- Audio stops before consuming the protected 100 MB log reserve, earlier files are retained, and heartbeats continue with explicit full/unavailable card status while SOC permits `Active` operation.
+- GPS outage after initial calibration does not stop the probe schedule; holdover timing and uncertainty remain visible to peers and in local records.
 - SD/logging or audio loss is never silently represented as a complete run.
 - All radio access is mediated by the Radio Messaging Service, audio by Audio/Recorder services, and filesystem access by Storage.
 
@@ -209,38 +266,15 @@ The application exposes enough periodic power information to assess solar chargi
 - A one-week run requires storage-capacity, SD-card endurance, watchdog, brownout, and recovery planning.
 - The radio sleeps for most of each epoch, so the test measures scheduled heartbeat links rather than continuous availability.
 
-## Open questions for implementation
+## Remaining implementation decisions
 
-- Define the exact active-minute TX/RX timeline: common fixed slot, deterministic per-node slots, or another rendezvous scheme. It must allow nodes to hear broadcasts while handling long SF12 airtime and collisions.
-  > deterministic slots like in integration004 that follow a permutation governed by node id. This will prevent lock-step collision. Anticipated node density for this test is max 10 nodes, so collision probability will be low anyway.
-- Confirm the LR1121-supported 2.4 GHz modulation/configuration represented by “SF7/SF8/SF10/SF12”, and verify each profile is supported by the current Radio Messaging Service API.
-  > the modulation is supported by the chipset. The radio service and underlying driver might need modification.
-- Specify bandwidth, coding rate, sync word/network ID, preamble, header/CRC, transmit power, and frequency/channel for each band. The 868 MHz channel, power, and duty-cycle policy depend on deployment region.
-  > Done. UK operation.
-- Decide whether the “minute 1” heartbeat occurs immediately at second zero or in a later rendezvous window, and define profile switch guard time.
-  > 1 sec guard time between band switching i.e. 59 sec is an unavailable slot.
-  > cycle starts at second zero
-  > slots have a width of 1 sec, except for SF12 which might need a longer slot length.
-- Define UTC validity and uncertainty thresholds for joining/suspending scheduled epochs, plus behavior during GPS outage and holdover.
-  > Carry on transmitting like normal. Receiving nodes which might have tight sync can be used to post-hoc check holdover drift.
-- Choose audio continuation policy when storage is full/unavailable and whether such a fault latches a severe application error.
-  > Audio should stop (no overwrite)
-  > Audio should leave some space (e.g. a hundred mbyte) so that log file can continue
-  > Heartbeats should continue but flag the card is full
-  > If the card is unavailable, then heartbeats should indicate an error 
-- Set audio folder/file retention and estimate the seven-day WAV plus log storage requirement.
-  > All files should be retained i.e. write only. Minute long files, hour long folders as before.
-  > Log file should be less than 1Gbyte. Previous week long tests are ~200Mbyte, so this seems reasonable.
-- Define heartbeat payload/version and the identity/boot/session fields used by the existing Radio Messaging Service.
-  > Version 4
-  > Node ID, boot ID should be sent as 32 bit numbers each
-- Set log summary cadence and bounded queue sizes based on measured SD write throughput and radio/audio event rates.
-  > 10 sec updates are sufficient
-- Define the watchdog policy, reset-reason capture, and acceptable recovery behavior for multi-day operation.
-  > Reset reason logging would be beneficial i.e. on startup.
-  > SD card failure should not stop heartbeat service
-  > Radio failure should trigger a self-reset
-  > GPS unavailability is not a failure but a degradation of service
+- Confirm measured TX setup, ramp, packet-complete timing, RX re-arming, and time-uncertainty guards fit the one- and two-second slots. The airtime table is a PHY calculation, not a measured scheduling bound.
+- Confirm the 2.4 GHz profile switching and GFSK reference settings on the fitted LR1121 module during hardware bring-up. The Driver and Radio Service already represent the profiles, including the 467 kHz programmable RX filter behind the nominal 500 kHz label.
+- Finalize the dedicated Aardwolf network/configuration identifiers, exact RF center frequencies, GFSK packet parameters, antenna configuration, and UK duty-cycle/EIRP policy in the shared run configuration. The listed center frequencies are proposals until that configuration is frozen.
+- Implement the specified V4 wire layout and handling of the shorter 16-bit BootId across resets. The existing V1 codec and neighbour table assume a 32-bit BootId.
+- Define the location-hash algorithm and byte representation, including whether the hash must allow comparisons across nodes and deployments.
+- Set bounded queue capacities from measured SD write throughput and maximum ten-node RX/event rate; keep the system log below 1 GB over seven days.
+- Finalize the watchdog timeout and how a radio-fault reset reason survives reset. Do not reset solely because GPS is unavailable or the card is full.
 
 ## Implementation location
 

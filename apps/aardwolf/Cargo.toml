@@ -1,0 +1,63 @@
+[package]
+name = "aardwolf"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name = "aardwolf"
+path = "main.rs"
+required-features = ["firmware"]
+test = false
+bench = false
+
+[dependencies]
+raylar-radio-service = { path = "../../crates/services/radio" }
+raylar-time-service = { path = "../../crates/services/time" }
+embassy-time.workspace = true
+heapless = "0.8.0"
+raylar-audio-recorder-service = { path = "../../crates/services/audiorecorder", features = ["defmt"], optional = true }
+raylar-audiosource = { path = "../../crates/metadrivers/audiosource", features = ["defmt"], optional = true }
+raylar-board-v1p0 = { path = "../../crates/board/raylar_v1p0", optional = true }
+raylar-drivers = { path = "../../crates/drivers", features = ["stm32", "defmt"], optional = true }
+raylar-storage-service = { path = "../../crates/services/storage", features = ["defmt"], optional = true }
+raylar-logging-service = { path = "../../crates/services/logging", features = ["defmt"], optional = true }
+raylar-location-service = { path = "../../crates/services/location", features = ["defmt"], optional = true }
+raylar-power-management-service = { path = "../../crates/services/powermanagement", features = ["defmt"], optional = true }
+raylar-versioning-service = { path = "../../crates/services/versioning", features = ["stm32", "defmt"], optional = true }
+embassy-stm32 = { workspace = true, optional = true }
+embassy-executor = { workspace = true, optional = true }
+embassy-sync = "0.7.2"
+embassy-futures = "0.1.2"
+embedded-hal = "1.0.0"
+embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"], optional = true }
+defmt = { workspace = true, optional = true }
+defmt-rtt = { workspace = true, optional = true }
+panic-probe = { workspace = true, optional = true }
+cortex-m = { workspace = true, optional = true }
+cortex-m-rt = { workspace = true, optional = true }
+static_cell = { workspace = true, optional = true }
+
+[features]
+default = ["firmware", "core-smps"]
+firmware = [
+ "dep:raylar-audio-recorder-service", "dep:raylar-audiosource", "dep:raylar-board-v1p0",
+ "dep:raylar-drivers", "dep:raylar-storage-service", "dep:raylar-logging-service",
+ "dep:raylar-location-service", "dep:raylar-power-management-service", "dep:raylar-versioning-service",
+ "dep:embassy-stm32", "dep:embassy-executor", "dep:embedded-alloc", "dep:defmt",
+ "dep:defmt-rtt", "dep:panic-probe", "dep:cortex-m", "dep:cortex-m-rt", "dep:static_cell",
+ "raylar-radio-service/defmt", "raylar-time-service/gps", "raylar-time-service/defmt"
+]
+core-smps = []
+bench-external-power = []
+bench-rx-beep = []
+trustzone-secure = ["firmware", "embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure", "raylar-versioning-service/trustzone-secure"]
+
+[dev-dependencies]
+critical-section = { version = "1.2.0", features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+defmt = { workspace = true, features = ["unstable-test"] }

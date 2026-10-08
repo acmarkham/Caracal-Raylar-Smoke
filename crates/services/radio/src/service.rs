@@ -63,7 +63,7 @@ impl FrameBuffer {
     }
 
     pub fn frame_type(&self) -> Result<FrameType, FrameError> {
-        Ok(FrameHeader::decode(self.as_slice())?.header.frame_type)
+        crate::heartbeat_v4::frame_type(self.as_slice())
     }
 }
 
@@ -230,6 +230,7 @@ pub enum RadioMode {
     Transmitting,
     Receiving,
     Recovering,
+    Sleeping,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -253,6 +254,7 @@ pub struct RadioResources<
     state: Watch<RadioMutex, RadioServiceState, WATCHERS>,
     next_job_id: AtomicU32,
     neighbour_count: AtomicU16,
+    enabled: Watch<RadioMutex, bool, 1>,
 }
 
 impl<const JOBS: usize, const EVENTS: usize, const WATCHERS: usize>
@@ -282,6 +284,7 @@ impl<const JOBS: usize, const EVENTS: usize, const WATCHERS: usize>
             }),
             next_job_id: AtomicU32::new(1),
             neighbour_count: AtomicU16::new(0),
+            enabled: Watch::new_with(true),
         }
     }
 
@@ -289,6 +292,14 @@ impl<const JOBS: usize, const EVENTS: usize, const WATCHERS: usize>
         RadioHandle {
             requests: self.requests.sender(),
             next_job_id: &self.next_job_id,
+        }
+    }
+
+    /// Disable cancels pending/in-flight work and puts the sole-owned radio
+    /// into retained sleep. Re-enable wakes it before accepting fresh jobs.
+    pub fn set_enabled(&self, enabled: bool) {
+        if self.enabled.try_get() != Some(enabled) {
+            self.enabled.sender().send(enabled);
         }
     }
 
@@ -403,6 +414,8 @@ pub trait RadioDevice {
         buffer: &mut [u8],
     ) -> Result<(usize, DriverPacketMetadata), RadioDeviceError>;
     async fn recover(&mut self) -> Result<(), RadioDeviceError>;
+    async fn sleep(&mut self) -> Result<(), RadioDeviceError> { Ok(()) }
+    async fn wake(&mut self) -> Result<(), RadioDeviceError> { Ok(()) }
 }
 
 impl<SPI, BUSY, RESET, IRQ> RadioDevice for RadioDriver<SPI, BUSY, RESET, IRQ>
@@ -472,6 +485,14 @@ where
     async fn recover(&mut self) -> Result<(), RadioDeviceError> {
         RadioDriver::recover(self).await.map_err(map_driver_error)
     }
+
+    async fn sleep(&mut self) -> Result<(), RadioDeviceError> {
+        RadioDriver::sleep(self).await.map_err(map_driver_error)
+    }
+
+    async fn wake(&mut self) -> Result<(), RadioDeviceError> {
+        RadioDriver::wake(self).await.map_err(map_driver_error)
+    }
 }
 
 fn map_driver_error(error: DriverError) -> RadioDeviceError {
@@ -520,15 +541,54 @@ where
     }
 
     pub async fn run(mut self) -> ! {
+        let resources = self.resources;
+        let mut enabled = resources.enabled.receiver().expect("sole radio owner");
         self.initialize_until_ready().await;
         loop {
+            if !resources.enabled.try_get().unwrap_or(true) {
+                self.cancel_all();
+                if self.driver.sleep().await.is_err() {
+                    self.state.mode = RadioMode::Recovering;
+                    self.publish();
+                    self.initialize_until_ready().await;
+                    continue;
+                }
+                self.state.mode = RadioMode::Sleeping;
+                self.publish();
+                while !resources.enabled.try_get().unwrap_or(true) {
+                    enabled.changed().await;
+                }
+                if self.driver.wake().await.is_err() {
+                    self.initialize_until_ready().await;
+                }
+                self.state.mode = RadioMode::Idle;
+                self.publish();
+            }
+            let _ = select(enabled.changed(), self.work_once()).await;
+        }
+    }
+
+    fn cancel_all(&mut self) {
+        if let Some(id) = self.state.current_job.take() {
+            self.emit(RadioEvent::Cancelled { id });
+        }
+        while let Some(job) = self.pending.pop() {
+            self.scheduler.release(job.id());
+            self.emit(RadioEvent::Cancelled { id: job.id() });
+        }
+        while let Ok(job) = self.resources.requests.try_receive() {
+            self.emit(RadioEvent::Cancelled { id: job.id() });
+        }
+    }
+
+    async fn work_once(&mut self) {
             while let Ok(job) = self.resources.requests.try_receive() {
                 self.accept(job);
             }
             if self.pending.is_empty() {
                 let job = self.resources.requests.receive().await;
                 self.accept(job);
-                continue;
+                return;
             }
 
             let next = self.next_job_index();
@@ -542,13 +602,12 @@ where
                     Either::First(job) => self.accept(job),
                     Either::Second(_) => {}
                 }
-                continue;
+                return;
             }
 
             let job = self.pending.remove(next);
             self.scheduler.release(job.id());
             self.execute(job).await;
-        }
     }
 
     async fn initialize_until_ready(&mut self) {
@@ -579,7 +638,7 @@ where
             return;
         }
         if let RadioJob::Transmit { job: tx, .. } = &job {
-            if let Err(error) = FrameHeader::decode(tx.payload.as_slice()) {
+            if let Err(error) = crate::heartbeat_v4::frame_type(tx.payload.as_slice()) {
                 self.record_frame_error(error);
                 self.emit(RadioEvent::Rejected {
                     id,
@@ -697,10 +756,10 @@ where
                 let mut bytes = [0u8; MAX_FRAME_LEN];
                 match self.driver.receive(job.start, job.end, &mut bytes).await {
                     Ok((length, metadata)) => match FrameBuffer::from_slice(&bytes[..length]) {
-                        Ok(frame) => match FrameHeader::decode(frame.as_slice()) {
-                            Ok(decoded) => {
+                        Ok(frame) => match frame.frame_type() {
+                            Ok(frame_type) => {
                                 RadioServiceStats::increment(&mut self.state.stats.frames_rx);
-                                if decoded.header.frame_type == FrameType::Presence {
+                                if frame_type == FrameType::Presence {
                                     RadioServiceStats::increment(&mut self.state.stats.presence_rx);
                                 }
                                 self.emit(RadioEvent::Received {

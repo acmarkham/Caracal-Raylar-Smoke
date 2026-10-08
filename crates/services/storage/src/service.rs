@@ -84,7 +84,7 @@ where
         layout: StorageLayout,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         let timestamp = self.clock.current_utc();
-        self.begin_stream_with_timestamp(kind, layout, timestamp)
+        self.begin_stream_with_timestamp(kind, layout, timestamp, false)
             .await
     }
 
@@ -98,7 +98,7 @@ where
         layout: StorageLayout,
         started_utc: UtcTimestamp,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.begin_stream_with_timestamp(kind, layout, Some(started_utc))
+        self.begin_stream_with_timestamp(kind, layout, Some(started_utc), false)
             .await
     }
 
@@ -107,6 +107,7 @@ where
         kind: StreamKind,
         layout: StorageLayout,
         timestamp: Option<UtcTimestamp>,
+        exclusive: bool,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         let index = self
             .slots
@@ -123,11 +124,14 @@ where
                 .await
                 .map_err(StorageServiceError::Backend)?;
         }
-        let file = self
+        let file = if exclusive {
+            self.backend.create_new_at(path.as_str(), file_timestamp).await
+                .map_err(StorageServiceError::Backend)?.ok_or(StorageServiceError::InvalidConfig)?
+        } else { self
             .backend
             .open_for_append_at(path.as_str(), file_timestamp)
             .await
-            .map_err(StorageServiceError::Backend)?;
+            .map_err(StorageServiceError::Backend)? };
 
         self.generations[index] = generation;
         self.stream_sequence = sequence;
@@ -135,6 +139,28 @@ where
         slot.file = Some(file);
         self.slots[index] = Some(slot);
         Ok(StreamHandle::new(index, generation))
+    }
+
+    pub async fn begin_new_audio_at(&mut self, layout: StorageLayout, started_utc: UtcTimestamp) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.begin_stream_with_timestamp(StreamKind::Audio, layout, Some(started_utc), true).await
+    }
+
+    pub fn pending_bytes(&self) -> u64 {
+        self.slots.iter().flatten().map(|slot| slot.pending_len as u64).sum()
+    }
+
+    pub async fn space_info(&mut self) -> Result<Option<(u64, u64, u32)>, StorageServiceError<B::Error>> {
+        self.backend.space_info().await.map_err(StorageServiceError::Backend)
+    }
+
+    pub async fn rewrite(&mut self, stream: StreamHandle, offset: u64, bytes: &[u8]) -> Result<(), StorageServiceError<B::Error>> {
+        self.flush(stream).await?;
+        let index = self.validate(stream)?;
+        let handle = self.slots[index].as_ref().and_then(|s| s.file).ok_or(StorageServiceError::InvalidStream)?;
+        if !self.backend.rewrite(handle, offset, bytes).await.map_err(StorageServiceError::Backend)? {
+            return Err(StorageServiceError::InvalidConfig);
+        }
+        Ok(())
     }
 
     pub async fn write(

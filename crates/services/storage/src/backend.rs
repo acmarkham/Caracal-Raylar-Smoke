@@ -12,6 +12,10 @@ use raylar_drivers::storage::{
 pub trait StorageBackend<const BLOCK_SIZE: usize> {
     type Error;
 
+    async fn space_info(&mut self) -> Result<Option<(u64, u64, u32)>, Self::Error> { Ok(None) }
+    async fn create_new_at(&mut self, _path: &str, _timestamp: Option<StorageTimestamp>) -> Result<Option<FileHandle>, Self::Error> { Ok(None) }
+    async fn rewrite(&mut self, _handle: FileHandle, _offset: u64, _bytes: &[u8]) -> Result<bool, Self::Error> { Ok(false) }
+
     fn device_identity(&self) -> Option<StorageDeviceIdentity> {
         None
     }
@@ -51,6 +55,10 @@ where
     D: StorageBlockDevice<BLOCK_SIZE>,
 {
     type Error = StorageError<D::Error>;
+
+    async fn space_info(&mut self) -> Result<Option<(u64, u64, u32)>, Self::Error> { StorageDriver::space_info(self).await.map(Some) }
+    async fn create_new_at(&mut self, path: &str, timestamp: Option<StorageTimestamp>) -> Result<Option<FileHandle>, Self::Error> { StorageDriver::create_new_at(self, path, timestamp).await.map(Some) }
+    async fn rewrite(&mut self, handle: FileHandle, offset: u64, bytes: &[u8]) -> Result<bool, Self::Error> { StorageDriver::rewrite(self, handle, offset, bytes).await.map(|()| true) }
 
     fn device_identity(&self) -> Option<StorageDeviceIdentity> {
         StorageDriver::device_identity(self)

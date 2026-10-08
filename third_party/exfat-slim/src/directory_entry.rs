@@ -1,10 +1,10 @@
-use alloc::vec::Vec;
 use bitflags::bitflags;
 use thiserror::Error;
 
 use super::{
     BlockDevice, bisync,
     directory::DirectoryEntryFilter,
+    error::ExFatError,
     file::FileDetails,
     file_system::{ExFatResult, FileSystem, FileSystemDetails},
     utils::{decode_utf16, read_u16_le, read_u32_le, read_u64_le},
@@ -556,14 +556,14 @@ impl<const SIZE: usize> DirectoryEntryChain<SIZE> {
 
                     // read the entire file_name
                     let name_length = stream_entry.name_length as usize;
-                    let mut file_name: Vec<u16> = Vec::with_capacity(name_length);
+                    let mut file_name: heapless::Vec<u16, 255> = heapless::Vec::new();
                     'inner: loop {
                         if let Some((file_name_entry, _location)) = self.next(fs).await? {
                             // TODO: check entry type
                             let file_name_entry: FileNameDirEntry = file_name_entry.into();
                             let len = (name_length - file_name.len())
                                 .min(file_name_entry.file_name.len());
-                            file_name.extend_from_slice(&file_name_entry.file_name[..len]);
+                            file_name.extend_from_slice(&file_name_entry.file_name[..len]).map_err(|_| ExFatError::InvalidFileName { reason: "too many filename units" })?;
                             if file_name.len() == name_length {
                                 break 'inner;
                             }
@@ -576,7 +576,7 @@ impl<const SIZE: usize> DirectoryEntryChain<SIZE> {
                         continue 'outer;
                     }
 
-                    let name = decode_utf16::<D, SIZE>(file_name)?;
+                    let name = decode_utf16::<D, SIZE>(&file_name)?;
                     let file_details = FileDetails {
                         attributes: file_dir_entry.file_attributes,
                         data_length: stream_entry.data_length,

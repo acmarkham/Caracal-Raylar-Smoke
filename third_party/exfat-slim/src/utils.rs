@@ -1,5 +1,6 @@
 use aligned::Aligned;
 use alloc::{string::String, vec::Vec};
+use heapless::{Vec as StaticVec, String as StaticString};
 
 use super::{
     BlockDevice, bisync, boot_sector::VolumeFlags, error::ExFatError, file_system::ExFatResult,
@@ -36,27 +37,30 @@ pub(crate) fn calc_dir_entry_set_len(name: &[u16]) -> usize {
     2 + (name.len() as u32).div_ceil(15) as usize
 }
 
-pub(crate) fn encode_utf16_and_hash(s: &str, upcase_table: &UpcaseTable) -> (Vec<u16>, u16) {
-    let mut file_name: Vec<u16> = s.encode_utf16().collect();
+pub(crate) fn encode_utf16_and_hash(s: &str, upcase_table: &UpcaseTable) -> Option<(StaticVec<u16, 255>, u16)> {
+    let mut file_name: StaticVec<u16, 255> = StaticVec::new();
+    for unit in s.encode_utf16() { file_name.push(unit).ok()?; }
     for c in file_name.iter_mut() {
         *c = upcase_table.upcase(*c)
     }
     let file_name_hash = calc_hash_u16(file_name.as_slice());
 
     // this copy is not upcased
-    let file_name: Vec<u16> = s.encode_utf16().collect();
+    let mut file_name: StaticVec<u16, 255> = StaticVec::new();
+    for unit in s.encode_utf16() { file_name.push(unit).ok()?; }
 
-    (file_name, file_name_hash)
+    Some((file_name, file_name_hash))
 }
 
-pub(crate) fn encode_utf16_upcase_and_hash(s: &str, upcase_table: &UpcaseTable) -> (Vec<u16>, u16) {
-    let mut file_name: Vec<u16> = s.encode_utf16().collect();
+pub(crate) fn encode_utf16_upcase_and_hash(s: &str, upcase_table: &UpcaseTable) -> Option<(StaticVec<u16, 255>, u16)> {
+    let mut file_name: StaticVec<u16, 255> = StaticVec::new();
+    for unit in s.encode_utf16() { file_name.push(unit).ok()?; }
     for c in file_name.iter_mut() {
         *c = upcase_table.upcase(*c)
     }
     let file_name_hash = calc_hash_u16(file_name.as_slice());
 
-    (file_name, file_name_hash)
+    Some((file_name, file_name_hash))
 }
 
 pub(crate) fn calc_hash_u16(utf16_file_name: &[u16]) -> u16 {
@@ -145,17 +149,14 @@ where
     Ok(())
 }
 
-pub(crate) fn decode_utf16<D, const SIZE: usize>(buf: Vec<u16>) -> ExFatResult<String, D, SIZE>
+pub(crate) fn decode_utf16<D, const SIZE: usize>(buf: &[u16]) -> ExFatResult<StaticString<1024>, D, SIZE>
 where
     D: BlockDevice<SIZE>,
 {
-    let decoded = core::char::decode_utf16(buf)
-        .map(|r| {
-            // TODO reject illegal characters like quotes (see spec)
-            r.map_err(|_| ExFatError::InvalidUtf16String {
-                reason: "invalid u16 char detected",
-            })
-        })
-        .collect::<ExFatResult<String, D, SIZE>>()?;
+    let mut decoded = StaticString::new();
+    for character in core::char::decode_utf16(buf.iter().copied()) {
+        let character = character.map_err(|_| ExFatError::InvalidUtf16String { reason: "invalid u16 char detected" })?;
+        decoded.push(character).map_err(|_| ExFatError::InvalidFileName { reason: "decoded name exceeds bounded capacity" })?;
+    }
     Ok(decoded)
 }

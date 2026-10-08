@@ -5,7 +5,7 @@ use embassy_stm32::rcc::mux::Sdmmcsel;
 use embassy_stm32::rcc::*;
 use embassy_stm32::sdmmc::sd::{CmdBlock, StorageDevice};
 use embassy_stm32::sdmmc::{Config as SdmmcConfig, Sdmmc};
-use embassy_stm32::time::{Hertz, mhz};
+use embassy_stm32::time::{mhz, Hertz};
 use embassy_stm32::usart::{BufferedUart, Config as UartConfig, DataBits, Parity, StopBits};
 use embassy_time::{Duration, Timer};
 use raylar_board_v1p0::{Gps, Irqs, SdCard};
@@ -15,8 +15,8 @@ use raylar_drivers::gps::{
 };
 use raylar_drivers::storage::stm32::Stm32SdBlockDevice;
 use raylar_drivers::storage::{
-    FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver, StorageTimestamp,
-    detect_exfat_volume,
+    detect_exfat_volume, FileHandle, PartitionedBlockDevice, StorageDeviceIdentity, StorageDriver,
+    StorageTimestamp,
 };
 use raylar_storage_service::StorageBackend;
 use raylar_time_service::gps::run_gps_time_source;
@@ -182,6 +182,25 @@ where
     B: StorageBackend<BLOCK_SIZE>,
 {
     type Error = B::Error;
+
+    async fn space_info(&mut self) -> Result<Option<(u64, u64, u32)>, Self::Error> {
+        self.inner.space_info().await
+    }
+    async fn create_new_at(
+        &mut self,
+        path: &str,
+        timestamp: Option<StorageTimestamp>,
+    ) -> Result<Option<FileHandle>, Self::Error> {
+        self.inner.create_new_at(path, timestamp).await
+    }
+    async fn rewrite(
+        &mut self,
+        handle: FileHandle,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<bool, Self::Error> {
+        self.inner.rewrite(handle, offset, bytes).await
+    }
 
     fn device_identity(&self) -> Option<StorageDeviceIdentity> {
         self.inner.device_identity()
@@ -352,7 +371,7 @@ pub async fn start_time_with_duty_cycle(
     gps_on_time: Duration,
     gps_off_time: Duration,
 ) {
-    start_time_inner(spawner, gps, gps_on_time, gps_off_time, None).await;
+    start_time_inner(spawner, gps, gps_on_time, gps_off_time, None, true).await;
 }
 
 /// Start GPS/PPS time with phase-qualified post-calibration shutdown.
@@ -369,6 +388,27 @@ pub async fn start_time_with_phase_qualified_duty_cycle(
         gps_on_time,
         gps_off_time,
         Some(phase_shutdown),
+        true,
+    )
+    .await;
+}
+
+/// Start Time/GPS services with the receiver stopped until the application
+/// battery policy explicitly sends `GpsCommand::Start`.
+pub async fn start_time_stopped_with_phase_qualified_duty_cycle(
+    spawner: Spawner,
+    gps: Gps<'static>,
+    gps_on_time: Duration,
+    gps_off_time: Duration,
+    phase_shutdown: PhaseQualifiedShutdownConfig,
+) {
+    start_time_inner(
+        spawner,
+        gps,
+        gps_on_time,
+        gps_off_time,
+        Some(phase_shutdown),
+        false,
     )
     .await;
 }
@@ -379,6 +419,7 @@ async fn start_time_inner(
     gps_on_time: Duration,
     gps_off_time: Duration,
     phase_qualified_shutdown: Option<PhaseQualifiedShutdownConfig>,
+    start_immediately: bool,
 ) {
     let Gps {
         usart,
@@ -435,7 +476,9 @@ async fn start_time_inner(
     if phase_qualified_shutdown.is_some() {
         spawner.spawn(unwrap!(gps_phase_quality_task()));
     }
-    GPS_RESOURCES.command_sender().send(GpsCommand::Start).await;
+    if start_immediately {
+        GPS_RESOURCES.command_sender().send(GpsCommand::Start).await;
+    }
 }
 
 /// Starts the time service from a synthetic UTC anchor without powering GPS.

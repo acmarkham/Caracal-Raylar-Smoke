@@ -51,3 +51,4 @@ pub use stats::RadioServiceStats;
 
 #[cfg(test)]
 mod tests;
+pub mod heartbeat_v4;

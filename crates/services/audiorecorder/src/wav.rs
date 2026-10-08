@@ -125,6 +125,8 @@ fn write_comment(header: &mut [u8; WAV_HEADER_BYTES], metadata: &RecordingMetada
         let digest = location_digest(latitude, longitude, metadata.node_id.unwrap_or(0));
         let _ = write!(comment, ";location_hash={digest:016x}");
     }
+    let _ = write!(comment, ";utc_status={};uncertainty_us={};calibration_locked={};last_pps_ticks={};location_hash_algo=fnv1a64-raylar-location-v1-node-e7-le",
+        metadata.utc_status, metadata.uncertainty_us, metadata.calibration_locked as u8, optional_u64(metadata.last_pps_system_ticks));
     let bytes = comment.as_bytes();
     header[COMMENT_OFFSET..COMMENT_OFFSET + bytes.len()].copy_from_slice(bytes);
 }

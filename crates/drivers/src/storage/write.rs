@@ -19,6 +19,14 @@ where
         path: &str,
         timestamp: Option<StorageTimestamp>,
     ) -> StorageResult<FileHandle, D::Error> {
+        self.open_write_at(path, timestamp, false).await
+    }
+
+    pub async fn create_new_at(&mut self, path: &str, timestamp: Option<StorageTimestamp>) -> StorageResult<FileHandle, D::Error> {
+        self.open_write_at(path, timestamp, true).await
+    }
+
+    async fn open_write_at(&mut self, path: &str, timestamp: Option<StorageTimestamp>, exclusive: bool) -> StorageResult<FileHandle, D::Error> {
         let normalized_path = normalize_path::<PATH_LEN, D::Error>(path)?;
 
         let slot_index = self
@@ -43,7 +51,8 @@ where
 
         let options = OpenOptions::new()
             .create(true)
-            .append(true)
+            .create_new(exclusive)
+            .append(!exclusive)
             .write(true)
             .timestamp(timestamp);
         let file = self
@@ -95,6 +104,22 @@ where
         slot.logical_len = slot.logical_len.saturating_add(data.len() as u64);
         slot.dirty = true;
         Ok(())
+    }
+
+    pub async fn space_info(&mut self) -> StorageResult<(u64, u64, u32), D::Error> {
+        self.fs.space_info().await.map_err(StorageError::from)
+    }
+
+    /// Patch already written bytes, preserving the append cursor and length.
+    pub async fn rewrite(&mut self, handle: FileHandle, offset: u64, bytes: &[u8]) -> StorageResult<(), D::Error> {
+        let index = self.validate_write_handle(handle)?;
+        let slot = self.write_slots[index].as_mut().ok_or(StorageError::InvalidHandle)?;
+        if offset.saturating_add(bytes.len() as u64) > slot.logical_len { return Err(StorageError::InvalidBufferLength); }
+        slot.file.seek(&mut self.fs, offset).await.map_err(StorageError::from)?;
+        let result = slot.file.write(&mut self.fs, bytes).await.map_err(StorageError::from);
+        slot.file.seek(&mut self.fs, slot.logical_len).await.map_err(StorageError::from)?;
+        slot.dirty = true;
+        result
     }
 
     pub async fn flush(&mut self, handle: FileHandle) -> StorageResult<(), D::Error> {

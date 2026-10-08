@@ -2,6 +2,7 @@
 
 use embassy_stm32::pac::pwr::vals::Regsel;
 use embassy_stm32::pac::PWR;
+use embassy_stm32::pac::RCC;
 
 use super::{CoreConfig, CoreError, CoreSupply, CoreSupplyControl};
 
@@ -15,7 +16,33 @@ const TRANSITION_STATUS_POLLS: usize = 1_000_000;
 /// and before initializing drivers that place load on VCORE.
 pub struct Stm32CoreDriver;
 
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ResetFlags {
+    pub pin: bool,
+    pub brownout: bool,
+    pub software: bool,
+    pub independent_watchdog: bool,
+    pub window_watchdog: bool,
+    pub low_power: bool,
+    pub option_byte: bool,
+}
+
 impl Stm32CoreDriver {
+    /// Capture all sticky hardware reset flags and clear them for the next boot.
+    pub fn take_reset_flags() -> ResetFlags {
+        let flags = RCC.csr().read();
+        let result = ResetFlags {
+            pin: flags.pinrstf(), brownout: flags.borrstf(), software: flags.sftrstf(),
+            independent_watchdog: flags.iwdgrstf(), window_watchdog: flags.wwdgrstf(),
+            low_power: flags.lpwrrstf(), option_byte: flags.oblrstf(),
+        };
+        RCC.csr().modify(|w| w.set_rmvf(true));
+        result
+    }
+
+    pub fn reset() -> ! { cortex_m::peripheral::SCB::sys_reset() }
+
     pub fn init(config: CoreConfig) -> Result<Self, CoreError> {
         let mut driver = Self;
         driver.select_supply(config.supply)?;

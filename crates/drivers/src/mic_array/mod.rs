@@ -424,6 +424,7 @@ pub struct MicrophoneResources<const BUFFER: usize, const WATCHERS: usize = DEFA
     buffers: UnsafeCell<[[u32; BUFFER]; MAX_MICROPHONES]>,
     sync: UnsafeCell<[u32; BUFFER]>,
     state: Watch<CriticalSectionRawMutex, CaptureState, WATCHERS>,
+    enabled: Watch<CriticalSectionRawMutex, bool, 1>,
 }
 
 // DMA and consumers intentionally share this storage. Volatile reads and the
@@ -450,6 +451,7 @@ impl<const BUFFER: usize, const WATCHERS: usize> MicrophoneResources<BUFFER, WAT
                 filter_status: 0,
                 error: None,
             }),
+            enabled: Watch::new_with(true),
         }
     }
 
@@ -459,6 +461,12 @@ impl<const BUFFER: usize, const WATCHERS: usize> MicrophoneResources<BUFFER, WAT
 
     pub fn state(&self) -> CaptureState {
         self.state.try_get().unwrap_or_default()
+    }
+
+    pub fn set_enabled(&self, enabled: bool) {
+        if self.enabled.try_get() != Some(enabled) {
+            self.enabled.sender().send(enabled);
+        }
     }
 
     /// Returns channel-major views of the half described by `state`.

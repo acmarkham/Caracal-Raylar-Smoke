@@ -41,6 +41,10 @@ pub enum StorageError<E> {
 
 impl<E> From<ExFatError<E>> for StorageError<E> {
     fn from(error: ExFatError<E>) -> Self {
-        Self::Filesystem(error)
+        match error {
+            ExFatError::AlreadyExists => Self::FileAlreadyExists,
+            ExFatError::DiskFull => Self::OutOfSpace,
+            other => Self::Filesystem(other),
+        }
     }
 }

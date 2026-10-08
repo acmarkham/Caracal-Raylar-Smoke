@@ -22,6 +22,10 @@ pub struct RecordingMetadata {
     pub started_system_ticks: Option<u64>,
     pub last_gps_pps_utc: Option<UtcTimestamp>,
     pub calibration_ppb: Option<i64>,
+    pub utc_status: u8,
+    pub uncertainty_us: u64,
+    pub calibration_locked: bool,
+    pub last_pps_system_ticks: Option<u64>,
 }
 
 impl RecordingMetadata {
@@ -39,6 +43,10 @@ impl RecordingMetadata {
             started_system_ticks: None,
             last_gps_pps_utc: None,
             calibration_ppb: None,
+            utc_status: 0,
+            uncertainty_us: u64::MAX,
+            calibration_locked: false,
+            last_pps_system_ticks: None,
         }
     }
 }
@@ -46,6 +54,7 @@ impl RecordingMetadata {
 pub trait MetadataSource {
     /// Return `None` until the metadata required to start a recording is valid.
     fn snapshot(&self) -> Option<RecordingMetadata>;
+    fn system_ticks_at(&self, _utc: UtcTimestamp) -> Option<u64> { None }
 }
 
 /// Minimal metadata source which gates recording on valid UTC.
@@ -129,9 +138,14 @@ impl<'a, const WATCHERS: usize, const ANCHOR_DEPTH: usize>
 impl<const WATCHERS: usize, const ANCHOR_DEPTH: usize> MetadataSource
     for TimeMetadataSource<'_, WATCHERS, ANCHOR_DEPTH>
 {
+    fn system_ticks_at(&self, utc: UtcTimestamp) -> Option<u64> {
+        self.time.time_state().utc_to_system_holdover(utc).ok().map(|instant| instant.as_ticks())
+    }
+
     fn snapshot(&self) -> Option<RecordingMetadata> {
-        let mut metadata = RecordingMetadata::new(self.time.current_utc().ok()?);
         let state = self.time.time_state();
+        let now = embassy_time::Instant::now();
+        let mut metadata = RecordingMetadata::new(state.system_to_utc_holdover(now).ok()?);
         metadata.started_system_ticks = Some(embassy_time::Instant::now().as_ticks());
         metadata.node_id = self.node_id;
         metadata.boot_id = self.boot_id;
@@ -142,6 +156,10 @@ impl<const WATCHERS: usize, const ANCHOR_DEPTH: usize> MetadataSource
             metadata.longitude_e7 = Some(longitude);
         }
         metadata.calibration_ppb = Some(state.calibrated_frequency_error_ppb);
+        metadata.utc_status = match state.utc_status { raylar_time_service::UtcStatus::Invalid => 0, raylar_time_service::UtcStatus::Synchronized => 1, raylar_time_service::UtcStatus::Degraded => 2 };
+        metadata.uncertainty_us = state.uncertainty_us;
+        metadata.calibration_locked = state.frequency_calibration_locked;
+        metadata.last_pps_system_ticks = state.last_anchor_system_time.map(|v| v.as_ticks());
         metadata.last_gps_pps_utc = state
             .last_anchor_utc
             .filter(|_| matches!(state.active_time_source, raylar_time_service::TimeSource::GpsPps));

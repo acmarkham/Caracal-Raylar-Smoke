@@ -31,6 +31,7 @@ pub type ExFatResult<T, D, const SIZE: usize> =
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[derive(Debug, Clone)]
 pub(crate) struct FileSystemDetails {
+    pub cluster_count: u32,
     /// volume-relative sector offset of the cluster heap
     pub cluster_heap_offset: u32,
 
@@ -50,6 +51,7 @@ pub(crate) struct FileSystemDetails {
 impl FileSystemDetails {
     pub(crate) const fn empty() -> Self {
         Self {
+            cluster_count: 0,
             cluster_heap_offset: 0,
             fat_offset: 0,
             sectors_per_cluster: 64,
@@ -61,6 +63,7 @@ impl FileSystemDetails {
     pub(crate) fn new(boot_sector: &BootSector) -> Self {
         let cluster_length = boot_sector.bytes_per_sector as u32 * boot_sector.sectors_per_cluster;
         Self {
+            cluster_count: boot_sector.cluster_count,
             cluster_heap_offset: boot_sector.cluster_heap_offset,
             sectors_per_cluster: boot_sector.sectors_per_cluster,
             cluster_length,
@@ -367,7 +370,7 @@ where
         let (dir_path, file_or_dir_name) = split_path(to_path);
 
         let mut touched = FileDirty::new();
-        self.write_dir_entries_to_disk(file_details.location, freed_dir_entries, &mut touched)
+        self.write_dir_entries_to_disk(file_details.location, &freed_dir_entries, &mut touched)
             .await?;
 
         // find directory or recursively create it if it does not already exist
@@ -530,7 +533,7 @@ where
 
         // write to disk - only the directory entries are written.
         // the data the file points to is left as is (but is free to be overwritten)
-        self.write_dir_entries_to_disk(file_details.location, dir_entries, &mut touched)
+        self.write_dir_entries_to_disk(file_details.location, &dir_entries, &mut touched)
             .await?;
 
         touched.flush(self).await?;
@@ -656,18 +659,19 @@ where
         data_length: u64,
         timestamp: Option<Timestamp>,
     ) -> ExFatResult<FileDetails, D, SIZE> {
-        let (utf16_name, name_hash) = encode_utf16_and_hash(name, &self.upcase_table);
+        let (utf16_name, name_hash) = encode_utf16_and_hash(name, &self.upcase_table)
+            .ok_or(ExFatError::InvalidFileName { reason: "filename exceeds 255 UTF-16 units" })?;
         let dir_entry_set_len = calc_dir_entry_set_len(&utf16_name);
         let location = self
             .find_empty_dir_entry_set(directory, dir_entry_set_len)
             .await?;
-        let mut dir_entries: Vec<RawDirEntry> = Vec::with_capacity(dir_entry_set_len);
+        let mut dir_entries: heapless::Vec<RawDirEntry, 19> = heapless::Vec::new();
 
         let secondary_count = dir_entry_set_len as u8 - 1;
 
         // write file directory entry set
         let file = FileDirEntry::new(secondary_count, file_attributes, timestamp);
-        dir_entries.push(file.serialize());
+        dir_entries.push(file.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
 
         // write stream extension directory entry
         let stream_ext = StreamExtensionDirEntry {
@@ -678,7 +682,7 @@ where
             first_cluster,
             data_length,
         };
-        dir_entries.push(stream_ext.serialize());
+        dir_entries.push(stream_ext.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
 
         // write file name directory entries chunked by 15 characters
         let (chunks, remainder) = utf16_name.as_chunks::<15>();
@@ -687,7 +691,7 @@ where
                 general_secondary_flags: GeneralSecondaryFlags::empty(),
                 file_name: *chunk,
             };
-            dir_entries.push(file_name.serialize());
+            dir_entries.push(file_name.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
         }
         if !remainder.is_empty() {
             // any file name ness than 15 characters gets zeros after the name
@@ -696,7 +700,7 @@ where
                 file_name: [0u16; 15],
             };
             file_name.file_name[..remainder.len()].copy_from_slice(remainder);
-            dir_entries.push(file_name.serialize());
+            dir_entries.push(file_name.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
         }
 
         // calculate and update the set_checksum field
@@ -704,10 +708,12 @@ where
 
         // write to disk
         let mut touched = FileDirty::new();
-        self.write_dir_entries_to_disk(location, dir_entries, &mut touched)
+        self.write_dir_entries_to_disk(location, &dir_entries, &mut touched)
             .await?;
         touched.flush(self).await?;
 
+        let mut bounded_name = heapless::String::<1024>::new();
+        bounded_name.push_str(name).map_err(|_| ExFatError::InvalidFileName { reason: "decoded filename exceeds capacity" })?;
         let file_details = FileDetails {
             attributes: file_attributes,
             data_length,
@@ -715,10 +721,18 @@ where
             first_cluster,
             flags: stream_ext_flags,
             location,
-            name: name.into(),
+            name: bounded_name,
             secondary_count,
         };
         Ok(file_details)
+    }
+
+    #[bisync]
+    pub async fn space_info(&mut self) -> ExFatResult<(u64, u64, u32), D, SIZE> {
+        self.mount().await?;
+        let free = self.allocator.free_cluster_count(&mut self.dev, self.fs.cluster_count).await?;
+        let cluster = self.fs.cluster_length;
+        Ok((u64::from(self.fs.cluster_count) * u64::from(cluster), u64::from(free) * u64::from(cluster), cluster))
     }
 
     pub fn unmount(self) -> D {
@@ -956,7 +970,7 @@ where
         touched: &mut impl Touched,
     ) -> ExFatResult<(), D, SIZE> {
         let mut chain = DirectoryEntryChain::new_from_location(&details.location, &self.fs);
-        let mut dir_entries = Vec::with_capacity(details.secondary_count as usize + 1);
+        let mut dir_entries = heapless::Vec::<_, 19>::new();
 
         for _ in 0..=details.secondary_count {
             let Some((entry, _location)) = chain.next(self).await? else {
@@ -964,7 +978,7 @@ where
                     "directory entry set ended before its secondary count",
                 ));
             };
-            dir_entries.push(*entry);
+            dir_entries.push(*entry).map_err(|_| ExFatError::InvalidFileName { reason: "too many directory entries" })?;
         }
 
         let mut stream_ext: StreamExtensionDirEntry = (&dir_entries[1]).into();
@@ -973,7 +987,7 @@ where
         stream_ext.data_length = details.data_length;
         dir_entries[1] = stream_ext.serialize();
         update_checksum(&mut dir_entries);
-        self.write_dir_entries_to_disk(details.location, dir_entries, touched)
+        self.write_dir_entries_to_disk(details.location, &dir_entries, touched)
             .await
     }
 
@@ -981,7 +995,7 @@ where
     pub(crate) async fn write_dir_entries_to_disk(
         &mut self,
         location: Location,
-        dir_entries: Vec<RawDirEntry>,
+        dir_entries: &[RawDirEntry],
         touched: &mut impl Touched,
     ) -> ExFatResult<(), D, SIZE> {
         let mut sector_id = location.sector_id;

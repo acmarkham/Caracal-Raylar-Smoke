@@ -14,6 +14,7 @@ use embassy_stm32::peripherals::{PB8, PC2, PD3, PD6, PE4, PE7};
 use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
+use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer, TICK_HZ};
 
 use super::stm32_config::*;
@@ -496,7 +497,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
             config,
         } = self;
         configure_mono_pins(pins);
-        configure_mdf(config);
+        let mut enabled = resources.enabled.receiver().expect("sole microphone owner");
 
         let half = BUFFER / 2;
         let buffers = resources.buffers.get().cast::<[u32; BUFFER]>();
@@ -505,10 +506,8 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
         // buffer. Waiting through ReadableRingBuffer::read_exact copied all
         // 1,600 samples into an otherwise-unused sync buffer on every IRQ.
         let mut transfer = pin!(unsafe { MonoDmaTransfer::new(dma, dma_buffer) });
-        unsafe { transfer.as_mut().start() };
-
-        let started_at_ticks = Instant::now().as_ticks();
-        enable_filters(MicrophoneMode::Mono);
+        let mut started_at_ticks = Instant::now().as_ticks();
+        let mut running = false;
         #[cfg(feature = "defmt")]
         defmt::info!(
             "mono microphone DMA started: requested={}Hz actual={}Hz clock={}Hz decimation={} total_decimation={} buffer_samples={} half_samples={} buffer_bytes={} half_bytes={}",
@@ -527,15 +526,30 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
         let mut previous_interrupt_count = DMA0_INTERRUPT_TICKS.count();
         #[cfg(feature = "defmt")]
         let mut dma_error_count = 0u32;
-        publisher.send(CaptureState {
-            running: true,
-            started_at_ticks,
-            channel_count: 1,
-            ..CaptureState::default()
-        });
-
         loop {
-            DMA0_COMPLETION.wait().await;
+            if !resources.enabled.try_get().unwrap_or(true) {
+                if running {
+                    disable_filters();
+                    write(MDF_CKGCR, 0);
+                    pac::GPDMA1.ch(0).cr().modify(|w| w.set_reset(true));
+                    publisher.send(CaptureState::default());
+                    running = false;
+                }
+                enabled.changed().await;
+                continue;
+            }
+            if !running {
+                configure_mdf(config);
+                let _ = DMA0_COMPLETION.try_take();
+                unsafe { transfer.as_mut().start() };
+                started_at_ticks = Instant::now().as_ticks();
+                previous_interrupt_count = DMA0_INTERRUPT_TICKS.count();
+                sequence = 0;
+                enable_filters(MicrophoneMode::Mono);
+                publisher.send(CaptureState { running: true, started_at_ticks, channel_count: 1, ..CaptureState::default() });
+                running = true;
+            }
+            if let Either::First(_) = select(enabled.changed(), DMA0_COMPLETION.wait()).await { continue; }
             let completed_at_ticks = DMA0_INTERRUPT_TICKS.read();
             let dma_interrupt_count = DMA0_INTERRUPT_TICKS.count();
             let interrupt_delta = dma_interrupt_count.wrapping_sub(previous_interrupt_count);

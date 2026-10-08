@@ -60,6 +60,7 @@ pub enum StorageServiceError<E> {
     InvalidConfig,
     InvalidStream,
     TooManyStreams,
+    OutOfSpace,
     InvalidTimestamp,
     InvalidPath,
 }

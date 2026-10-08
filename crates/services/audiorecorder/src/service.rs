@@ -1,6 +1,7 @@
 use raylar_audiosource::{AudioSource, Error as AudioSourceError, Reader, ReaderStart};
 use raylar_storage_service::StorageLayout;
 use raylar_time_service::UtcTimestamp;
+use embassy_time::{Duration, with_timeout};
 
 use crate::wav::WavError;
 use crate::{MetadataSource, RecordingStorage, WavContainer};
@@ -33,6 +34,7 @@ pub enum AudioRecorderError<E> {
     TimeUnavailable,
     NotStarted,
     AudioSource(AudioSourceError),
+    SourceTimeout,
     Storage(E),
 }
 
@@ -137,6 +139,12 @@ where
         Ok(())
     }
 
+    pub async fn start_at(&mut self, utc: UtcTimestamp) -> Result<(), AudioRecorderError<S::Error>> {
+        if self.stream.is_some() { return Ok(()); }
+        self.next_recording_started_utc = Some(utc);
+        self.start().await
+    }
+
     pub const fn storage(&self) -> &S {
         &self.storage
     }
@@ -146,14 +154,27 @@ where
     }
 
     pub async fn record_next(&mut self) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
+        self.record_next_inner(None).await
+    }
+
+    /// Bound only the source wait. Storage writes run to completion so stopping
+    /// the recorder cannot cancel a filesystem operation partway through.
+    pub async fn record_next_with_source_timeout(&mut self, timeout: Duration) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
+        self.record_next_inner(Some(timeout)).await
+    }
+
+    async fn record_next_inner(&mut self, timeout: Option<Duration>) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
         let stream = self.stream.ok_or(AudioRecorderError::NotStarted)?;
         let sample_capacity = ENCODE_BYTES / 4;
         let remaining = self.samples_per_recording - self.samples_in_recording;
         let requested = sample_capacity.min(remaining);
-        self.reader
-            .wait_for_samples(requested)
-            .await
-            .map_err(AudioRecorderError::AudioSource)?;
+        if let Some(timeout) = timeout {
+            with_timeout(timeout, self.reader.wait_for_samples(requested)).await
+                .map_err(|_| AudioRecorderError::SourceTimeout)?
+                .map_err(AudioRecorderError::AudioSource)?;
+        } else {
+            self.reader.wait_for_samples(requested).await.map_err(AudioRecorderError::AudioSource)?;
+        }
 
         let encoded = &mut self.encoded;
         let status = self
@@ -229,6 +250,7 @@ where
                 )
                 .ok_or(AudioRecorderError::InvalidConfig)?
             };
+        metadata.started_system_ticks = self.metadata.system_ticks_at(metadata.started_utc).or(metadata.started_system_ticks);
         let header = self
             .container
             .header_for_samples(&metadata, samples_per_recording)
@@ -252,7 +274,7 @@ where
     async fn finish_recording(&mut self) -> Result<(), AudioRecorderError<S::Error>> {
         let stream = self.stream.take().ok_or(AudioRecorderError::NotStarted)?;
         self.storage
-            .finish_audio(stream)
+            .finalize_audio(stream, self.samples_in_recording)
             .await
             .map_err(AudioRecorderError::Storage)
     }

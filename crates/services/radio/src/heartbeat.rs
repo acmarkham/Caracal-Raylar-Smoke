@@ -25,7 +25,7 @@ impl BatterySoc {
         })
     }
 
-    const fn wire(self) -> u8 {
+    pub const fn wire(self) -> u8 {
         match self.0 {
             Some(value) if value <= 100 => value,
             _ => u8::MAX,
@@ -130,7 +130,7 @@ impl GpsStatus {
         }
     }
 
-    const fn wire(self) -> u8 {
+    pub const fn wire(self) -> u8 {
         self.utc_valid as u8
             | ((self.fix_quality as u8) << 1)
             | ((self.uncertainty as u8) << 3)

@@ -17,6 +17,10 @@ pub trait RecordingStorage {
     async fn append_audio(&mut self, stream: Self::Handle, bytes: &[u8])
         -> Result<(), Self::Error>;
     async fn finish_audio(&mut self, stream: Self::Handle) -> Result<(), Self::Error>;
+    /// Containers with a declared length can correct it on a partial stop.
+    async fn finalize_audio(&mut self, stream: Self::Handle, _samples: usize) -> Result<(), Self::Error> {
+        self.finish_audio(stream).await
+    }
 }
 
 impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize, const WRITE_BUFFER_BYTES: usize>

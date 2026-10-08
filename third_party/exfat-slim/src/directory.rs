@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 
 use super::{
     BlockDevice, bisync,
@@ -28,7 +28,7 @@ impl DirectoryEntryFilter for AllPassFilter {
 }
 
 pub(crate) struct ExactNameFilter {
-    file_name: Vec<u16>,
+    file_name: heapless::Vec<u16, 255>,
     file_name_hash: u16,
     file_attributes: Option<FileAttributes>,
 }
@@ -39,7 +39,7 @@ impl ExactNameFilter {
         upcase_table: &UpcaseTable,
         file_attributes: Option<FileAttributes>,
     ) -> Self {
-        let (file_name, file_name_hash) = encode_utf16_upcase_and_hash(file_name_str, upcase_table);
+        let (file_name, file_name_hash) = encode_utf16_upcase_and_hash(file_name_str, upcase_table).unwrap_or((heapless::Vec::new(), 0));
         Self {
             file_name,
             file_name_hash,
@@ -171,7 +171,7 @@ pub struct DirectoryEntry {
 impl DirectoryEntry {
     /// file or directly name
     pub fn file_name(&self) -> String {
-        self.details.name.clone()
+        self.details.name.as_str().into()
     }
 
     /// metadata for the file or directory

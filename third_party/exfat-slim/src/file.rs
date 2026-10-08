@@ -115,7 +115,7 @@ pub(crate) struct FileDetails {
     pub data_length: u64,
     pub valid_data_length: u64, // number of valid bytes in the file (reads past valid_data_length should return zeros)
     pub attributes: FileAttributes,
-    pub name: String, // TODO: look into removing this and only reading it if requested via an impl
+    pub name: heapless::String<1024>,
     pub location: Location,
     pub flags: GeneralSecondaryFlags,
     pub secondary_count: u8,
@@ -374,7 +374,7 @@ impl File {
             update_checksum(&mut dir_entries);
 
             // write to disk - only the directory entries are written.
-            fs.write_dir_entries_to_disk(self.details.location, dir_entries, &mut self.touched)
+            fs.write_dir_entries_to_disk(self.details.location, &dir_entries, &mut self.touched)
                 .await?;
         }
 
@@ -971,7 +971,7 @@ impl File {
     async fn get_file_dir_entry_set<D, const SIZE: usize, const N: usize>(
         &mut self,
         fs: &mut FileSystem<D, SIZE, N>,
-    ) -> ExFatResult<Vec<[u8; RAW_ENTRY_LEN]>, D, SIZE>
+    ) -> ExFatResult<heapless::Vec<[u8; RAW_ENTRY_LEN], 19>, D, SIZE>
     where
         D: BlockDevice<SIZE>,
     {
@@ -979,13 +979,13 @@ impl File {
 
         let mut counter = 0;
 
-        let mut dir_entries = Vec::with_capacity(self.details.secondary_count as usize + 1);
+        let mut dir_entries = heapless::Vec::<_, 19>::new();
 
         // copy all directory entries for the file into a Vec
         while let Some((dir_entry, _location)) = chain.next(fs).await? {
             let mut entry = [0u8; RAW_ENTRY_LEN];
             entry.copy_from_slice(dir_entry);
-            dir_entries.push(entry);
+            dir_entries.push(entry).map_err(|_| ExFatError::InvalidFileName { reason: "too many directory entries" })?;
             counter += 1;
             if counter == self.details.secondary_count + 1 {
                 break;

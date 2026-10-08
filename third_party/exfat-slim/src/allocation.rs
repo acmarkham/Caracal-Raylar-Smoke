@@ -93,6 +93,7 @@ where
     pub bitmap: AllocationBitmapSlim,
     cache: SlotCache<D, SIZE, N>,
     next_search_cluster: u32,
+    free_clusters: Option<u32>,
     _phantom: PhantomData<D>,
 }
 
@@ -105,8 +106,24 @@ where
             bitmap: AllocationBitmapSlim::default(),
             cache: SlotCache::new(),
             next_search_cluster: FIRST_CLUSTER_ID,
+            free_clusters: None,
             _phantom: PhantomData::default(),
         }
+    }
+
+    #[bisync]
+    pub async fn free_cluster_count(&mut self, io: &mut D, count: u32) -> ExFatResult<u32, D, SIZE> {
+        if let Some(free) = self.free_clusters { return Ok(free); }
+        let mut free = 0;
+        for sector in 0..count.div_ceil(SIZE as u32 * 8) {
+            let block = self.cache.read(self.bitmap.first_sector + sector, io).await?;
+            let valid = (count - sector * SIZE as u32 * 8).min(SIZE as u32 * 8);
+            for bit in 0..valid {
+                if block.as_slice()[bit as usize / 8] & (1 << (bit % 8)) == 0 { free += 1; }
+            }
+        }
+        self.free_clusters = Some(free);
+        Ok(free)
     }
 
     #[bisync]
@@ -250,6 +267,13 @@ where
             let first_cluster_of_slot = sector_offset * clusters_per_sector + FIRST_CLUSTER_ID;
             let start = cluster_id - first_cluster_of_slot;
             let end = clusters_per_sector.min(start + remaining);
+            if let Some(free) = &mut self.free_clusters {
+                for bit in start..end {
+                    let was_set = slot.as_slice()[bit as usize / 8] & (1 << (bit % 8)) != 0;
+                    if allocated && !was_set { *free = free.saturating_sub(1); }
+                    if !allocated && was_set { *free = free.saturating_add(1); }
+                }
+            }
             Self::set_bit_range(slot.as_mut_slice(), start..end, allocated);
             touched.insert(TouchedSector::new(TouchedKind::Bitmap, sector_id));
             let num_clusters_in_slot = end - start;
