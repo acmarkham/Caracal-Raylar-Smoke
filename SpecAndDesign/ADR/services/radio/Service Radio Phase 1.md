@@ -310,6 +310,8 @@ The exact Rust API may evolve, but several properties are required:
 
 The underlying radio driver already supports preparing expensive configuration in advance and issuing the final RX/TX operation close to a monotonic deadline.
 
+The scheduler rejects a reservation whose start is inside its preparation guard at the instant of admission. Rejection events include the monotonic decision time and requested start; clients may opt in to admission events with the same fields when timing diagnostics are needed. Admission events are disabled by default to preserve space in the bounded event queue. A client must choose a submission lead that includes this guard and its own queue and task latency. It must move a rejected receive window to a future start and avoid immediate resubmission of the same expired deadline. A rejected transmit slot remains missed; moving that transmission into another allocated slot requires a new scheduling decision.
+
 ---
 
 # Message, Frame, and Packet Separation
@@ -1982,6 +1984,8 @@ A radio-driver error should normally return the hardware to the driver's defined
 # Observability
 
 The Radio Messaging Service should publish a bounded statistics snapshot.
+
+For a timing failure, retain the requested start and scheduler decision timestamp in the job event. Clients can correlate the event with their own UTC target and submission timestamp. This supports diagnosis of late caller submission, service queue delay, and UTC conversion drift without unbounded diagnostic storage.
 
 Suggested fields include:
 

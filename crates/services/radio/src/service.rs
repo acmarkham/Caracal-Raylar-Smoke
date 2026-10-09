@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 
 use embassy_futures::select::{select, Either};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -194,6 +194,11 @@ pub struct DriverPacketMetadata {
 // Received frames remain inline so event capacity has deterministic storage.
 #[allow(clippy::large_enum_variant)]
 pub enum RadioEvent {
+    Admitted {
+        id: JobId,
+        start: Instant,
+        decided_at: Instant,
+    },
     Completed {
         id: JobId,
     },
@@ -214,6 +219,8 @@ pub enum RadioEvent {
     Rejected {
         id: JobId,
         error: RadioServiceError,
+        start: Instant,
+        decided_at: Instant,
     },
     Failed {
         id: JobId,
@@ -254,6 +261,7 @@ pub struct RadioResources<
     state: Watch<RadioMutex, RadioServiceState, WATCHERS>,
     next_job_id: AtomicU32,
     neighbour_count: AtomicU16,
+    admission_events: AtomicBool,
     enabled: Watch<RadioMutex, bool, 1>,
 }
 
@@ -284,6 +292,7 @@ impl<const JOBS: usize, const EVENTS: usize, const WATCHERS: usize>
             }),
             next_job_id: AtomicU32::new(1),
             neighbour_count: AtomicU16::new(0),
+            admission_events: AtomicBool::new(false),
             enabled: Watch::new_with(true),
         }
     }
@@ -313,6 +322,12 @@ impl<const JOBS: usize, const EVENTS: usize, const WATCHERS: usize>
 
     pub fn state(&self) -> RadioServiceState {
         self.state.try_get().unwrap_or_default()
+    }
+
+    /// Admission diagnostics are opt-in so they do not occupy event slots for
+    /// clients that only need terminal job results.
+    pub fn set_admission_events(&self, enabled: bool) {
+        self.admission_events.store(enabled, Ordering::Relaxed);
     }
 
     /// Publish the latest bounded neighbour-table size into service stats.
@@ -637,28 +652,36 @@ where
             self.publish();
             return;
         }
+        let reservation = job.reservation();
         if let RadioJob::Transmit { job: tx, .. } = &job {
             if let Err(error) = crate::heartbeat_v4::frame_type(tx.payload.as_slice()) {
                 self.record_frame_error(error);
                 self.emit(RadioEvent::Rejected {
                     id,
                     error: error.into(),
+                    start: reservation.start,
+                    decided_at: Instant::now(),
                 });
                 self.publish();
                 return;
             }
         }
-        let reservation = job.reservation();
-        match self.scheduler.reserve(reservation, Instant::now()) {
+        let decided_at = Instant::now();
+        match self.scheduler.reserve(reservation, decided_at) {
             Ok(outcome) => {
                 for evicted in outcome.evicted {
-                    if let Some(index) = self.pending.iter().position(|job| job.id() == evicted) {
-                        self.pending.remove(index);
-                    }
+                    let evicted_start = self
+                        .pending
+                        .iter()
+                        .position(|job| job.id() == evicted)
+                        .map(|index| self.pending.remove(index).reservation().start)
+                        .unwrap_or(reservation.start);
                     RadioServiceStats::increment(&mut self.state.stats.scheduler_conflicts);
                     self.emit(RadioEvent::Rejected {
                         id: evicted,
                         error: ScheduleError::Conflict.into(),
+                        start: evicted_start,
+                        decided_at,
                     });
                 }
                 if self.pending.push(job).is_err() {
@@ -667,6 +690,14 @@ where
                     self.emit(RadioEvent::Rejected {
                         id,
                         error: ScheduleError::QueueFull.into(),
+                        start: reservation.start,
+                        decided_at,
+                    });
+                } else if self.resources.admission_events.load(Ordering::Relaxed) {
+                    self.emit(RadioEvent::Admitted {
+                        id,
+                        start: reservation.start,
+                        decided_at,
                     });
                 }
             }
@@ -686,6 +717,8 @@ where
                 self.emit(RadioEvent::Rejected {
                     id,
                     error: error.into(),
+                    start: reservation.start,
+                    decided_at,
                 });
             }
         }

@@ -16,7 +16,8 @@ use raylar_power_management_service::PowerSource;
 use raylar_radio_service::heartbeat_v4::{HeartbeatV4, ENERGY_RECOVERED, LOGGING_IMPAIRED};
 use raylar_radio_service::{
     FrameBuffer, GpsStatus, JobId, NodeId, RadioEvent, RadioHandle, RadioMode, RadioPriority,
-    RadioResources, RadioRxJob, RadioService, RadioTxJob, RxPurpose,
+    RadioResources, RadioRxJob, RadioService, RadioServiceError, RadioTxJob, RxPurpose,
+    ScheduleError,
 };
 use raylar_time_service::UtcTimestamp;
 
@@ -29,6 +30,10 @@ use crate::{
 
 pub const JOB_DEPTH: usize = 24;
 pub const EVENT_DEPTH: usize = 32;
+// The service requires 100 ms before a reservation starts. Allow another
+// 150 ms for the coordinator period, queue delivery, and task latency.
+const SUBMISSION_LEAD: Duration = Duration::from_millis(250);
+const RX_MISS_RETRY: Duration = Duration::from_secs(2);
 pub static RADIO: RadioResources<JOB_DEPTH, EVENT_DEPTH, 4> = RadioResources::new();
 pub static RECOVERY_PENDING: AtomicBool = AtomicBool::new(false);
 pub static VALID_RX: AtomicU32 = AtomicU32::new(0);
@@ -64,6 +69,7 @@ pub fn start(spawner: Spawner, rf: EbyteRf<'static>, node: NodeId, boot: u16, lo
             ..DriverTiming::default()
         },
     );
+    RADIO.set_admission_events(true);
     RADIO.set_enabled(false);
     spawner.spawn(unwrap!(service_task(RadioService::new(
         driver,
@@ -87,8 +93,12 @@ struct Minute {
     tx_start: Instant,
     tx_end: Instant,
     tx_id: Option<JobId>,
+    tx_submitted_at: Option<Instant>,
     tx_completed: bool,
     rx_id: Option<JobId>,
+    rx_submitted_at: Option<Instant>,
+    rx_retry_at: Instant,
+    rx_misses: u32,
     rx_at_start: u32,
     sequence: u16,
 }
@@ -168,9 +178,9 @@ async fn coordinator_task(node: NodeId, boot: u16, log: Log) -> ! {
             let gps = common::GPS_RESOURCES.stats();
             let location = LOCATION.state();
             let logging = crate::LOGGING.stats();
-            let _ = log_info!(log, "summary active={} soc={:?} battery_mv={} solar_mv={} ext_dc_mv={} source={:?} charging={} time={:?} uncertainty_us={} holdover_s={} radio={:?} tx={} rx={} errors={} storage_flags={}",
+            let _ = log_info!(log, "summary active={} soc={:?} battery_mv={} solar_mv={} ext_dc_mv={} source={:?} charging={} time={:?} uncertainty_us={} holdover_s={} radio={:?} tx={} rx={} misses={} errors={} storage_flags={}",
                 active, power.battery_percent, power.battery_mv, power.solar_mv, power.ext_dc_mv, power.source, power.charging, time.utc_status, time.uncertainty_us,
-                time.holdover_duration.as_secs(), state.mode, state.stats.frames_tx, state.stats.frames_rx, state.stats.radio_errors,
+                time.holdover_duration.as_secs(), state.mode, state.stats.frames_tx, state.stats.frames_rx, state.stats.schedule_misses, state.stats.radio_errors,
                 STORAGE_FLAGS.load(Ordering::Relaxed));
             let _ = log_info!(log, "summary2 gps_powered={} fixes={} pps={} location_valid={} lat_e7={} lon_e7={} hdop={:?} audio_losses={} log_drops={} log_truncated={} log_failures={} radio_conflicts={} radio_queue_drops={}",
                 gps.powered, gps.num_fixes, gps.num_pps_events, location.valid, location.latitude.degrees_e7,
@@ -233,18 +243,47 @@ fn schedule_minute(
     };
     let frame = FrameBuffer::from_slice(&heartbeat.encode().ok()?).ok()?;
     let frequency_hz = profile.frequency_hz();
-    let tx_id = handle
-        .try_submit_tx(RadioTxJob {
+    let submitted_at = Instant::now();
+    let tx_late = tx_start < submitted_at + SUBMISSION_LEAD;
+    let tx_id = if tx_late {
+        None
+    } else {
+        match handle.try_submit_tx(RadioTxJob {
             earliest: tx_start,
             deadline: tx_end,
             profile,
             priority: RadioPriority::Control,
             payload: frame,
-        })
-        .ok();
-    let _ = log_info!(log, "minute epoch={} profile={} frequency_hz={} slot={} slot_s={} tx_id={:?} sequence={} payload_bytes=16 airtime_us={} utc_status={:?} uncertainty_us={}",
+        }) {
+            Ok(id) => Some(id),
+            Err(error) => {
+                let _ = log_info!(
+                    log,
+                    "tx enqueue failed epoch={} profile={} error={:?}",
+                    epoch,
+                    index + 1,
+                    error
+                );
+                None
+            }
+        }
+    };
+    let slot_utc_us = start_us + i64::from(slot) * config::slot_seconds(index) as i64 * 1_000_000;
+    let _ = log_info!(log, "minute epoch={} profile={} frequency_hz={} slot={} slot_s={} tx_id={:?} sequence={} payload_bytes=16 airtime_us={} slot_utc_us={} slot_ticks={} submit_ticks={} lead_us={} utc_status={:?} uncertainty_us={} holdover_s={}",
         epoch, index + 1, frequency_hz, slot, config::slot_seconds(index), tx_id.map(|id| id.0), sequence,
-        config::airtime_us(index), time.utc_status, time.uncertainty_us);
+        config::airtime_us(index), slot_utc_us, tx_start.as_ticks(), submitted_at.as_ticks(),
+        lead_us(tx_start, submitted_at), time.utc_status, time.uncertainty_us, time.holdover_duration.as_secs());
+    if tx_late {
+        let _ = log_info!(
+            log,
+            "tx skipped epoch={} profile={} slot={} lead_us={} required_us={}",
+            epoch,
+            index + 1,
+            slot,
+            lead_us(tx_start, submitted_at),
+            SUBMISSION_LEAD.as_micros()
+        );
+    }
     Some(Minute {
         epoch,
         index,
@@ -253,8 +292,12 @@ fn schedule_minute(
         tx_start,
         tx_end,
         tx_id,
+        tx_submitted_at: tx_id.map(|_| submitted_at),
         tx_completed: false,
         rx_id: None,
+        rx_submitted_at: None,
+        rx_retry_at: submitted_at,
+        rx_misses: 0,
         rx_at_start: PROFILE_RX[index].load(Ordering::Relaxed),
         sequence,
     })
@@ -267,12 +310,13 @@ fn finish_minute(minute: &mut Option<Minute>, log: Log) {
             .saturating_sub(m.rx_at_start);
         let _ = log_info!(
             log,
-            "minute end epoch={} profile={} sequence={} tx_completed={} valid_rx={}",
+            "minute end epoch={} profile={} sequence={} tx_completed={} valid_rx={} rx_misses={}",
             m.epoch,
             m.index + 1,
             m.sequence,
             m.tx_completed,
-            received
+            received,
+            m.rx_misses
         );
     }
 }
@@ -282,17 +326,17 @@ fn rearm_rx(handle: &RadioHandle<'static, JOB_DEPTH>, minute: &mut Minute, log: 
         return;
     }
     let now = Instant::now();
+    if now < minute.rx_retry_at {
+        return;
+    }
     let guard = Duration::from_millis(120);
-    let before = now < minute.tx_start.saturating_sub(guard);
-    let start = if before {
-        now.max(minute.start)
+    let earliest = now + SUBMISSION_LEAD;
+    let before_start = earliest.max(minute.start);
+    let before_end = minute.tx_start.saturating_sub(guard);
+    let (start, end) = if before_start + Duration::from_millis(30) < before_end {
+        (before_start, before_end)
     } else {
-        now.max(minute.tx_end + guard)
-    };
-    let end = if before {
-        minute.tx_start.saturating_sub(guard)
-    } else {
-        minute.end
+        (earliest.max(minute.tx_end + guard), minute.end)
     };
     if start + Duration::from_millis(30) >= end {
         return;
@@ -300,6 +344,7 @@ fn rearm_rx(handle: &RadioHandle<'static, JOB_DEPTH>, minute: &mut Minute, log: 
     let Ok(profile) = config::profile(minute.index) else {
         return;
     };
+    let submitted_at = Instant::now();
     match handle.try_reserve_rx(RadioRxJob {
         start,
         end,
@@ -307,8 +352,12 @@ fn rearm_rx(handle: &RadioHandle<'static, JOB_DEPTH>, minute: &mut Minute, log: 
         priority: RadioPriority::BestEffort,
         purpose: RxPurpose::Broadcast,
     }) {
-        Ok(id) => minute.rx_id = Some(id),
+        Ok(id) => {
+            minute.rx_id = Some(id);
+            minute.rx_submitted_at = Some(submitted_at);
+        }
         Err(error) => {
+            minute.rx_retry_at = submitted_at + RX_MISS_RETRY;
             let _ = log_info!(
                 log,
                 "rx enqueue failed profile={} error={:?}",
@@ -321,6 +370,28 @@ fn rearm_rx(handle: &RadioHandle<'static, JOB_DEPTH>, minute: &mut Minute, log: 
 
 fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
     match event {
+        RadioEvent::Admitted {
+            id,
+            start,
+            decided_at,
+        } => {
+            if let Some(m) = minute.as_ref() {
+                let (kind, submitted_at) = if m.tx_id == Some(id) {
+                    ("tx", m.tx_submitted_at)
+                } else if m.rx_id == Some(id) {
+                    ("rx", m.rx_submitted_at)
+                } else {
+                    ("old", None)
+                };
+                if let Some(submitted_at) = submitted_at {
+                    let time = common::TIME_RESOURCES.time_state();
+                    let _ = log_info!(log, "radio admitted id={} kind={} start_ticks={} submit_ticks={} decision_ticks={} submit_to_decision_us={} decision_lead_us={} uncertainty_us={} holdover_s={}",
+                        id.0, kind, start.as_ticks(), submitted_at.as_ticks(), decided_at.as_ticks(),
+                        decided_at.saturating_duration_since(submitted_at).as_micros(), lead_us(start, decided_at),
+                        time.uncertainty_us, time.holdover_duration.as_secs());
+                }
+            }
+        }
         RadioEvent::Received {
             id,
             frame,
@@ -329,6 +400,7 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
             if let Some(m) = minute.as_mut() {
                 if m.rx_id == Some(id) {
                     m.rx_id = None;
+                    m.rx_submitted_at = None;
                 }
             }
             match HeartbeatV4::decode(frame.as_slice()) {
@@ -382,6 +454,7 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                         config::airtime_us(m.index)
                     );
                     m.tx_id = None;
+                    m.tx_submitted_at = None;
                     m.tx_completed = true;
                     COMPLETED_TX.fetch_add(1, Ordering::Relaxed);
                 }
@@ -398,18 +471,59 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
             clear_job(minute, id);
             let _ = log_info!(log, "radio job cancelled id={}", id.0);
         }
-        RadioEvent::Rejected { id, error } => {
+        RadioEvent::Rejected {
+            id,
+            error,
+            start,
+            decided_at,
+        } => {
+            let mut kind = "old";
+            let mut submitted_at = None;
+            let mut log_rejection = true;
+            if let Some(m) = minute.as_mut() {
+                if m.tx_id == Some(id) {
+                    kind = "tx";
+                    submitted_at = m.tx_submitted_at;
+                } else if m.rx_id == Some(id) {
+                    kind = "rx";
+                    submitted_at = m.rx_submitted_at;
+                    if error == RadioServiceError::Schedule(ScheduleError::MissedSlot) {
+                        m.rx_misses = m.rx_misses.saturating_add(1);
+                        m.rx_retry_at = Instant::now() + RX_MISS_RETRY;
+                        log_rejection = m.rx_misses == 1;
+                    }
+                }
+            }
             clear_job(minute, id);
-            let _ = log_info!(
-                log,
-                "radio scheduler rejected id={} error={:?}",
-                id.0,
-                error
-            );
+            if log_rejection {
+                let time = common::TIME_RESOURCES.time_state();
+                let _ = log_info!(log, "radio scheduler rejected id={} kind={} error={:?} start_ticks={} submit_ticks={:?} decision_ticks={} decision_lead_us={} event_ticks={} uncertainty_us={} holdover_s={}",
+                    id.0, kind, error, start.as_ticks(), submitted_at.map(|at| at.as_ticks()), decided_at.as_ticks(),
+                    lead_us(start, decided_at), Instant::now().as_ticks(), time.uncertainty_us,
+                    time.holdover_duration.as_secs());
+            }
         }
         RadioEvent::Failed { id, error } => {
+            let mut log_failure = true;
+            if let Some(m) = minute.as_mut() {
+                if m.rx_id == Some(id)
+                    && error == RadioServiceError::Schedule(ScheduleError::MissedSlot)
+                {
+                    m.rx_misses = m.rx_misses.saturating_add(1);
+                    m.rx_retry_at = Instant::now() + RX_MISS_RETRY;
+                    log_failure = m.rx_misses == 1;
+                }
+            }
             clear_job(minute, id);
-            let _ = log_info!(log, "radio job failed id={} error={:?}", id.0, error);
+            if log_failure {
+                let _ = log_info!(
+                    log,
+                    "radio job failed id={} error={:?} event_ticks={}",
+                    id.0,
+                    error,
+                    Instant::now().as_ticks()
+                );
+            }
         }
     }
 }
@@ -418,10 +532,23 @@ fn clear_job(minute: &mut Option<Minute>, id: JobId) {
     if let Some(m) = minute.as_mut() {
         if m.rx_id == Some(id) {
             m.rx_id = None;
+            m.rx_submitted_at = None;
         }
         if m.tx_id == Some(id) {
             m.tx_id = None;
+            m.tx_submitted_at = None;
         }
+    }
+}
+
+fn lead_us(start: Instant, now: Instant) -> i64 {
+    let magnitude = Duration::from_ticks(start.as_ticks().abs_diff(now.as_ticks()))
+        .as_micros()
+        .min(i64::MAX as u64) as i64;
+    if start >= now {
+        magnitude
+    } else {
+        -magnitude
     }
 }
 

@@ -702,6 +702,7 @@ impl Coordinator {
 
     async fn handle_event(&mut self, event: RadioEvent) {
         match event {
+            RadioEvent::Admitted { .. } => {}
             RadioEvent::Completed { id } => {
                 if let Some(tx) = self.take_tx(id) {
                     diagnostics::emit(DiagnosticKind::TxCompleted {
@@ -768,7 +769,7 @@ impl Coordinator {
                 self.take_rx(id);
                 self.ensure_base_rx();
             }
-            RadioEvent::Rejected { id, error } | RadioEvent::Failed { id, error } => {
+            RadioEvent::Rejected { id, error, .. } | RadioEvent::Failed { id, error } => {
                 if let Some(tx) = self.take_tx(id) {
                     diagnostics::emit(DiagnosticKind::TxRejected {
                         id,

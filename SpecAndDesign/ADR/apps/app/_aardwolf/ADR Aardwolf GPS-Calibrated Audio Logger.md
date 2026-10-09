@@ -101,6 +101,10 @@ For GFSK use the Radio Service reference packet settings: Gaussian BT 0.5 shapin
 
 During each profile's active minute, every node opens receive windows according to the Radio Messaging Service scheduler, including time to hear peers transmitting under the shared rendezvous policy. The radio service re-arms receive promptly after TX and between windows as required by its API.
 
+Aardwolf submits each TX or RX reservation at least 250 ms before its monotonic start. This covers the service's 100 ms preparation guard plus 150 ms for the coordinator period, queue delivery, and task latency. A heartbeat whose selected slot has less lead time is skipped for that minute; it is not moved into another node's slot. A receive window starts no earlier than 250 ms after submission and still ends before the local TX guard or minute boundary. After an RX `MissedSlot` rejection, wait two seconds before attempting a new future window. Log the first such rejection in each minute and include the total in the minute summary, so a late window cannot produce a rapid rejection loop.
+
+Record the intended UTC heartbeat slot, its converted monotonic start, submission time, scheduler decision time, and lead at that decision. Include time uncertainty and PPS holdover age with timing diagnostics. The service reports admission and rejection decisions with monotonic timestamps; Aardwolf correlates these with the submitted TX or RX job ID. These fields distinguish a late submission from queue delay and changes in the UTC mapping.
+
 For each relevant received frame, retain:
 
 - monotonic packet-complete timestamp and UTC mapping/status/uncertainty when available;
