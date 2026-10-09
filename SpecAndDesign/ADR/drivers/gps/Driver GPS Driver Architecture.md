@@ -194,6 +194,8 @@ enum OperatingState {
 
 The GPS Manager task owns all state transitions.
 
+When module standby is available, `Standby` suspends fixes and PPS while retaining the physical GPS power rail for a hot restart. The published `powered` field describes that rail and remains true in standby. Clients use the operating state to distinguish active searching/tracking from standby or stop; a power-rail flag alone must not drive an activity LED or imply that PPS should be present.
+
 A search or reacquisition timeout is recoverable. The manager increments and
 publishes the search-failure/timeout counters, enters `Standby` for the normal
 `gps_off_time`, and then starts another acquisition using the same fixed

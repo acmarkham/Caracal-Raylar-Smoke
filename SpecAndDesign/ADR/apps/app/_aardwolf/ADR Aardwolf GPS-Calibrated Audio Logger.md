@@ -63,6 +63,8 @@ Aardwolf application
 - Power state comes from the Power Management Service. The application observes battery/solar state, reports it, and applies the battery hysteresis below. It does not change the radio profile order based on link quality.
 - Shared latest state uses watches. Events that must be accounted for, such as radio TX/RX results and diagnostic records, use bounded channels.
 
+During the initial run, keep the GPS receiver tracking until the Time Service reports frequency-calibration lock, normally after about ten minutes. The GPS driver then sends the module to standby for 30 minutes before a hot-start reacquisition. Standby stops fixes and PPS but retains the module power rail. A later reacquisition tracks for at least 60 seconds and until phase quality qualifies, with a 180-second maximum. GPS logs distinguish the operating state and active tracking from physical rail power; state transitions record the calibration and reacquisition counters.
+
 ## Probe schedule
 
 Use a repeating 30-minute epoch aligned to a UTC half-hour boundary. The first 12 minutes select one radio profile each, in this order:
@@ -177,13 +179,13 @@ Use LEDs and the buzzer to indicate device health and status. Indications must b
 | Device | Indication |
 | --- | --- |
 | Buzzer | Distinct startup, first GPS fix, UTC calibration locked, and severe-error patterns. Optional packet-RX beep is a bench configuration and is disabled in field builds. |
-| `SysGpsGreen` | Solid while GPS is powered and waiting for PPS; brief PPS indication when edges arrive; off when GPS is powered down. |
+| `SysGpsGreen` | Brief pulse on each PPS while the receiver is searching or tracking; off between pulses and throughout standby, stop, and power transitions. |
 | `SysMainRed` | Severe error. |
 | `SysSdBlue` | Brief pulse when an audio packet is ready for recording; pulse rate follows the actual packet rate. |
 | `SysMainGreen` | Brief pulse on valid radio RX. |
 | `SysGpsRed` | Brief pulse on radio TX. |
 
-When `SysGpsGreen` is already solid, make PPS visible as a brief off/on blink rather than an indistinguishable additional on pulse. Preserve `SysMainRed` for severe errors; recoverable GPS unavailability is reported in logs and heartbeat status.
+Preserve `SysMainRed` for severe errors; recoverable GPS unavailability is reported in logs and heartbeat status. Routine per-anchor GPS and UTC details use RTT debug level, while radio TX/RX outcomes use RTT info level. Persistent system logging retains time quality, GPS state changes, and radio details.
 
 ## Long-run logging and power
 

@@ -51,6 +51,8 @@ static HEAP: Heap = Heap::empty();
 static LOGGING: LoggingResources<384, 32> = LoggingResources::new();
 static LOCATION: LocationResources<4> = LocationResources::new();
 static VERSIONING: IdentityResources<4> = IdentityResources::new();
+const GPS_ON_TIME: Duration = Duration::from_secs(60);
+const GPS_STANDBY_TIME: Duration = Duration::from_secs(30 * 60);
 
 bind_interrupts!(struct MicIrqs {
     GPDMA1_CHANNEL0 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>, Dma0TimestampHandler;
@@ -120,6 +122,12 @@ async fn main(spawner: Spawner) -> ! {
         pll_n,
         pll_fracn
     );
+    let _ = log_info!(
+        system_log,
+        "gps duty initial_until_lock=true on_s={} standby_s={} standby_retains_rail=true",
+        GPS_ON_TIME.as_secs(),
+        GPS_STANDBY_TIME.as_secs()
+    );
     for index in 0..aardwolf::config::ACTIVE_MINUTES {
         if let Ok(profile) = aardwolf::config::profile(index) {
             let _ = log_info!(
@@ -137,8 +145,8 @@ async fn main(spawner: Spawner) -> ! {
     common::start_time_stopped_with_phase_qualified_duty_cycle(
         spawner,
         gps,
-        Duration::from_secs(60),
-        Duration::from_secs(30 * 60),
+        GPS_ON_TIME,
+        GPS_STANDBY_TIME,
         PhaseQualifiedShutdownConfig {
             maximum_on_time: Duration::from_secs(180),
             residual_threshold_us: 250,
@@ -220,6 +228,7 @@ async fn main(spawner: Spawner) -> ! {
     let logging = LoggingService::<_, 384, 32, 512>::new(&LOGGING, sink);
     spawner.spawn(unwrap!(logging_task(logging)));
     spawner.spawn(unwrap!(diagnostics::time_task(LOGGING.register("Time"))));
+    spawner.spawn(unwrap!(diagnostics::gps_task(LOGGING.register("Gps"))));
     spawner.spawn(unwrap!(diagnostics::location_task(
         LOGGING.register("Location")
     )));
@@ -308,7 +317,7 @@ async fn ui_task(leds: Leds<'static>, buzzer: raylar_board_v1p0::Buzzer<'static>
         let tx = radio::COMPLETED_TX.load(core::sync::atomic::Ordering::Relaxed);
         let audio = audio::AUDIO_PACKETS.load(core::sync::atomic::Ordering::Relaxed);
         let pps = gps.num_pps_events;
-        if gps.powered && pps == last_pps {
+        if gps.operating_state.is_tracking() && pps != last_pps {
             leds.on(ld::LedName::SysGpsGreen);
         } else {
             leds.off(ld::LedName::SysGpsGreen);

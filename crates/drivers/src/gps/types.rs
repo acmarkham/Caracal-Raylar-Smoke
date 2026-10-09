@@ -32,6 +32,17 @@ pub enum OperatingState {
     Error,
 }
 
+impl OperatingState {
+    /// The receiver is searching or tracking and can produce fixes and PPS.
+    /// Standby retains the module power rail but stops receiver activity.
+    pub const fn is_tracking(self) -> bool {
+        matches!(
+            self,
+            Self::Searching | Self::Calibrating | Self::Reacquiring | Self::Acquired
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PpsTimingSource {
@@ -241,6 +252,7 @@ pub struct TimeCorrelation {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GpsStats {
+    /// Physical module power rail. This remains true in `Standby`.
     pub powered: bool,
     pub got_first_fix: bool,
     pub operating_state: OperatingState,

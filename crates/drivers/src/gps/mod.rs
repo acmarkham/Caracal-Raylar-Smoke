@@ -603,11 +603,6 @@ async fn sleep_or_stop<const COMMAND_DEPTH: usize>(
         if now >= deadline {
             return false;
         }
-        #[cfg(feature = "defmt")]
-        defmt::info!(
-            "GPS sleep_or_stop waiting for {} seconds",
-            deadline.saturating_duration_since(now).as_secs()
-        );
         Timer::after(min_duration(
             deadline.saturating_duration_since(now),
             MANAGER_COMMAND_POLL,

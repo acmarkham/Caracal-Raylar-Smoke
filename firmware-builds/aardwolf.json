@@ -3,12 +3,12 @@
     "package":  "aardwolf",
     "binary":  "aardwolf",
     "firmware_version":  "0.1.0",
-    "source_git":  "6dbc10a85aff47863bc004af9237cd4a3e78a0d1-dirty",
-    "source_tree_dirty":  true,
-    "build_timestamp_utc":  "2026-10-09T09:02:40Z",
+    "source_git":  "6df50e97b6cc65698d567539d5a8e9282d0f1b8f",
+    "source_tree_dirty":  false,
+    "build_timestamp_utc":  "2026-10-09T09:05:13Z",
     "build_profile":  "release",
     "board_revision":  "Raylar v1.0",
     "target":  "thumbv8m.main-none-eabihf",
-    "artifact_sha256":  "81cc70e5f3446838d0d6b417a353054b46cdf327b0daaf68c12997502c732bd8",
+    "artifact_sha256":  "9bee44f5e31f1994bf42cc71ee061a1ac9f92b0aa00128386abd727717b2d1e8",
     "runtime_crc32":  null
 }

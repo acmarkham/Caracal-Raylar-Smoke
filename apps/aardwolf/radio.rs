@@ -1,5 +1,5 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use defmt::{error, unwrap};
+use defmt::{error, info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_stm32::{
     exti::ExtiInput,
@@ -182,8 +182,10 @@ async fn coordinator_task(node: NodeId, boot: u16, log: Log) -> ! {
                 active, power.battery_percent, power.battery_mv, power.solar_mv, power.ext_dc_mv, power.source, power.charging, time.utc_status, time.uncertainty_us,
                 time.holdover_duration.as_secs(), state.mode, state.stats.frames_tx, state.stats.frames_rx, state.stats.schedule_misses, state.stats.radio_errors,
                 STORAGE_FLAGS.load(Ordering::Relaxed));
-            let _ = log_info!(log, "summary2 gps_powered={} fixes={} pps={} location_valid={} lat_e7={} lon_e7={} hdop={:?} audio_losses={} log_drops={} log_truncated={} log_failures={} radio_conflicts={} radio_queue_drops={}",
-                gps.powered, gps.num_fixes, gps.num_pps_events, location.valid, location.latitude.degrees_e7,
+            let _ = log_info!(log, "summary2 gps_state={:?} gps_rail_powered={} gps_tracking={} calibration_complete={} reacq_attempts={} fixes={} pps={} pps_timeouts={} uart_errors={} location_valid={} lat_e7={} lon_e7={} hdop={:?} audio_losses={} log_drops={} log_truncated={} log_failures={} radio_conflicts={} radio_queue_drops={}",
+                gps.operating_state, gps.powered, gps.operating_state.is_tracking(), gps.initial_calibration_complete,
+                gps.num_reacquisition_attempts, gps.num_fixes, gps.num_pps_events,
+                gps.num_pps_timeouts, gps.num_uart_errors, location.valid, location.latitude.degrees_e7,
                 location.longitude.degrees_e7, location.hdop_centi, crate::audio::AUDIO_LOSSES.load(Ordering::Relaxed),
                 logging.dropped_messages, logging.truncated_messages, logging.write_failures,
                 state.stats.scheduler_conflicts, state.stats.queue_drops);
@@ -425,6 +427,15 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                     let _ = log_info!(log, "rxmeta id={} ticks={} utc_us={:?} utc_status={:?} uncertainty_us={} freq_hz={} rssi_x2={} snr_x4={:?} gfsk={:?}",
                         id.0, metadata.packet_complete_at.as_ticks(), utc_us, time.utc_status, time.uncertainty_us,
                         metadata.frequency_hz, metadata.rssi_dbm_x2, metadata.snr_db_x4, metadata.gfsk_status);
+                    info!(
+                        "radio RX id={} node={} seq={} hz={} rssi_x2={} snr_x4={:?}",
+                        id.0,
+                        h.node.0,
+                        h.sequence,
+                        metadata.frequency_hz,
+                        metadata.rssi_dbm_x2,
+                        metadata.snr_db_x4
+                    );
                     VALID_RX.fetch_add(1, Ordering::Relaxed);
                     if let Some((_, profile, _, _)) = position {
                         if let Some(counter) = PROFILE_RX.get(profile - 1) {
@@ -452,6 +463,13 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                         m.sequence,
                         Instant::now().as_ticks(),
                         config::airtime_us(m.index)
+                    );
+                    info!(
+                        "radio TX id={} epoch={} profile={} seq={}",
+                        id.0,
+                        m.epoch,
+                        m.index + 1,
+                        m.sequence
                     );
                     m.tx_id = None;
                     m.tx_submitted_at = None;
@@ -496,6 +514,12 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
             }
             clear_job(minute, id);
             if log_rejection {
+                warn!(
+                    "radio rejected id={} error={:?} lead_us={}",
+                    id.0,
+                    error,
+                    lead_us(start, decided_at)
+                );
                 let time = common::TIME_RESOURCES.time_state();
                 let _ = log_info!(log, "radio scheduler rejected id={} kind={} error={:?} start_ticks={} submit_ticks={:?} decision_ticks={} decision_lead_us={} event_ticks={} uncertainty_us={} holdover_s={}",
                     id.0, kind, error, start.as_ticks(), submitted_at.map(|at| at.as_ticks()), decided_at.as_ticks(),
@@ -516,6 +540,7 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
             }
             clear_job(minute, id);
             if log_failure {
+                warn!("radio failed id={} error={:?}", id.0, error);
                 let _ = log_info!(
                     log,
                     "radio job failed id={} error={:?} event_ticks={}",

@@ -80,7 +80,7 @@ impl<const WATCHERS: usize, const ANCHOR_DEPTH: usize> TimeService<WATCHERS, ANC
             if let Ok(anchor) = with_timeout(self.config.publish_interval, anchors.receive()).await
             {
                 #[cfg(feature = "defmt")]
-                defmt::info!(
+                defmt::debug!(
                     "received anchor: {:?}, quality: {:?}",
                     anchor,
                     anchor.quality

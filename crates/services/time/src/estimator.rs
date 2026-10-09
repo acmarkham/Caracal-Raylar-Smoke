@@ -71,7 +71,7 @@ impl TimeEstimator {
             return false;
         };
         #[cfg(feature = "defmt")]
-        defmt::info!(
+        defmt::debug!(
             "anchor system: {:?}, utc: {:?}, predicted utc: {}us",
             anchor.system_time,
             anchor.utc,
@@ -110,7 +110,7 @@ impl TimeEstimator {
         if anchor.source == crate::TimeSource::GpsPps {
             let predicted_seconds = predicted_us.div_euclid(1_000_000);
             let predicted_subsecond_us = predicted_us.rem_euclid(1_000_000);
-            defmt::info!(
+            defmt::debug!(
                 "PPS UTC comparison: actual={}s+{}us predicted={}s+{}us error_actual_minus_predicted_us={} system_ticks={}",
                 anchor.utc.seconds,
                 anchor.utc.microseconds,
@@ -121,7 +121,7 @@ impl TimeEstimator {
             );
         }
         #[cfg(feature = "defmt")]
-        defmt::info!(
+        defmt::debug!(
             "anchor residual: {}us, uncertainty: {}us",
             residual_us,
             self.state.uncertainty_us
@@ -176,7 +176,7 @@ impl TimeEstimator {
         self.state.holdover_warning = false;
         self.refresh_utc_status();
         #[cfg(feature = "defmt")]
-        defmt::info!(
+        defmt::debug!(
             "mapping epoch rebased: system_ticks={} utc={}s+{}us source={:?} quality_us={} residual_us={} calibrated_ppb={} phase_slew_ppb={} mapping_scale_ppb={} accepted={}",
             anchor.system_time.as_ticks(),
             anchor.utc.seconds,
@@ -190,7 +190,7 @@ impl TimeEstimator {
             self.state.accepted_anchors
         );
         #[cfg(feature = "defmt")]
-        defmt::info!(
+        defmt::debug!(
             "mapping state: reference_system_ticks={} reference_utc={}s+{}us last_anchor_system_ticks={:?} last_anchor_utc={:?} holdover_duration_ms={} uncertainty_us={} utc_status={:?} active_time_source={:?} calibrated_ppb={} calibration_samples={} phase_slew_ppb={} accepted_anchors={} rejected_anchors={} utc_second_corrections={}",
             self.state.reference_system_time.as_ticks(),
             self.state.reference_utc.seconds,
@@ -485,7 +485,7 @@ impl TimeEstimator {
             self.state.pps_reacquisition_rejections =
                 self.state.pps_reacquisition_rejections.saturating_add(1);
             #[cfg(feature = "defmt")]
-            defmt::info!(
+            defmt::debug!(
                 "PPS reacquisition settling: discarded_edges={}/{} rejected={}",
                 self.state.pps_reacquisition_discarded_edges,
                 self.config.pps_reacquisition_discard_edges,
@@ -498,7 +498,7 @@ impl TimeEstimator {
             self.state.pps_reacquisition_rejections =
                 self.state.pps_reacquisition_rejections.saturating_add(1);
             #[cfg(feature = "defmt")]
-            defmt::info!(
+            defmt::debug!(
                 "PPS reacquisition gate: interval_ticks={} clean={} progress={}/{} rejected={}",
                 interval_ticks,
                 clean,

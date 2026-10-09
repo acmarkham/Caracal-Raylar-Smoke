@@ -1,10 +1,31 @@
 use crate::{common, LOCATION};
 use defmt::unwrap;
 use embassy_time::{Duration, Instant};
+use raylar_drivers::gps::OperatingState;
 use raylar_logging_service::{info as log_info, LoggerHandle};
 use raylar_time_service::UtcStatus;
 
 type Log = LoggerHandle<'static, 384, 32>;
+
+#[embassy_executor::task]
+pub async fn gps_task(log: Log) -> ! {
+    let mut changes = unwrap!(common::GPS_RESOURCES.stats_receiver());
+    let mut last_state: Option<OperatingState> = None;
+    let mut last_rail_powered = false;
+    loop {
+        let gps = changes.changed().await;
+        if last_state != Some(gps.operating_state) || last_rail_powered != gps.powered {
+            let _ = log_info!(log, "gps state={:?} rail_powered={} tracking={} calibration_complete={} fixes={} pps={} search_attempts={} reacq_attempts={} reacq_successes={} phase_shutdowns={} phase_timeouts={} ticks={}",
+                gps.operating_state, gps.powered, gps.operating_state.is_tracking(),
+                gps.initial_calibration_complete, gps.num_fixes, gps.num_pps_events,
+                gps.num_search_attempts, gps.num_reacquisition_attempts,
+                gps.num_reacquisition_successes, gps.num_phase_qualified_shutdowns,
+                gps.num_phase_convergence_timeouts, Instant::now().as_ticks());
+            last_state = Some(gps.operating_state);
+            last_rail_powered = gps.powered;
+        }
+    }
+}
 
 #[embassy_executor::task]
 pub async fn time_task(log: Log) -> ! {
