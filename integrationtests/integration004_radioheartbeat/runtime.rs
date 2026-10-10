@@ -703,7 +703,7 @@ impl Coordinator {
     async fn handle_event(&mut self, event: RadioEvent) {
         match event {
             RadioEvent::Admitted { .. } => {}
-            RadioEvent::Completed { id } => {
+            RadioEvent::Completed { id, .. } => {
                 if let Some(tx) = self.take_tx(id) {
                     diagnostics::emit(DiagnosticKind::TxCompleted {
                         id,

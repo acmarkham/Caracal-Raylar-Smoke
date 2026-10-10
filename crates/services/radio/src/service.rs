@@ -8,7 +8,9 @@ use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{digital::Wait, spi::SpiDevice};
 use heapless::Vec;
-use raylar_drivers::radio::{Error as DriverError, GfskPacketStatus, RadioDriver, RxMetrics};
+use raylar_drivers::radio::{
+    Error as DriverError, GfskPacketStatus, RadioDriver, RxMetrics, TxReport,
+};
 use raylar_time_service::{TimeState, UtcStatus, UtcTimestamp};
 
 use crate::link::ChannelProfile;
@@ -201,6 +203,7 @@ pub enum RadioEvent {
     },
     Completed {
         id: JobId,
+        timing: TxReport,
     },
     Received {
         id: JobId,
@@ -421,7 +424,7 @@ pub trait RadioDevice {
         start: Instant,
         profile: &ChannelProfile,
         payload: &[u8],
-    ) -> Result<(), RadioDeviceError>;
+    ) -> Result<TxReport, RadioDeviceError>;
     async fn receive(
         &mut self,
         start: Instant,
@@ -457,10 +460,9 @@ where
         start: Instant,
         profile: &ChannelProfile,
         payload: &[u8],
-    ) -> Result<(), RadioDeviceError> {
+    ) -> Result<TxReport, RadioDeviceError> {
         self.transmit_at(start, payload, profile.driver_tx())
             .await
-            .map(|_| ())
             .map_err(map_driver_error)
     }
 
@@ -764,7 +766,7 @@ where
                     .transmit(job.earliest, &job.profile, job.payload.as_slice())
                     .await
                 {
-                    Ok(()) => {
+                    Ok(timing) => {
                         RadioServiceStats::increment(&mut self.state.stats.frames_tx);
                         match job.payload.frame_type() {
                             Ok(FrameType::Heartbeat) => {
@@ -775,7 +777,7 @@ where
                             }
                             _ => {}
                         }
-                        self.emit(RadioEvent::Completed { id });
+                        self.emit(RadioEvent::Completed { id, timing });
                     }
                     Err(error) => {
                         self.handle_driver_error(id, error).await;

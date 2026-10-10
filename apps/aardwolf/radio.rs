@@ -448,7 +448,7 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                 }
             }
         }
-        RadioEvent::Completed { id } => {
+        RadioEvent::Completed { id, timing } => {
             if let Some(m) = minute.as_mut() {
                 if m.tx_id == Some(id) {
                     if RECOVERY_PENDING.load(Ordering::Relaxed) {
@@ -456,11 +456,16 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                     }
                     let _ = log_info!(
                         log,
-                        "tx complete id={} epoch={} profile={} seq={} event_ticks={} airtime_us={}",
+                        "tx complete id={} epoch={} profile={} seq={} requested_start_ticks={} timer_wake_ticks={} set_tx_start_ticks={} set_tx_complete_ticks={} tx_irq_observed_ticks={} event_ticks={} airtime_us={}",
                         id.0,
                         m.epoch,
                         m.index + 1,
                         m.sequence,
+                        timing.requested_start.as_ticks(),
+                        timing.timer_woke_at.as_ticks(),
+                        timing.command_started_at.as_ticks(),
+                        timing.command_completed_at.as_ticks(),
+                        timing.tx_done_at.as_ticks(),
                         Instant::now().as_ticks(),
                         config::airtime_us(m.index)
                     );

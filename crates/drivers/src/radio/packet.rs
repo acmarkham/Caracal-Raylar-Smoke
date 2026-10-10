@@ -44,10 +44,12 @@ pub struct GfskPacketStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TxReport {
     pub requested_start: Instant,
+    /// Time when the scheduled timer wait returned to the driver task.
+    pub timer_woke_at: Instant,
     /// Time immediately before issuing SetTx.
     pub command_started_at: Instant,
-    /// Time immediately after SetTx completed.
+    /// Time after SetTx returned and the radio BUSY pin went low.
     pub command_completed_at: Instant,
-    /// Local monotonic time captured immediately after the TX-done IRQ edge.
+    /// Local monotonic time observed when the TX-done IRQ wakes the task.
     pub tx_done_at: Instant,
 }

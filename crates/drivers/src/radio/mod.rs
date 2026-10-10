@@ -358,6 +358,7 @@ where
 
         self.operation_in_flight = true;
         Timer::at(start).await;
+        let timer_woke_at = Instant::now();
         self.set_state(RadioState::Tx);
         let command_started_at = Instant::now();
         let start_result = with_timeout(
@@ -410,6 +411,7 @@ where
         RadioStats::increment(&mut self.stats.tx_packets);
         Ok(TxReport {
             requested_start: start,
+            timer_woke_at,
             command_started_at,
             command_completed_at,
             tx_done_at: irq_at,
