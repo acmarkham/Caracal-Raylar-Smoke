@@ -196,6 +196,14 @@ The GPS Manager task owns all state transitions.
 
 When module standby is available, `Standby` suspends fixes and PPS while retaining the physical GPS power rail for a hot restart. The published `powered` field describes that rail and remains true in standby. Clients use the operating state to distinguish active searching/tracking from standby or stop; a power-rail flag alone must not drive an activity LED or imply that PPS should be present.
 
+For phase-qualified duty cycling, the manager may also require an uninterrupted
+minimum tracking interval after the first accepted PPS with the reacquisition
+gate open. Rejected or gated observations and gaps in the observation sequence
+restart that interval. Phase qualification can end the tracking period only
+after the configured interval and while clean PPS observations remain recent.
+The maximum powered-on duration still ends the period if these conditions are
+not met.
+
 A search or reacquisition timeout is recoverable. The manager increments and
 publishes the search-failure/timeout counters, enters `Standby` for the normal
 `gps_off_time`, and then starts another acquisition using the same fixed

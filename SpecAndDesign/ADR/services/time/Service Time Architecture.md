@@ -280,7 +280,7 @@ The initial ten-minute result marks calibration readiness; it is not a permanent
 frequency lock. After readiness, the estimator also tracks the oscillator rate
 from accepted, clean GPS PPS anchors within each uninterrupted tracking period.
 It samples PPS-correlated UTC and monotonic timestamps about every 30 seconds,
-requires five samples spanning at least 120 seconds, and takes the median of
+requires four samples spanning at least 90 seconds, and takes the median of
 pairwise frequency slopes with at least 60 seconds of separation. A PPS gap,
 reacquisition gate, or change of source clears the tracking window. In
 particular, the phase difference across a GPS standby interval must not be used

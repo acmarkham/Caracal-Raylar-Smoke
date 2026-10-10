@@ -705,6 +705,7 @@ async fn main(spawner: Spawner) -> ! {
             GPS_POST_CALIBRATION_OFF_TIME,
             PhaseQualifiedShutdownConfig {
                 maximum_on_time: GPS_PHASE_MAXIMUM_ON_TIME,
+                minimum_clean_pps_time: Duration::from_secs(0),
                 residual_threshold_us: GPS_PHASE_RESIDUAL_THRESHOLD_US,
                 uncertainty_threshold_us: GPS_PHASE_UNCERTAINTY_THRESHOLD_US,
                 consecutive_anchors: GPS_PHASE_CONSECUTIVE_ANCHORS,

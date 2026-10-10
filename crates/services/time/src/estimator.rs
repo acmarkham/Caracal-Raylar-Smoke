@@ -5,9 +5,9 @@ use crate::{Anchor, TimeConfig, TimeSource, TimeState, UtcStatus, UtcTimestamp};
 const FREQUENCY_SAMPLE_CAPACITY: usize = 11;
 const FREQUENCY_SLOPE_CAPACITY: usize =
     FREQUENCY_SAMPLE_CAPACITY * (FREQUENCY_SAMPLE_CAPACITY - 1) / 2;
-const TRACKING_SAMPLE_CAPACITY: usize = 5;
+const TRACKING_SAMPLE_CAPACITY: usize = 4;
 const TRACKING_SAMPLE_SPACING: Duration = Duration::from_secs(30);
-const TRACKING_WINDOW: Duration = Duration::from_secs(120);
+const TRACKING_WINDOW: Duration = Duration::from_secs(90);
 const TRACKING_MAX_SLOPE_SPREAD_PPB: i64 = 5_000;
 const PARTS_PER_MILLION: u128 = 1_000_000;
 

@@ -636,10 +636,10 @@ async fn wait_for_frequency_calibration_lock<const COMMAND_DEPTH: usize>(
     }
 }
 
-/// Keep a reacquired receiver powered for at least `gps_on_time`, then enter
-/// standby only after consecutive admitted PPS anchors show that UTC phase and
-/// uncertainty have converged. Both deadlines are measured from power-on so
-/// the maximum remains a genuine energy-use bound even after a slow fix.
+/// Keep a reacquired receiver active for at least `gps_on_time` and the
+/// configured clean PPS interval, then enter standby only after consecutive
+/// admitted anchors show that UTC phase and uncertainty have converged. The
+/// power-on maximum remains an energy-use bound even after a slow fix.
 async fn wait_for_phase_qualified_shutdown<
     const WATCHERS: usize,
     const COMMAND_DEPTH: usize,
@@ -661,6 +661,8 @@ async fn wait_for_phase_qualified_shutdown<
     let required_anchors = phase_config.consecutive_anchors.max(1);
     let mut streak = 0u8;
     let mut previous_observation_sequence = None;
+    let mut first_clean_pps_at: Option<Instant> = None;
+    let mut last_clean_pps_at: Option<Instant> = None;
 
     modify_stats(stats_pub, |stats| {
         stats.phase_qualification_active = true;
@@ -670,8 +672,9 @@ async fn wait_for_phase_qualified_shutdown<
     });
     #[cfg(feature = "defmt")]
     defmt::info!(
-        "GPS phase qualification started: minimum_s={} maximum_s={} residual_us={} uncertainty_us={} consecutive={}",
+        "GPS phase qualification started: minimum_s={} clean_pps_s={} maximum_s={} residual_us={} uncertainty_us={} consecutive={}",
         config.gps_on_time.as_secs(),
+        phase_config.minimum_clean_pps_time.as_secs(),
         maximum_on_time.as_secs(),
         phase_config.residual_threshold_us,
         phase_config.uncertainty_threshold_us,
@@ -680,7 +683,12 @@ async fn wait_for_phase_qualified_shutdown<
 
     loop {
         let now = Instant::now();
-        if now >= minimum_deadline && streak >= required_anchors {
+        let clean_pps_ready = phase_config.minimum_clean_pps_time.as_ticks() == 0
+            || (first_clean_pps_at.is_some_and(|first| {
+                now.saturating_duration_since(first) >= phase_config.minimum_clean_pps_time
+            }) && last_clean_pps_at
+                .is_some_and(|last| now.saturating_duration_since(last) <= Duration::from_secs(2)));
+        if now >= minimum_deadline && streak >= required_anchors && clean_pps_ready {
             modify_stats(stats_pub, |stats| {
                 stats.phase_qualification_active = false;
                 stats.num_phase_qualified_shutdowns =
@@ -702,9 +710,12 @@ async fn wait_for_phase_qualified_shutdown<
             });
             #[cfg(feature = "defmt")]
             defmt::warn!(
-                "GPS phase convergence timed out after {} seconds: streak={} residual_us={:?}",
+                "GPS tracking window timed out after {} seconds: streak={} clean_pps_s={} residual_us={:?}",
                 maximum_on_time.as_secs(),
                 streak,
+                first_clean_pps_at
+                    .map(|first| now.saturating_duration_since(first).as_secs())
+                    .unwrap_or(0),
                 stats_pub.try_get().and_then(|stats| stats.last_phase_residual_us)
             );
             return false;
@@ -729,10 +740,24 @@ async fn wait_for_phase_qualified_shutdown<
             if previous_observation_sequence == Some(observation_sequence) {
                 continue;
             }
+            let observed_at = Instant::now();
             let sequence_is_consecutive = previous_observation_sequence
                 .map(|previous| previous.wrapping_add(1) == observation_sequence)
                 .unwrap_or(true);
             previous_observation_sequence = Some(observation_sequence);
+            if accepted && !pps_gate_active {
+                if !sequence_is_consecutive
+                    || last_clean_pps_at.map_or(true, |last| {
+                        observed_at.saturating_duration_since(last) > Duration::from_secs(2)
+                    })
+                {
+                    first_clean_pps_at = Some(observed_at);
+                }
+                last_clean_pps_at = Some(observed_at);
+            } else {
+                first_clean_pps_at = None;
+                last_clean_pps_at = None;
+            }
             let qualifies = phase_quality_qualifies(
                 accepted,
                 residual_us,

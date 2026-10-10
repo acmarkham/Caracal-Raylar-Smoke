@@ -84,6 +84,9 @@ pub struct PhaseQualifiedShutdownConfig {
     /// Safety bound on the complete powered-on interval: return to standby
     /// even if convergence is not achieved.
     pub maximum_on_time: Duration,
+    /// Minimum uninterrupted tracking time after the first accepted PPS with
+    /// the reacquisition gate open. Zero preserves phase-only shutdown.
+    pub minimum_clean_pps_time: Duration,
     /// Maximum absolute Time Service phase residual accepted as "small".
     pub residual_threshold_us: u64,
     /// Maximum UTC uncertainty accepted when evaluating the residual.
@@ -96,6 +99,7 @@ impl Default for PhaseQualifiedShutdownConfig {
     fn default() -> Self {
         Self {
             maximum_on_time: Duration::from_secs(180),
+            minimum_clean_pps_time: Duration::from_secs(0),
             residual_threshold_us: 250,
             uncertainty_threshold_us: 500,
             consecutive_anchors: 5,

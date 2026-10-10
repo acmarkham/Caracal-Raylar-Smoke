@@ -149,6 +149,7 @@ async fn main(spawner: Spawner) -> ! {
         GPS_STANDBY_TIME,
         PhaseQualifiedShutdownConfig {
             maximum_on_time: Duration::from_secs(180),
+            minimum_clean_pps_time: Duration::from_secs(120),
             residual_threshold_us: 250,
             uncertainty_threshold_us: 500,
             consecutive_anchors: 5,
