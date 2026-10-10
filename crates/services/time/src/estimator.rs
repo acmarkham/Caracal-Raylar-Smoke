@@ -5,6 +5,10 @@ use crate::{Anchor, TimeConfig, TimeSource, TimeState, UtcStatus, UtcTimestamp};
 const FREQUENCY_SAMPLE_CAPACITY: usize = 11;
 const FREQUENCY_SLOPE_CAPACITY: usize =
     FREQUENCY_SAMPLE_CAPACITY * (FREQUENCY_SAMPLE_CAPACITY - 1) / 2;
+const TRACKING_SAMPLE_CAPACITY: usize = 5;
+const TRACKING_SAMPLE_SPACING: Duration = Duration::from_secs(30);
+const TRACKING_WINDOW: Duration = Duration::from_secs(120);
+const TRACKING_MAX_SLOPE_SPREAD_PPB: i64 = 5_000;
 const PARTS_PER_MILLION: u128 = 1_000_000;
 
 #[derive(Clone, Copy)]
@@ -25,6 +29,9 @@ pub struct TimeEstimator {
     state: TimeState,
     frequency_samples: [FrequencySample; FREQUENCY_SAMPLE_CAPACITY],
     frequency_sample_count: usize,
+    tracking_samples: [FrequencySample; TRACKING_SAMPLE_CAPACITY],
+    tracking_sample_count: usize,
+    last_frequency_update: Option<Instant>,
     last_observed_pps_system_time: Option<Instant>,
     last_observed_pps_sequence: Option<u64>,
 }
@@ -36,6 +43,9 @@ impl TimeEstimator {
             state: TimeState::invalid(),
             frequency_samples: [EMPTY_FREQUENCY_SAMPLE; FREQUENCY_SAMPLE_CAPACITY],
             frequency_sample_count: 0,
+            tracking_samples: [EMPTY_FREQUENCY_SAMPLE; TRACKING_SAMPLE_CAPACITY],
+            tracking_sample_count: 0,
+            last_frequency_update: None,
             last_observed_pps_system_time: None,
             last_observed_pps_sequence: None,
         }
@@ -145,8 +155,12 @@ impl TimeEstimator {
             return false;
         }
 
-        self.add_frequency_sample(anchor);
-        self.update_frequency_calibration();
+        if self.state.frequency_calibration_locked {
+            self.track_frequency(anchor);
+        } else {
+            self.add_frequency_sample(anchor);
+            self.update_frequency_calibration();
+        }
 
         let phase_slew_ppb = phase_slew_ppb(residual_us, &self.config);
         self.state.phase_slew_ppb = phase_slew_ppb;
@@ -279,9 +293,6 @@ impl TimeEstimator {
     }
 
     fn add_frequency_sample(&mut self, anchor: Anchor) {
-        if self.state.frequency_calibration_locked {
-            return;
-        }
         if self.frequency_sample_count != 0 {
             let last = self.frequency_samples[self.frequency_sample_count - 1];
             if last.source != anchor.source {
@@ -351,6 +362,9 @@ impl TimeEstimator {
         self.state.calibrated_frequency_error_ppb = calibrated_ppb;
         if self.frequency_sample_count == FREQUENCY_SAMPLE_CAPACITY {
             self.state.frequency_calibration_locked = true;
+            self.last_frequency_update = Some(Instant::from_ticks(
+                self.frequency_samples[self.frequency_sample_count - 1].system_ticks,
+            ));
             #[cfg(feature = "defmt")]
             defmt::info!("oscillator calibration locked at {}ppb", calibrated_ppb);
         }
@@ -364,6 +378,107 @@ impl TimeEstimator {
                 .saturating_sub(self.frequency_samples[0].system_ticks))
                 / TICK_HZ,
             calibrated_ppb
+        );
+    }
+
+    /// Use only accepted PPS anchors within one uninterrupted tracking period.
+    /// A PPS gap clears the window in `pps_reacquisition_ready`, so a receiver
+    /// phase change on wake cannot look like oscillator frequency error.
+    fn track_frequency(&mut self, anchor: Anchor) {
+        if anchor.source != TimeSource::GpsPps {
+            self.tracking_sample_count = 0;
+            return;
+        }
+        if self.tracking_sample_count != 0 {
+            let last = self.tracking_samples[self.tracking_sample_count - 1];
+            if anchor
+                .system_time
+                .as_ticks()
+                .saturating_sub(last.system_ticks)
+                < TRACKING_SAMPLE_SPACING.as_ticks()
+            {
+                return;
+            }
+        }
+        if self.tracking_sample_count == TRACKING_SAMPLE_CAPACITY {
+            self.tracking_samples.copy_within(1.., 0);
+            self.tracking_sample_count -= 1;
+        }
+        self.tracking_samples[self.tracking_sample_count] = FrequencySample {
+            system_ticks: anchor.system_time.as_ticks(),
+            utc_us: anchor.utc.as_micros(),
+            source: anchor.source,
+        };
+        self.tracking_sample_count += 1;
+        if self.tracking_sample_count < TRACKING_SAMPLE_CAPACITY
+            || anchor
+                .system_time
+                .as_ticks()
+                .saturating_sub(self.tracking_samples[0].system_ticks)
+                < TRACKING_WINDOW.as_ticks()
+            || self.last_frequency_update.is_some_and(|last| {
+                anchor.system_time.saturating_duration_since(last)
+                    < self.config.frequency_tracking_update_interval
+            })
+        {
+            return;
+        }
+
+        let mut slopes = [0i64; TRACKING_SAMPLE_CAPACITY * (TRACKING_SAMPLE_CAPACITY - 1) / 2];
+        let mut count = 0usize;
+        for first_index in 0..self.tracking_sample_count - 1 {
+            let first = self.tracking_samples[first_index];
+            for second in &self.tracking_samples[first_index + 1..self.tracking_sample_count] {
+                let system_ticks = second.system_ticks.saturating_sub(first.system_ticks);
+                if system_ticks < self.config.minimum_frequency_baseline.as_ticks() {
+                    continue;
+                }
+                let nominal_us = system_ticks as i128 * 1_000_000 / TICK_HZ as i128;
+                let utc_us = second.utc_us as i128 - first.utc_us as i128;
+                if nominal_us <= 0 || utc_us <= 0 {
+                    continue;
+                }
+                let observed_ppb = (utc_us - nominal_us) * 1_000_000_000 / nominal_us;
+                if observed_ppb.abs() <= self.config.max_frequency_error_ppb as i128 {
+                    slopes[count] = observed_ppb as i64;
+                    count += 1;
+                }
+            }
+        }
+        if count < 3 {
+            return;
+        }
+        slopes[..count].sort_unstable();
+        if slopes[count - 1].saturating_sub(slopes[0]) > TRACKING_MAX_SLOPE_SPREAD_PPB {
+            return;
+        }
+        let observed_ppb = if count % 2 == 0 {
+            ((slopes[count / 2 - 1] as i128 + slopes[count / 2] as i128) / 2) as i64
+        } else {
+            slopes[count / 2]
+        };
+        let previous_ppb = self.state.calibrated_frequency_error_ppb;
+        let gain_divisor = self.config.frequency_tracking_gain_divisor.max(1) as i64;
+        let step = (observed_ppb - previous_ppb) / gain_divisor;
+        let limit = self.config.frequency_tracking_max_step_ppb.max(0);
+        self.state.calibrated_frequency_error_ppb = previous_ppb
+            .saturating_add(step.clamp(-limit, limit))
+            .clamp(
+                -self.config.max_frequency_error_ppb,
+                self.config.max_frequency_error_ppb,
+            );
+        self.state.frequency_tracking_updates =
+            self.state.frequency_tracking_updates.saturating_add(1);
+        self.state.last_frequency_observation_ppb = Some(observed_ppb);
+        self.last_frequency_update = Some(anchor.system_time);
+        #[cfg(feature = "defmt")]
+        defmt::info!(
+            "PPS frequency tracking: observed_ppb={} previous_ppb={} calibrated_ppb={} span_s={} slopes={}",
+            observed_ppb,
+            previous_ppb,
+            self.state.calibrated_frequency_error_ppb,
+            (anchor.system_time.as_ticks() - self.tracking_samples[0].system_ticks) / TICK_HZ,
+            count
         );
     }
 
@@ -443,6 +558,7 @@ impl TimeEstimator {
         let mut settling_edge = false;
 
         if !clean || interval >= self.config.pps_loss_timeout || sequence_gap {
+            self.tracking_sample_count = 0;
             self.state.pps_reacquisition_active = true;
             self.state.pps_reacquisition_discarded_edges =
                 u8::from(self.config.pps_reacquisition_discard_edges != 0);
@@ -909,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn locked_frequency_calibration_ignores_later_samples() {
+    fn one_later_sample_does_not_change_locked_frequency() {
         let mut config = TimeConfig::default();
         config.minimum_frequency_baseline = Duration::from_secs(1);
         config.pps_loss_timeout = Duration::from_secs(1_000);

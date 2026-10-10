@@ -32,6 +32,8 @@ pub async fn time_task(log: Log) -> ! {
     let mut changes = unwrap!(common::TIME_RESOURCES.state_receiver());
     let mut last_status = UtcStatus::Invalid;
     let mut last_lock = false;
+    let mut last_calibrated_ppb = 0i64;
+    let mut last_tracking_updates = 0u32;
     let mut last_warning = false;
     let mut last_rejected = 0u32;
     let mut last_log = Instant::from_ticks(0);
@@ -40,19 +42,24 @@ pub async fn time_task(log: Log) -> ! {
         let now = Instant::now();
         if state.utc_status != last_status
             || state.frequency_calibration_locked != last_lock
+            || state.calibrated_frequency_error_ppb != last_calibrated_ppb
+            || state.frequency_tracking_updates != last_tracking_updates
             || state.holdover_warning != last_warning
             || state.rejected_anchors != last_rejected
             || now.saturating_duration_since(last_log) >= Duration::from_secs(60)
         {
-            let _ = log_info!(log, "time status={:?} source={:?} uncertainty_us={} calibrated_ppb={} phase_slew_ppb={} locked={} samples={} holdover_s={} warning={} accepted={} rejected={} last_residual_us={:?} last_pps_ticks={:?}",
+            let _ = log_info!(log, "time status={:?} source={:?} uncertainty_us={} calibrated_ppb={} observed_ppb={:?} tracking_updates={} phase_slew_ppb={} locked={} samples={} holdover_s={} warning={} accepted={} rejected={} last_residual_us={:?} last_pps_ticks={:?}",
                 state.utc_status, state.active_time_source, state.uncertainty_us,
-                state.calibrated_frequency_error_ppb, state.phase_slew_ppb,
+                state.calibrated_frequency_error_ppb, state.last_frequency_observation_ppb,
+                state.frequency_tracking_updates, state.phase_slew_ppb,
                 state.frequency_calibration_locked, state.frequency_calibration_samples,
                 state.holdover_duration.as_secs(), state.holdover_warning,
                 state.accepted_anchors, state.rejected_anchors, state.last_anchor_residual_us,
                 state.last_anchor_system_time.map(|v| v.as_ticks()));
             last_status = state.utc_status;
             last_lock = state.frequency_calibration_locked;
+            last_calibrated_ppb = state.calibrated_frequency_error_ppb;
+            last_tracking_updates = state.frequency_tracking_updates;
             last_warning = state.holdover_warning;
             last_rejected = state.rejected_anchors;
             last_log = now;

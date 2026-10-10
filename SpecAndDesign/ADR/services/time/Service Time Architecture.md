@@ -276,6 +276,27 @@ uses a fixed-capacity, outlier-resistant regression over minute-spaced PPS
 samples spanning approximately ten minutes. Hardware capture timestamps should
 be preferred so interrupt latency is not interpreted as oscillator drift.
 
+The initial ten-minute result marks calibration readiness; it is not a permanent
+frequency lock. After readiness, the estimator also tracks the oscillator rate
+from accepted, clean GPS PPS anchors within each uninterrupted tracking period.
+It samples PPS-correlated UTC and monotonic timestamps about every 30 seconds,
+requires five samples spanning at least 120 seconds, and takes the median of
+pairwise frequency slopes with at least 60 seconds of separation. A PPS gap,
+reacquisition gate, or change of source clears the tracking window. In
+particular, the phase difference across a GPS standby interval must not be used
+as a frequency sample because the receiver's PPS phase may settle after wake.
+
+After the initial calibration, frequency tracking may update at most once per
+30 minutes. Reject windows whose accepted slopes disagree by more than 5 ppm.
+Apply one quarter of the observed difference, limited to 1 ppm per update and
+the configured absolute frequency bounds. This slow loop follows temperature
+and ageing changes over days while limiting the effect of one bad PPS window.
+The published `frequency_calibration_locked` flag continues to mean the initial
+window completed; the published `calibrated_frequency_error_ppb` remains live
+and may change as clean PPS windows arrive. Publish the accepted frequency
+observation and update count alongside the calibrated rate, and log updates for
+field diagnosis.
+
 The calibrated oscillator term and any temporary phase-slew term should remain
 separate in published diagnostics. Updating either term must rebase the mapping
 at its previous prediction so UTC is not stepped.

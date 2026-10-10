@@ -108,6 +108,12 @@ pub struct TimeConfig {
     pub max_frequency_error_ppb: i64,
     pub max_anchor_residual_us: u64,
     pub minimum_frequency_baseline: Duration,
+    /// Minimum time between slow frequency updates after initial calibration.
+    pub frequency_tracking_update_interval: Duration,
+    /// Apply one part in this many of each clean PPS frequency observation.
+    pub frequency_tracking_gain_divisor: u32,
+    /// Maximum absolute change to the calibrated rate in one update.
+    pub frequency_tracking_max_step_ppb: i64,
     /// Time over which a PPS phase residual is removed without stepping UTC.
     pub phase_slew_duration: Duration,
     pub max_phase_slew_ppb: i64,
@@ -140,6 +146,9 @@ impl Default for TimeConfig {
             max_frequency_error_ppb: 100_000,
             max_anchor_residual_us: 100_000,
             minimum_frequency_baseline: Duration::from_secs(60),
+            frequency_tracking_update_interval: Duration::from_secs(30 * 60),
+            frequency_tracking_gain_divisor: 4,
+            frequency_tracking_max_step_ppb: 1_000,
             phase_slew_duration: Duration::from_secs(60),
             max_phase_slew_ppb: 250_000,
             pps_loss_timeout: Duration::from_millis(1_500),
@@ -174,9 +183,13 @@ pub struct TimeState {
     /// Long-baseline oscillator calibration, excluding phase slew.
     pub calibrated_frequency_error_ppb: i64,
     pub frequency_calibration_samples: u8,
-    /// True once the initial ten-minute (eleven sample) calibration window is
-    /// complete. Reacquisition data cannot then move the oscillator estimate.
+    /// True once the initial ten-minute calibration window is complete.
+    /// Clean PPS windows can subsequently update the oscillator estimate slowly.
     pub frequency_calibration_locked: bool,
+    /// Number of clean long-term PPS windows applied to the oscillator model.
+    pub frequency_tracking_updates: u32,
+    /// Most recent accepted long-term PPS frequency observation.
+    pub last_frequency_observation_ppb: Option<i64>,
     pub phase_slew_ppb: i64,
     pub uncertainty_us: u64,
     pub last_anchor_system_time: Option<Instant>,
@@ -210,6 +223,8 @@ impl TimeState {
             calibrated_frequency_error_ppb: 0,
             frequency_calibration_samples: 0,
             frequency_calibration_locked: false,
+            frequency_tracking_updates: 0,
+            last_frequency_observation_ppb: None,
             phase_slew_ppb: 0,
             uncertainty_us: u64::MAX,
             last_anchor_system_time: None,
