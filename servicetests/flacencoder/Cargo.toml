@@ -11,6 +11,13 @@ path = "main.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "flac-cpu-benchmark"
+path = "cpu_benchmark.rs"
+test = false
+bench = false
+required-features = ["cpu-benchmark"]
+
 [dependencies]
 raylar-flac-encoder-service = { path = "../../crates/services/flacencoder", features = ["defmt"] }
 raylar-board-v1p0 = { path = "../../crates/board/raylar_v1p0" }
@@ -28,8 +35,11 @@ defmt-rtt.workspace = true
 panic-probe.workspace = true
 cortex-m.workspace = true
 cortex-m-rt.workspace = true
+cortex-m-semihosting = { version = "0.5", optional = true }
 
 [features]
+cpu-benchmark = ["raylar-flac-encoder-service/benchmark", "dep:cortex-m-semihosting"]
+cpu-benchmark-fused-mean = ["cpu-benchmark"]
 trustzone-secure = ["embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure"]
 
 [package.metadata.embassy]

@@ -4,8 +4,10 @@
 mod bitstream;
 mod metadata;
 mod predict;
-use bitstream::{crc16, crc8, Bits};
+use bitstream::{Bits, crc8, crc16};
 pub use predict::Analysis;
+#[cfg(feature = "benchmark")]
+pub use predict::benchmark::{Options as BenchmarkOptions, RiceMethod, Search};
 use predict::{fold, residual};
 
 pub const DEFAULT_BLOCK_SAMPLES: usize = 2048;
@@ -124,6 +126,17 @@ impl Encoder {
         let mut analysis = self.analyze(samples)?;
         while !analysis.advance(64) {}
         self.encode_analyzed(analysis, output)
+    }
+    /// Experimental selection controls, compiled only into benchmark builds.
+    #[cfg(feature = "benchmark")]
+    pub fn analyze_variant<'a>(
+        &self,
+        samples: &'a [i32],
+        options: BenchmarkOptions,
+    ) -> Result<Analysis<'a>, Error> {
+        let mut analysis = self.analyze(samples)?;
+        analysis.select_variant(options)?;
+        Ok(analysis)
     }
     pub fn encode_analyzed(
         &self,

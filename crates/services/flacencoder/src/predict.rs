@@ -192,3 +192,162 @@ mod tests {
         }
     }
 }
+
+/// Experimental choices deliberately excluded from production builds.
+#[cfg(feature = "benchmark")]
+pub mod benchmark {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum RiceMethod {
+        Auto,
+        Four,
+        Five,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Search {
+        BitCounts,
+        Exhaustive,
+        MeanNeighbors,
+        MeanNeighborsFused,
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct Options {
+        /// None searches all orders; Some forces one order, with bounded fallback.
+        pub order: Option<u8>,
+        pub rice: RiceMethod,
+        pub search: Search,
+    }
+}
+
+#[cfg(feature = "benchmark")]
+impl Analysis<'_> {
+    pub(crate) fn select_variant(&mut self, options: benchmark::Options) -> Result<(), Error> {
+        use benchmark::{RiceMethod, Search};
+        if options.order.is_some_and(|order| order > 4) {
+            return Err(Error::InvalidConfig);
+        }
+        if self.best == Subframe::Constant {
+            return Ok(());
+        }
+        for order in 0..=4u8 {
+            if options.order.is_some_and(|forced| forced != order)
+                || order as usize >= self.samples.len()
+            {
+                continue;
+            }
+            self.rice.clear();
+            let mut quotients = [0u64; 31];
+            let mut valid = true;
+            for index in order as usize..self.samples.len() {
+                let r = residual(self.samples, index, order);
+                if !(-2147483647..=2147483647).contains(&r) {
+                    valid = false;
+                    break;
+                }
+                let u = fold(r);
+                match options.search {
+                    Search::BitCounts => self.rice.add(u as u32),
+                    Search::Exhaustive => {
+                        let parameters = if options.rice == RiceMethod::Four {
+                            15
+                        } else {
+                            31
+                        };
+                        for (k, quotient) in quotients[..parameters].iter_mut().enumerate() {
+                            *quotient += u >> k;
+                        }
+                    }
+                    Search::MeanNeighbors | Search::MeanNeighborsFused => self.rice.sum += u,
+                }
+            }
+            if !valid {
+                continue;
+            }
+            let count = (self.samples.len() - order as usize) as u64;
+            let mean = self.rice.sum / count;
+            let estimate = if mean == 0 { 0 } else { mean.ilog2() as usize };
+            if options.search == Search::MeanNeighborsFused {
+                // Collect the union of both methods' neighboring candidates,
+                // then evaluate all of them in one residual pass. The first
+                // pass already proved every folded residual fits in u32.
+                let mut candidates = 0u32;
+                for width in [4u8, 5] {
+                    if (options.rice == RiceMethod::Four && width != 4)
+                        || (options.rice == RiceMethod::Five && width != 5)
+                    {
+                        continue;
+                    }
+                    let maximum = if width == 4 { 14 } else { 30 };
+                    let center = estimate.min(maximum);
+                    for k in center.saturating_sub(1)..=(center + 1).min(maximum) {
+                        candidates |= 1 << k;
+                    }
+                }
+                for index in order as usize..self.samples.len() {
+                    let u = fold(residual(self.samples, index, order)) as u32;
+                    let mut remaining = candidates;
+                    while remaining != 0 {
+                        let k = remaining.trailing_zeros() as usize;
+                        quotients[k] += u64::from(u >> k);
+                        remaining &= remaining - 1;
+                    }
+                }
+            }
+            for width in [4u8, 5] {
+                if (options.rice == RiceMethod::Four && width != 4)
+                    || (options.rice == RiceMethod::Five && width != 5)
+                {
+                    continue;
+                }
+                let maximum = if width == 4 { 14 } else { 30 };
+                let center = estimate.min(maximum);
+                let mut q = self.rice.sum;
+                for k in 0..=maximum {
+                    let quotient = match options.search {
+                        Search::BitCounts => {
+                            let current = q;
+                            q = (q - u64::from(self.rice.ones[k])) >> 1;
+                            current
+                        }
+                        Search::Exhaustive => quotients[k],
+                        Search::MeanNeighbors | Search::MeanNeighborsFused => {
+                            if k < center.saturating_sub(1) || k > (center + 1).min(maximum) {
+                                continue;
+                            }
+                            if options.search == Search::MeanNeighborsFused {
+                                quotients[k]
+                            } else {
+                                self.samples[order as usize..]
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, _)| {
+                                        fold(residual(self.samples, i + order as usize, order)) >> k
+                                    })
+                                    .sum()
+                            }
+                        }
+                    };
+                    let cost = 8
+                        + u64::from(order) * u64::from(self.depth)
+                        + 2
+                        + 4
+                        + u64::from(width)
+                        + quotient
+                        + count * (1 + k as u64);
+                    let bytes = cost.div_ceil(8);
+                    if bytes < self.best_bytes {
+                        self.best_bytes = bytes;
+                        self.best = Subframe::Fixed {
+                            order,
+                            rice_bits: width,
+                            parameter: k as u8,
+                        };
+                    }
+                }
+            }
+        }
+        self.order = 5;
+        Ok(())
+    }
+}
