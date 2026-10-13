@@ -12,6 +12,21 @@ ADR; Integration 002/004 are evidence for this application's design.
 ```yaml
 policy_overrides:
   - {policy: audio, key: recording_seconds, value: 60, reason: Bound field recordings to minute files.}
+  - policy: audio
+    key: container
+    value: FLAC
+    applies_when: FLAC recording mode selected before opening a file.
+    reason: Add lossless compressed recording through the FLAC Encoder Service.
+  - policy: audio
+    key: finalization
+    value: Encode the final partial FLAC frame, finalize STREAMINFO statistics and finish the Storage stream before opening the next segment.
+    applies_when: FLAC recording mode selected before opening a file.
+    reason: FLAC has frame and metadata finalization rather than WAV header finalization.
+  - policy: storage
+    key: naming.audio
+    value: "aud_{start_utc_s}.flac"
+    applies_when: FLAC recording mode selected before opening a file.
+    reason: Storage materializes the recorder's selected format with the correct suffix.
   - {policy: gps, key: duty_cycle.standby_s, value: 1800, reason: Low-power half-hour holdover between acquisitions.}
   - {policy: gps, key: phase_qualified_shutdown.enabled, value: true, reason: Require clean timing before standby.}
   - {policy: gps, key: phase_qualified_shutdown.minimum_clean_pps_s, value: 120, reason: Allow the clean frequency-observation window to complete.}
@@ -49,7 +64,7 @@ The radio campaign varies LoRa spreading factor and band over time so long-term 
 ## Goals
 
 - Run unattended for a target duration of seven days.
-- Capture GPS-calibrated, timestamped audio into bounded WAV segments.
+- Capture GPS-calibrated, timestamped audio into bounded WAV or FLAC segments.
 - Persist useful system, location, power, time, audio, and radio diagnostics.
 - Exercise both 868 MHz and 2.4 GHz LR1121 operation across SF7, SF8, SF10, and SF12 profiles.
 - Let nodes hear other nodes' scheduled heartbeats and retain passive link measurements over time.
@@ -198,6 +213,16 @@ One node transmits about 1.969 s at 868 MHz and 1.222 s at 2.4 GHz per 30-minute
 
 Use the Audio Service and Audio Recorder Service to record mono 16 kHz audio as 32-bit integer WAV data, using the agreed high-quality decimation/filter configuration. Segment files on UTC minute boundaries after GPS/PPS-derived time is valid. Retain every completed file without overwrite, using minute-long WAV files in hour-long folders through the Storage Service. Each file's metadata/log record includes UTC file start time, monotonic system start, time validity/uncertainty, a hash of the Location Service estimate, firmware/device identity, calibration status, calibration correction in ppb, and the last PPS time relative to monotonic system time. Record the hash algorithm and input representation so files from the same location can be compared. During GPS holdover, continue recording on the calibrated minute boundaries and mark the increased time uncertainty.
 
+Add FLAC as a selectable recording mode according to the [Minimal FLAC Encoder
+Service ADR](../../../services/audio/Service%20FLAC%20Encoder.md). Select WAV or
+FLAC before opening a file. FLAC preserves the same AudioSource PCM, defaults to
+32-bit mono, and retains the minute segmentation, hourly folders and metadata
+requirements above. Its initial nominal block size is 2048 samples, with 1024
+and 4096 supported; confirm the deployed choice from hardware measurements.
+Storage supplies `.flac` naming and generic byte rewrites, while the recorder
+owns FLAC finalization. Budget capacity using the encoder's verbatim bound until
+measured compression results are available.
+
 At 16,000 samples/s × 4 bytes/sample, audio uses 3.84 MB per minute, 230.4 MB per hour, and 38.7 GB for seven days before WAV headers and filesystem overhead. A seven-day run creates 10,080 minute files in 168 hour folders. Plan for a card with sufficient usable capacity for those files, a system log below 1 GB, and a protected 100 MB log reserve; a nominal 64 GB card has sufficient nominal capacity if its usable free space is verified at startup.
 
 Audio recording continues through radio probe windows unless power or a recording/storage fault requires a documented degraded mode. Radio scheduling, receive processing, and log draining do not block audio acquisition. Audio packet loss, timestamp gaps, overruns, file-finalization failures, and storage errors are surfaced in durable diagnostics when possible.
@@ -234,7 +259,7 @@ Emit a bounded health/power/time/radio summary every 10 seconds, plus per-event 
 
 The event path is bounded and sized for sustained traffic. Radio and audio timing do not wait on SD writes. Check every enqueue/write result and account for loss in a later summary if storage recovers. If persistent logging is unavailable, retain bounded loss counters and mark the run incomplete. A deployment run cannot pass data-integrity acceptance with unaccounted log or audio loss.
 
-Before starting each new WAV file, check free space and stop audio cleanly when starting the next segment would cross a protected 100 MB free-space reserve. Never overwrite an earlier file. Continue system logging and heartbeats while `Active`, with the storage-full flag in each heartbeat. If the card is unavailable or logging itself fails, continue heartbeats with a storage-unavailable flag and bounded in-memory loss counters. Do not claim durable records during that interval. If the log consumes the reserve too, report its failure over heartbeat and retain loss counters until storage recovers or reset occurs. The low-SOC `EnergyRecovery` state takes precedence over this storage-fault radio policy.
+Before starting each new audio file, check free space and stop audio cleanly when starting the next segment would cross a protected 100 MB free-space reserve. Never overwrite an earlier file. Continue system logging and heartbeats while `Active`, with the storage-full flag in each heartbeat. If the card is unavailable or logging itself fails, continue heartbeats with a storage-unavailable flag and bounded in-memory loss counters. Do not claim durable records during that interval. If the log consumes the reserve too, report its failure over heartbeat and retain loss counters until storage recovers or reset occurs. The low-SOC `EnergyRecovery` state takes precedence over this storage-fault radio policy.
 
 The application exposes enough periodic power information to assess solar charging and energy balance over the week. Sleep the radio for minutes 13–30 of each epoch and use service-supported low-power behavior elsewhere. The application must not claim that the entire device sleeps while audio recording is active. Any deeper system sleep requires compatible audio, time, storage, and wakeup behavior to be specified and validated separately.
 
@@ -242,15 +267,15 @@ The application exposes enough periodic power information to assess solar chargi
 
 Use `PowerState.battery_percent` from the Power Management Service as the SOC input. Maintain a latched `Active` or `EnergyRecovery` state; the thresholds are strict. In `Active`, enter `EnergyRecovery` when a valid SOC is **below 10%**. In `EnergyRecovery`, return to `Active` only when a valid SOC is **above 20%**. Values of exactly 10% or 20% retain the current state. A missing SOC value does not imply either threshold: retain the current state and log that SOC is unavailable. At boot, start in `EnergyRecovery` until a valid SOC above 20% is observed. An explicit externally powered bench configuration may bypass this startup gate, but must be recorded and must not be used for the solar campaign.
 
-On entry to `EnergyRecovery`, finalize the current WAV, record the transition and audio gap, stop scheduled radio TX/RX, put the LR1121 into its service-supported sleep state, and power down GPS through its service/driver policy. Keep charging, low-rate Power Management Service sampling, and enough timekeeping alive to decide when to resume. Avoid claiming the whole MCU is off unless a wake path from charger/RTC/power monitor is implemented. Log the low-power interval when storage is available. No heartbeat is sent while radio is asleep; this is an intentional, separately counted gap rather than a packet-loss event.
+On entry to `EnergyRecovery`, finalize the current audio container, record the transition and audio gap, stop scheduled radio TX/RX, put the LR1121 into its service-supported sleep state, and power down GPS through its service/driver policy. Keep charging, low-rate Power Management Service sampling, and enough timekeeping alive to decide when to resume. Avoid claiming the whole MCU is off unless a wake path from charger/RTC/power monitor is implemented. Log the low-power interval when storage is available. No heartbeat is sent while radio is asleep; this is an intentional, separately counted gap rather than a packet-loss event.
 
-On return to `Active`, restart GPS/time acquisition as needed, resume WAV recording at the next valid UTC minute boundary, and resume the radio at the next complete 30-minute epoch using the available calibrated mapping. Set error flag bit 2 on the first successful post-recovery heartbeat to tell peers why the node was absent, then clear it. Log SOC, raw battery voltage, power source, and both transition times so solar recharge and hysteresis behavior can be reconstructed. The Power Management Service's SOC is currently estimated from battery voltage; the threshold policy uses that published estimate and records the voltage for review.
+On return to `Active`, restart GPS/time acquisition as needed, resume the selected recording format at the next valid UTC minute boundary, and resume the radio at the next complete 30-minute epoch using the available calibrated mapping. Set error flag bit 2 on the first successful post-recovery heartbeat to tell peers why the node was absent, then clear it. Log SOC, raw battery voltage, power source, and both transition times so solar recharge and hysteresis behavior can be reconstructed. The Power Management Service's SOC is currently estimated from battery voltage; the threshold policy uses that published estimate and records the voltage for review.
 
 ## Error behavior
 
 - GPS unavailability is a service degradation while `Active`. Continue holdover scheduling after the first valid anchor, retain the last location estimate with age, and flag degraded timing in heartbeat and logs. GPS shutdown in `EnergyRecovery` is intentional.
 - The Radio Messaging Service attempts its documented bounded recovery. An unrecoverable radio failure triggers a self-reset through the supported platform reset path, with the reset cause recorded before reset where possible.
-- An unusable or full SD card stops new WAV files without overwrite. Heartbeats continue, carrying distinct full/unavailable status. The severe-error indication may report storage impairment, but it must not stop the radio service.
+- An unusable or full SD card stops new audio files without overwrite. Heartbeats continue, carrying distinct full/unavailable status. The severe-error indication may report storage impairment, but it must not stop the radio service.
 - On each startup, read and persist the hardware reset reason and start a new BootId/run segment. If the previous shutdown was a brownout, watchdog, or deliberate radio-fault reset, identify that explicitly when available. Persistent sequence continuity across reset is not assumed.
 - Schedule/configuration mismatch, invalid UTC for a rendezvous, and profile setup failures are visible and are not reported as successful link observations.
 
@@ -261,10 +286,10 @@ On return to `Active`, restart GPS/time acquisition as needed, resume WAV record
 3. Confirm PPS-derived time reaches the defined valid state and recording begins on the next UTC minute boundary.
 4. Observe a complete 30-minute probe epoch and verify all 12 active profiles occur in order, the two-second slots are used for minutes 4 and 12, second 59 of each active minute is unavailable for TX, and radio sleep occupies minutes 13–30.
 5. Confirm both nodes transmit 16-byte V4 heartbeats and receive peer broadcasts during each profile's active minute, with timestamps and link metrics persisted. Compare measured packet-complete timing with the airtime table and account for profile setup and scheduling overhead.
-6. Confirm WAV files remain correctly segmented and timestamped while radio windows execute.
+6. Confirm files in the selected audio format remain correctly segmented and timestamped while radio windows execute.
 7. Remove GPS reception after initial calibration; confirm heartbeats continue on monotonic holdover, are marked degraded, and can be compared against peers' receive timestamps.
 8. Fill the card toward the protected reserve or simulate SD unavailability; confirm audio stops, prior files remain intact, and heartbeats continue with the correct storage status.
-9. Drive reported SOC below 10%, through the 10–20% band, and above 20%. Confirm one transition into recovery, no oscillation in the band, clean WAV finalization, intentional radio silence, and aligned resumption with a recovery flag in the first heartbeat.
+9. Drive reported SOC below 10%, through the 10–20% band, and above 20%. Confirm one transition into recovery, no oscillation in the band, clean audio container finalization, intentional radio silence, and aligned resumption with a recovery flag in the first heartbeat.
 10. Exercise a recoverable radio fault and an unrecoverable radio fault; confirm recovery or a reasoned self-reset and new BootId.
 11. Run a short soak first, then the planned seven-day solar/battery campaign.
 12. Inspect summaries for audio continuity, profile-specific reception statistics, power trends, queue pressure, recoveries, reset reasons, and complete logs.
@@ -272,7 +297,7 @@ On return to `Active`, restart GPS/time acquisition as needed, resume WAV record
 ## Acceptance criteria
 
 - Aardwolf runs continuously for the configured target duration without unhandled panic or memory allocation during normal operation.
-- Audio files are valid mono 16 kHz/32-bit WAV segments with GPS/PPS-calibrated minute boundaries and auditable time metadata.
+- Audio files are valid mono 16 kHz/32-bit WAV or FLAC segments according to the selected recording mode, with GPS/PPS-calibrated minute boundaries and auditable time metadata. FLAC also passes the companion ADR's exact PCM round-trip and desktop compatibility checks.
 - Every 30-minute epoch in `Active` follows the 12-profile order, then keeps the radio inactive for the remaining 18 minutes.
 - Every transmitted and received heartbeat uses the 16-byte V4 frame and is associated with its profile, epoch/minute, monotonic timestamp, and available UTC/link metadata.
 - Measured packet-complete timing is consistent with the calculated airtime plus bounded radio setup and scheduler overhead; minutes 4 and 12 fit their two-second TX slots.

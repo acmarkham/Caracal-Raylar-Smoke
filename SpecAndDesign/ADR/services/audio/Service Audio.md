@@ -115,7 +115,9 @@ AudioRecorder
 └── Storage Stream
 ```
 
-The container implementation is considered an internal implementation detail of the recorder.
+The selected container's lifetime is an internal implementation detail of the
+recorder. Reusable encoding can be delegated to an additional codec service,
+as defined for FLAC in the companion ADR.
 
 Storage never exposes APIs such as:
 
@@ -124,7 +126,9 @@ make_wav_header(...)
 make_flac_header(...)
 ```
 
-Adding a new container format should only require changes within the recorder.
+Adding a new container format changes the recorder and its selected codec.
+Storage may expose generic naming data and byte rewrites, but never gains
+knowledge of container headers or audio encoding.
 
 ---
 
@@ -325,6 +329,12 @@ Storage remains unaware that the stream contains a WAV file.
 
 The recorder is designed to support additional container implementations.
 
+The [Minimal FLAC Encoder Service ADR](Service%20FLAC%20Encoder.md) defines the
+heapless mono FLAC codec, fixed prediction and Rice coding, bounded workspace,
+desktop interoperability, and the generic naming/finalization adapter changes
+needed for FLAC. The codec is an additional service crate invoked by the recorder;
+the recorder retains container selection and recording lifecycle ownership.
+
 Possible future formats include:
 
 * FLAC
@@ -332,9 +342,10 @@ Possible future formats include:
 * Opus
 * RF64
 
-Supporting a new container should require changes only within the recorder.
-
-The Storage Service should remain unchanged.
+Supporting a new container changes the recorder and its selected codec service.
+The Storage Service remains content-agnostic; the companion FLAC ADR describes
+the generic naming and finalization adapter changes needed by the current
+WAV-specific implementation.
 
 ---
 
