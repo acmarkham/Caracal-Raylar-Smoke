@@ -1,11 +1,23 @@
 //! Host-only fixtures for independent libFLAC and FFmpeg validation.
-use raylar_flac_encoder_service::{frame_capacity, Config, Encoder};
+use raylar_flac_encoder_service::{Config, Encoder, Prediction, frame_capacity};
 use std::{fs, path::PathBuf};
 
 fn save(folder: &std::path::Path, name: &str, depth: u8, block: usize, samples: &[i32]) {
+    save_with_prediction(folder, name, depth, block, samples, Prediction::Auto);
+}
+
+fn save_with_prediction(
+    folder: &std::path::Path,
+    name: &str,
+    depth: u8,
+    block: usize,
+    samples: &[i32],
+    prediction: Prediction,
+) {
     let mut encoder = Encoder::new(Config {
         bits_per_sample: depth,
         block_samples: block,
+        prediction,
         ..Config::default()
     })
     .unwrap();
@@ -84,6 +96,14 @@ fn main() {
                 .map(|i| ((i as f64 * 0.075).sin() * limit as f64 * 0.75) as i32)
                 .collect();
             save(&folder, "tone", depth, block, &tone);
+            for (name, samples) in [
+                ("fixed1-tone", &tone[..]),
+                ("fixed1-extremes", &extremes[..]),
+                ("fixed1-short", &[1, -1, 2][..]),
+                ("fixed1-constant", &[(-limit - 1) as i32; 16][..]),
+            ] {
+                save_with_prediction(&folder, name, depth, block, samples, Prediction::Fixed(1));
+            }
         }
     }
     for order in 0..=4 {

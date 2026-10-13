@@ -1,6 +1,6 @@
 # ADR: Minimal FLAC Encoder Service
 
-- **Status:** Implemented; hardware throughput and energy validation pending
+- **Status:** Implemented; isolated codec CPU measured on hardware, concurrent throughput and energy validation pending
 - **Date:** 2026-10-13
 - **Decision owners:** Firmware team
 
@@ -33,7 +33,7 @@ The bitstream authority is [RFC 9639](https://www.rfc-editor.org/rfc/rfc9639.htm
 | Subframes | Constant, verbatim, fixed predictors of orders 0 through 4 |
 | Residuals | Rice coding with either 4-bit or 5-bit parameters |
 | Rice partitions | Partition order zero: one partition per subframe |
-| Order selection | Smallest exact encoded frame size among legal candidates |
+| Order selection | Configurable `Auto` (default: orders 0–4) or `Fixed(p)`; aardwolf uses `Fixed(1)`. Exact Rice search and constant/verbatim bounds apply in both modes. |
 | Arithmetic | Integer sample, prediction and residual arithmetic; floating point permitted only for future selection estimates |
 | Metadata | STREAMINFO and a bounded Vorbis comment block |
 | STREAMINFO MD5 | All zero in the initial implementation, explicitly indicating unavailable |
@@ -96,7 +96,7 @@ For an AudioSource overrun or timestamp discontinuity, account for the loss and 
 
 ## Fixed prediction and numerical bounds
 
-For each frame, evaluate orders `p=0..4` where `N > p`, with `N` the actual sample count. Store the first `p` samples as warm-ups, then calculate `r[n] = x[n] - prediction[n]`.
+For each frame, `Prediction::Auto` evaluates orders `p=0..4` where `N > p`, with `N` the actual sample count. `Prediction::Fixed(p)` evaluates only the configured order, validated to be 0–4. Aardwolf explicitly selects order 1 to reduce codec CPU cost. Store the first `p` samples as warm-ups, then calculate `r[n] = x[n] - prediction[n]`. If a short tail has no eligible predictor, use constant or verbatim.
 
 | Order | Prediction |
 | ---: | --- |
@@ -108,7 +108,7 @@ For each frame, evaluate orders `p=0..4` where `N > p`, with `N` the actual samp
 
 Promote samples to `i64` before every prediction multiplication, subtraction or finite difference. Full-range 32-bit input with order four can require 36-bit residual arithmetic. Never calculate in `i32` and widen afterwards, wrap or saturate a prediction.
 
-FLAC-coded residuals have the stricter range `[-2147483647, 2147483647]`. Reject an order if any residual falls outside it, including `i32::MIN`. This can happen even at order zero for a frame containing that minimum sample. Other legal predictors can still be tried; if none compresses legally, write verbatim. Constant and verbatim subframes can represent the full configured sample range.
+FLAC-coded residuals have the stricter range `[-2147483647, 2147483647]`. Reject an order if any residual falls outside it, including `i32::MIN`. This can happen even at order zero for a frame containing that minimum sample. Auto mode can try other legal predictors; fixed mode falls back to verbatim without searching another order. If none of the configured candidates compresses legally, write verbatim. Constant and verbatim subframes can represent the full configured sample range.
 
 Use `u64` for bit costs and folded-residual calculations. Floating-point estimates may later reduce search work, but exact integer arithmetic determines every emitted sample and residual. In particular, converting full-resolution samples through `f32` is not lossless.
 
@@ -139,7 +139,7 @@ fixed:     8 + p*b + 2 + 4 + w + sum((u >> k) + 1 + k)
 
 The fixed cost includes the subframe header, warm-ups, residual method, partition-order field and Rice parameter. Add byte-alignment padding before comparing complete frame lengths; the frame header and CRC sizes are identical across these candidates for the same input block.
 
-Pick the smallest legal frame. Prefer constant when tied, then verbatim over prediction, then the lower predictor order, the 4-bit Rice method, and the smaller `k`. Thus prediction is used only when it saves at least one encoded byte over verbatim. The actual order varies with the source; there is no globally fixed order waiting to be chosen.
+Pick the smallest legal frame within the configured predictor policy. Prefer constant when tied, then verbatim over prediction, then the lower predictor order, the 4-bit Rice method, and the smaller `k`. Thus prediction is used only when it saves at least one encoded byte over verbatim. Auto selects the order from the source; fixed mode restricts the search to one order while preserving the same size bound. Both modes search all legal Rice parameters exactly using bit-count statistics; benchmark-only alternatives are not production choices.
 
 Cost evaluation counts unary lengths arithmetically and never emits trial bitstreams. For each order, accumulate the sum of folded residuals and a count of set bits at each position. If `Q(k)` is the sum of folded residuals shifted right by `k`, then `Q(k+1) = (Q(k) - ones[k]) / 2`. This computes all exact Rice costs once per order without 31 wide shifts and cost updates for every sample. Fully validate the selected candidate before emitting its codes, and require its frame size to beat verbatim. This prevents unsuitable Rice parameters from producing unbounded unary output. Recompute the selected residuals during emission instead of retaining residual arrays for every order.
 
@@ -157,7 +157,7 @@ These are buffer budgets, not the complete application RAM footprint. Add small 
 
 Allocate these buffers once in static resources or caller-owned persistent storage. Aardwolf uses const-initialized static buffers and `new_flac_with_buffers`; the owned constructor is retained for the existing WAV API and host tests. Do not return large frame arrays by value or create block-sized temporaries on task stacks. The output-capacity const parameter is validated against `B` during construction. Every bit-writer operation checks capacity and returns an error rather than panicking or growing storage. Do not use recursion, unsafe code or dynamically dispatched allocated codec objects.
 
-The exhaustive search checks five orders and up to 31 Rice parameters per order. Gathering statistics requires at most 32 set-bit updates per residual, using native-width operations; cost calculation needs wide arithmetic only once per parameter and order. The recorder yields after at most 256 residuals, then performs a second pass to emit the selected representation. Compile the FLAC service at release optimization level 3 while retaining the repository's size optimization for other packages. The CPU cost is bounded, but must be measured on the STM32 target.
+Auto mode checks five orders and up to 31 Rice parameters per order; fixed mode checks one order. Gathering statistics requires at most 32 set-bit updates per residual, using native-width operations; cost calculation needs wide arithmetic only once per parameter and order. The recorder yields after at most 256 residuals, then performs a second pass to emit the selected representation. Compile the FLAC service at release optimization level 3 while retaining the repository's size optimization for other packages. The CPU cost is bounded, but must be measured on the STM32 target.
 
 For deployment, frame analysis plus encoding must fit inside `B/sample_rate` with scheduling margin under concurrent radio and logging activity. Bound uninterrupted CPU work; yield between bounded analysis chunks or run on an appropriate lower-priority executor if measurements require it. Storage stalls must fit the existing AudioSource retention budget. Use measured worst-case latency and RAM, alongside compression ratio and energy, to confirm 2048 or select another supported block size. An FPU does not remove the need for these measurements.
 
@@ -199,7 +199,7 @@ Space reservation uses the conservative verbatim-frame bound and metadata allowa
 
 Using flacenc or the C libFLAC encoder directly would bring an allocation-oriented runtime into firmware. A bespoke codec limited to the required FLAC primitives provides explicit memory and execution bounds, at the cost of owning bitstream correctness and interoperability tests.
 
-A fixed predictor order or selection by mean residual magnitude would be simpler, but does not measure warm-up, Rice and byte-alignment costs. Exact comparison over five orders resolves the source-dependent choice and gives a useful size bound. More Rice partitions, general LPC and adaptive block sizes could improve compression; defer them until measurements justify their complexity.
+Exact comparison over five orders resolves the source-dependent choice and remains the service default. Board measurements justify an explicit fixed-order option: aardwolf selects order 1 and still compares exact warm-up, Rice and alignment costs with constant/verbatim. This trades some compression for substantially lower CPU without changing samples or memory bounds. Mean-based Rice selection remains benchmark-only because even the fused candidate pass was slower than bit-count search on the measured input. More Rice partitions, general LPC and adaptive block sizes could improve compression; defer them until measurements justify their complexity.
 
 Unknown total samples throughout a file would permit an append-only implementation. Aardwolf already has generic rewrite support, so finalizing the actual count improves desktop duration reporting and permits accurate partial stops. Omitting the MD5 digest keeps the first encoder smaller, while requiring independent PCM equality checks during validation.
 
@@ -222,6 +222,6 @@ Keep host codec tests with the new crate and hardware service tests under `servi
 
 ## Remaining implementation measurements
 
-Host validation covers 284 codec fixtures plus four recorder-produced files with exact integer round trips through FFmpeg and Xiph FLAC 1.5.0, including 32-bit PCM, both Rice methods, every fixed order, short final frames, and numeric frame boundaries. Firmware release builds cover aardwolf, the FLAC SD fixture test, the existing WAV recorder test, and Integration 002. The codec's default runtime dependency graph is empty and its embedded release objects contain no allocator references. The SD fixture test and concurrent capture/radio/logging measurements still require running on the board.
+Host validation covers 332 codec fixtures, including 48 production fixed-order-1 files across all bit depths and block sizes, with exact integer round trips through FFmpeg and Xiph FLAC 1.5.0. Earlier validation also covers four recorder-produced files, 32-bit PCM, both Rice methods, every fixed order, short final frames, and numeric frame boundaries. Firmware release builds cover aardwolf and the FLAC SD fixture test; earlier builds cover the existing WAV recorder test and Integration 002. The codec's default runtime dependency graph is empty and its embedded release objects contain no allocator references. The SD fixture test and concurrent capture/radio/logging measurements still require running on the board.
 
-The required format, supported orders, exact initial selection rule, residual bounds and memory strategy are decided. Confirm the deployed block size and executor scheduling from board measurements. Any future search heuristic must retain legal-residual validation and the verbatim size bound; any additional encoding capability requires an explicit design update.
+The required format, supported orders, configurable predictor policy, exact Rice selection, residual bounds and memory strategy are decided. The 2026-10-13 board matrix measured 936 unique configurations on STM32U595VJ at 144 MHz using recorded excerpts. At mono 16 kHz/32-bit/2048, the initial production auto profile used 23.17% codec CPU; the measured fixed-order-1 exact-search variant used 10.52% with 1.81% more FLAC frame bytes. These are isolated codec duties, excluding capture, storage and radio, and are workload-dependent. Aardwolf adopts fixed order 1 with 2048 samples; generic FLAC remains Auto and the global container default remains WAV. Its startup logfile records format, sample rate, channels, depth, block size, prediction, exact Rice strategy, supported Rice methods, partition count, fallbacks and frame time budget. Validate the deployed incremental path and concurrent scheduling on hardware; CPU percentages are reference measurements, not startup telemetry. Any future search heuristic must retain legal-residual validation and the verbatim size bound; any additional encoding capability requires an explicit design update.

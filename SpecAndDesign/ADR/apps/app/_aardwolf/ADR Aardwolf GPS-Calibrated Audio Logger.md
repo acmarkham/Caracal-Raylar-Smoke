@@ -219,7 +219,17 @@ selects FLAC before opening a file; the global repository default remains WAV.
 FLAC preserves the same AudioSource PCM, defaults to
 32-bit mono, and retains the minute segmentation, hourly folders and metadata
 requirements above. Its initial nominal block size is 2048 samples, with 1024
-and 4096 supported; confirm the deployed choice from hardware measurements.
+and 4096 supported. Use fixed predictor order 1 with exact Rice parameter search
+across Rice4 and Rice5, retaining constant and verbatim fallback. The 2026-10-13
+board matrix measured about 10.52% isolated codec CPU for this profile versus
+23.17% for automatic orders 0–4, with 1.81% more FLAC frame bytes on recorded
+excerpts. These figures exclude capture, SD and radio and depend on the input;
+they are not whole-board CPU load guarantees. Keep 2048 samples: 4096 saved
+only 0.08 CPU percentage points for automatic prediction and doubled frame latency.
+The generic encoder still defaults to automatic orders 0–4. Persist the actual
+audio configuration at startup: format, rate, mono channels, bit depth, block
+samples, predictor policy, exact Rice search, methods, partitions, fallbacks and
+frame time budget. Runtime codec/storage timing and backlog remain separate diagnostics.
 Storage supplies `.flac` naming and generic byte rewrites, while the recorder
 owns FLAC finalization. Budget capacity using the encoder's verbatim bound until
 measured compression results are available.

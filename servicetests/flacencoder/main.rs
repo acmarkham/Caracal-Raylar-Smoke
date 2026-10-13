@@ -53,7 +53,8 @@ async fn main(spawner: Spawner) -> ! {
             let mut encoder = unwrap!(Encoder::new(Config {
                 bits_per_sample: depth,
                 block_samples: block,
-                sample_rate_hz: 16000
+                sample_rate_hz: 16000,
+                ..Config::default()
             }));
             let length = unwrap!(encoder.header(output, &["COMMENT=synthetic xorshift32 seed 0x12345678, arithmetic shift to configured bit depth; 960000 samples"]));
             unwrap!(storage.write(stream, &output[..length]).await);

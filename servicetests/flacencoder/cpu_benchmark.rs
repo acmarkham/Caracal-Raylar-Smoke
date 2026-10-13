@@ -94,6 +94,11 @@ async fn run(
         bits_per_sample: depth,
         block_samples: block,
         sample_rate_hz: 16000,
+        prediction: if cfg!(feature = "cpu-benchmark-fixed-order1") {
+            raylar_flac_encoder_service::Prediction::Fixed(1)
+        } else {
+            raylar_flac_encoder_service::Prediction::Auto
+        },
     }));
     let options = BenchmarkOptions {
         order: if order == 255 { None } else { Some(order) },
@@ -217,15 +222,21 @@ async fn main(_spawner: Spawner) -> ! {
         .trim()
         .parse::<u8>()
         .unwrap();
+    let production_order = if cfg!(feature = "cpu-benchmark-fixed-order1") {
+        1u8
+    } else {
+        255u8
+    };
     info!(
-        "CPU_META nominal_hz=144000000 measured_cycles={} measured_us={} corpus_samples={} signed_width={} repeats={} pll_n={} pll_fracn={} supply=smps",
+        "CPU_META nominal_hz=144000000 measured_cycles={} measured_us={} corpus_samples={} signed_width={} repeats={} pll_n={} pll_fracn={} supply=smps production_order={}",
         measured,
         micros,
         CORPUS.len() / 4,
         width,
         REPEATS,
         pll_n,
-        pll_fracn
+        pll_fracn,
+        production_order
     );
     let pcm = PCM.take();
     let output = FRAME.take();
@@ -233,8 +244,20 @@ async fn main(_spawner: Spawner) -> ! {
         for depth in [8u8, 16, 24, 32] {
             for block in [1024usize, 2048, 4096] {
                 run(pcm, output, width, data, depth, block, 0, 255, 0, 0).await;
-                run(pcm, output, width, data, depth, block, 1, 255, 0, 0).await;
-                if data == 0 {
+                run(
+                    pcm,
+                    output,
+                    width,
+                    data,
+                    depth,
+                    block,
+                    1,
+                    production_order,
+                    0,
+                    0,
+                )
+                .await;
+                if data == 0 && !cfg!(feature = "cpu-benchmark-fixed-order1") {
                     let searches: &[u8] = if cfg!(feature = "cpu-benchmark-fused-mean") {
                         &[3]
                     } else {
@@ -257,7 +280,9 @@ async fn main(_spawner: Spawner) -> ! {
     }
     info!(
         "CPU_BENCH_DONE rows={}",
-        if cfg!(feature = "cpu-benchmark-fused-mean") {
+        if cfg!(feature = "cpu-benchmark-fixed-order1") {
+            72usize
+        } else if cfg!(feature = "cpu-benchmark-fused-mean") {
             288usize
         } else {
             720usize

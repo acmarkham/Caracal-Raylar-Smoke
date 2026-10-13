@@ -26,11 +26,11 @@ use raylar_drivers::{
     gps::PhaseQualifiedShutdownConfig,
     identity,
     mic_array::stm32::Dma0TimestampHandler,
-    stm32_core::{stm32::Stm32CoreDriver, CoreConfig, CoreSupply},
-    trng::{stm32::Stm32Trng, TrngConfig},
+    stm32_core::{CoreConfig, CoreSupply, stm32::Stm32CoreDriver},
+    trng::{TrngConfig, stm32::Stm32Trng},
 };
 use raylar_location_service::{LocationConfig, LocationResources, LocationService};
-use raylar_logging_service::{info as log_info, LoggingResources, LoggingService, ProcessOutcome};
+use raylar_logging_service::{LoggingResources, LoggingService, ProcessOutcome, info as log_info};
 use raylar_radio_service::NodeId;
 use raylar_storage_service::StorageService;
 use raylar_versioning_service::{
@@ -40,7 +40,7 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 use audio::MICROPHONES;
-use storage::{SharedStorage, SystemLogSink, STORAGE_FLAGS};
+use storage::{STORAGE_FLAGS, SharedStorage, SystemLogSink};
 
 static SHARED_STORAGE: StaticCell<SharedStorage> = StaticCell::new();
 static STORAGE_READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -102,8 +102,26 @@ async fn main(spawner: Spawner) -> ! {
     let radio_log = LOGGING.register("Radio");
     let audio_log = LOGGING.register("Audio");
     let power_log = LOGGING.register("Power");
-    let _ = log_info!(system_log, "boot node={} boot={} config={} network={} schedule={} band868_hz=868100000 band24_hz=244100000 antenna=unknown firmware={}",
-        node.0, boot, aardwolf::config::CONFIG_ID, aardwolf::config::NETWORK_ID, aardwolf::config::SCHEDULE_VERSION, env!("CARGO_PKG_VERSION"));
+    let _ = log_info!(
+        system_log,
+        "boot node={} boot={} config={} network={} schedule={} band868_hz=868100000 band24_hz=244100000 antenna=unknown firmware={}",
+        node.0,
+        boot,
+        aardwolf::config::CONFIG_ID,
+        aardwolf::config::NETWORK_ID,
+        aardwolf::config::SCHEDULE_VERSION,
+        env!("CARGO_PKG_VERSION")
+    );
+    let audio_config = aardwolf::config::FLAC_CONFIG;
+    let _ = log_info!(
+        audio_log,
+        "audio config format=flac rate_hz={} channels=1 depth_bits={} block_samples={} prediction={:?} rice_search=exact_bit_counts rice_methods=4,5 partitions=1 fallback=constant,verbatim frame_budget_us={}",
+        audio_config.sample_rate_hz,
+        audio_config.bits_per_sample,
+        audio_config.block_samples,
+        audio_config.prediction,
+        audio_config.block_samples as u64 * 1_000_000 / u64::from(audio_config.sample_rate_hz)
+    );
     let _ = log_info!(
         system_log,
         "reset pin={} brownout={} software={} iwdg={} wwdg={} low_power={} option_byte={}",

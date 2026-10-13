@@ -29,10 +29,20 @@ pub enum Error {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Prediction {
+    /// Choose the smallest frame across fixed orders 0 through 4.
+    Auto,
+    /// Search only this order, retaining constant/verbatim fallback.
+    Fixed(u8),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
     pub sample_rate_hz: u32,
     pub bits_per_sample: u8,
     pub block_samples: usize,
+    pub prediction: Prediction,
 }
 
 impl Default for Config {
@@ -41,6 +51,7 @@ impl Default for Config {
             sample_rate_hz: 16_000,
             bits_per_sample: 32,
             block_samples: DEFAULT_BLOCK_SAMPLES,
+            prediction: Prediction::Auto,
         }
     }
 }
@@ -52,6 +63,7 @@ impl Config {
             || self.sample_rate_hz == 0
             || self.sample_rate_hz >= 1 << 20
             || rate_code(self.sample_rate_hz).is_none()
+            || matches!(self.prediction, Prediction::Fixed(order) if order > 4)
         {
             return Err(Error::InvalidConfig);
         }
@@ -120,7 +132,7 @@ impl Encoder {
         if self.frames > 0x7fff_ffff || self.samples + samples.len() as u64 >= 1 << 36 {
             return Err(Error::CounterOverflow);
         }
-        Analysis::new(samples, self.config.bits_per_sample)
+        Analysis::new(samples, self.config.bits_per_sample, self.config.prediction)
     }
     pub fn encode(&self, samples: &[i32], output: &mut [u8]) -> Result<FrameStats, Error> {
         let mut analysis = self.analyze(samples)?;
@@ -148,6 +160,11 @@ impl Encoder {
         // Also validate counters/config when an analysis was created by another encoder.
         self.analyze(samples)?;
         if analysis.depth() != self.config.bits_per_sample {
+            return Err(Error::InvalidConfig);
+        }
+        if matches!((self.config.prediction, subframe),
+            (Prediction::Fixed(expected), Subframe::Fixed { order, .. }) if order != expected)
+        {
             return Err(Error::InvalidConfig);
         }
         let b = self.config.bits_per_sample;

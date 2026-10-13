@@ -204,6 +204,7 @@ fn flac_buffers_packets_and_flushes_the_tail_on_stop() {
         },
         FlacConfig {
             block_samples: 1024,
+            prediction: crate::FlacPrediction::Fixed(1),
             ..FlacConfig::default()
         },
         &mut output,

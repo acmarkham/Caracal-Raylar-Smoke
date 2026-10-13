@@ -120,6 +120,119 @@ fn transactional_frames_and_partial_termination() {
     );
 }
 
+#[test]
+fn fixed_prediction_is_incremental_exact_and_keeps_safe_fallbacks() {
+    let samples: Vec<_> = (0..1024i32).map(|i| i * i - 500_000).collect();
+    let automatic = Encoder::new(Config::default()).unwrap();
+    let fixed = Encoder::new(Config {
+        prediction: Prediction::Fixed(1),
+        ..Config::default()
+    })
+    .unwrap();
+    let mut output = [0; 8224];
+    let auto_frame = automatic.encode(&samples, &mut output).unwrap();
+    assert!(matches!(
+        auto_frame.subframe,
+        Subframe::Fixed { order: 2..=4, .. }
+    ));
+    let expected = fixed.encode(&samples, &mut output).unwrap();
+    assert!(matches!(
+        expected.subframe,
+        Subframe::Fixed { order: 1, .. }
+    ));
+    assert!(expected.bytes > auto_frame.bytes);
+    let reference = output[..expected.bytes].to_vec();
+    let mut incompatible = automatic.analyze(&samples).unwrap();
+    while !incompatible.advance(256) {}
+    assert_eq!(
+        fixed.encode_analyzed(incompatible, &mut output),
+        Err(Error::InvalidConfig)
+    );
+    for budget in [1, 17, 256, 4096] {
+        let mut analysis = fixed.analyze(&samples).unwrap();
+        assert!(!analysis.advance(0));
+        let mut calls = 0;
+        while !analysis.advance(budget) {
+            calls += 1;
+        }
+        assert_eq!(calls + 1, (samples.len() - 1).div_ceil(budget));
+        let frame = fixed.encode_analyzed(analysis, &mut output).unwrap();
+        assert_eq!(frame, expected);
+        assert_eq!(&output[..frame.bytes], &reference);
+    }
+    assert_eq!(
+        fixed.encode(&[i32::MIN; 16], &mut output).unwrap().subframe,
+        Subframe::Constant
+    );
+    assert_eq!(
+        fixed
+            .encode(&[i32::MIN, i32::MAX], &mut output)
+            .unwrap()
+            .subframe,
+        Subframe::Verbatim
+    );
+    assert_eq!(
+        fixed.encode(&[7], &mut output).unwrap().subframe,
+        Subframe::Constant
+    );
+    let fourth = Encoder::new(Config {
+        prediction: Prediction::Fixed(4),
+        ..Config::default()
+    })
+    .unwrap();
+    assert_eq!(
+        fourth.encode(&[1, 2, 3], &mut output).unwrap().subframe,
+        Subframe::Verbatim
+    );
+    assert_eq!(
+        Encoder::new(Config {
+            prediction: Prediction::Fixed(5),
+            ..Config::default()
+        })
+        .err(),
+        Some(Error::InvalidConfig)
+    );
+}
+
+#[cfg(feature = "benchmark")]
+#[test]
+fn production_fixed_order_matches_the_measured_exact_variant() {
+    for depth in [8u8, 16, 24, 32] {
+        let samples: Vec<_> = (0..2048i32)
+            .map(|i| ((i * i * 19 + i * 29) % 127) - 63)
+            .collect();
+        let automatic = Encoder::new(Config {
+            bits_per_sample: depth,
+            ..Config::default()
+        })
+        .unwrap();
+        for order in 0..=4 {
+            let fixed = Encoder::new(Config {
+                bits_per_sample: depth,
+                prediction: Prediction::Fixed(order),
+                ..Config::default()
+            })
+            .unwrap();
+            let analysis = automatic
+                .analyze_variant(
+                    &samples,
+                    BenchmarkOptions {
+                        order: Some(order),
+                        rice: RiceMethod::Auto,
+                        search: Search::BitCounts,
+                    },
+                )
+                .unwrap();
+            let mut reference = [0; 8224];
+            let expected = automatic.encode_analyzed(analysis, &mut reference).unwrap();
+            let mut output = [0; 8224];
+            let actual = fixed.encode(&samples, &mut output).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(&output[..actual.bytes], &reference[..expected.bytes]);
+        }
+    }
+}
+
 #[cfg(feature = "benchmark")]
 #[test]
 fn benchmark_exact_searches_match_production_and_bound_forced_choices() {
@@ -245,6 +358,7 @@ fn write_benchmark_desktop_fixtures() {
                             bits_per_sample: depth,
                             block_samples: block,
                             sample_rate_hz: 16000,
+                            ..Config::default()
                         })
                         .unwrap();
                         let mut output = [0; 16416];

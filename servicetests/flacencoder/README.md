@@ -95,3 +95,10 @@ rtk proxy python servicetests/flacencoder/analyse_cpu.py --results analysis/flac
 Supplemental deltas use that run's WAV measurements. The additional baseline
 observations are retained separately in `repeated-baselines.csv`; both binaries
 and logs receive their own hashes in the provenance file.
+
+`cpu-benchmark-fixed-order1` runs just the 72 WAV/production baselines with the
+production encoder configured as `Prediction::Fixed(1)`. This measures the real
+incremental `advance(256)` path adopted by aardwolf, rather than the synchronous
+experimental selector. Rows and metadata record production order 1. Use a saved
+ELF of the intended production firmware as the runner's `OriginalFirmware` so
+it is verified and loaded after the benchmark.

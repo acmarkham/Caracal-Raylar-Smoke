@@ -1,4 +1,4 @@
-use crate::{Error, Subframe};
+use crate::{Error, Prediction, Subframe};
 
 pub(crate) fn residual(samples: &[i32], index: usize, order: u8) -> i64 {
     let x = |ago| i64::from(samples[index - ago]);
@@ -56,6 +56,7 @@ pub struct Analysis<'a> {
     samples: &'a [i32],
     depth: u8,
     order: u8,
+    last_order: u8,
     index: usize,
     rice: RiceStats,
     best_bytes: u64,
@@ -69,7 +70,11 @@ impl<'a> Analysis<'a> {
     pub(crate) fn depth(&self) -> u8 {
         self.depth
     }
-    pub(crate) fn new(samples: &'a [i32], depth: u8) -> Result<Self, Error> {
+    pub(crate) fn new(
+        samples: &'a [i32],
+        depth: u8,
+        prediction: Prediction,
+    ) -> Result<Self, Error> {
         let limit = 1i64 << (depth - 1);
         if samples
             .iter()
@@ -78,11 +83,16 @@ impl<'a> Analysis<'a> {
             return Err(Error::SampleOutOfRange);
         }
         let constant = samples.iter().all(|x| *x == samples[0]);
+        let (order, last_order) = match prediction {
+            Prediction::Auto => (0, 4),
+            Prediction::Fixed(order) => (order, order),
+        };
         Ok(Self {
             samples,
             depth,
-            order: 0,
-            index: 0,
+            order,
+            last_order,
+            index: order as usize,
             rice: RiceStats::new(),
             best_bytes: (8 + if constant {
                 u64::from(depth)
@@ -103,7 +113,10 @@ impl<'a> Analysis<'a> {
         if self.best == Subframe::Constant {
             return true;
         }
-        while self.order <= 4 && (self.order as usize) < self.samples.len() && budget != 0 {
+        while self.order <= self.last_order
+            && (self.order as usize) < self.samples.len()
+            && budget != 0
+        {
             let r = residual(self.samples, self.index, self.order);
             budget -= 1;
             if !(-2147483647..=2147483647).contains(&r) {
@@ -142,7 +155,7 @@ impl<'a> Analysis<'a> {
                 self.next_order();
             }
         }
-        self.order > 4 || self.order as usize >= self.samples.len()
+        self.order > self.last_order || self.order as usize >= self.samples.len()
     }
 
     fn next_order(&mut self) {
@@ -153,7 +166,7 @@ impl<'a> Analysis<'a> {
 
     pub fn result(&self) -> Result<Subframe, Error> {
         if self.best == Subframe::Constant
-            || self.order > 4
+            || self.order > self.last_order
             || self.order as usize >= self.samples.len()
         {
             Ok(self.best)

@@ -1,3 +1,4 @@
+use raylar_flac_encoder_service::{Config as FlacConfig, Prediction as FlacPrediction};
 use raylar_radio_service::link::{
     ChannelProfile, CodingRate, GfskReferenceRate, ProfileId, SpreadingFactor,
 };
@@ -7,7 +8,7 @@ use raylar_radio_service::{
 
 pub const NETWORK_ID: u32 = 0x4141_5244;
 pub const SCHEDULE_VERSION: u8 = 4;
-pub const CONFIG_ID: &str = "aardwolf-uk-v4-20261008";
+pub const CONFIG_ID: &str = "aardwolf-uk-v4-20261013-flac1";
 /// Board measurement used by Integration 002; recalibrate per hardware lot.
 pub const HSE_MEASURED_ERROR_PPM: i32 = -9;
 pub const EPOCH_US: i64 = 1_800_000_000;
@@ -15,9 +16,16 @@ pub const MINUTE_US: i64 = 60_000_000;
 pub const ACTIVE_MINUTES: usize = 12;
 pub const LOG_RESERVE_BYTES: u64 = 100_000_000;
 pub const FLAC_BLOCK_SAMPLES: usize = 2048;
+/// Measured low-CPU profile: exact Rice search, one fixed predictor order.
+pub const FLAC_CONFIG: FlacConfig = FlacConfig {
+    sample_rate_hz: 16_000,
+    bits_per_sample: 32,
+    block_samples: FLAC_BLOCK_SAMPLES,
+    prediction: FlacPrediction::Fixed(1),
+};
 /// Worst-case verbatim frames plus the bounded native metadata header.
-pub const AUDIO_FILE_BYTES: u64 = 1024 + 16_000 * 4 * 60
-    + 32 * (16_000u64 * 60).div_ceil(FLAC_BLOCK_SAMPLES as u64);
+pub const AUDIO_FILE_BYTES: u64 =
+    1024 + 16_000 * 4 * 60 + 32 * (16_000u64 * 60).div_ceil(FLAC_BLOCK_SAMPLES as u64);
 pub const LOG_BUDGET_BYTES: u64 = 1_000_000_000;
 pub const SYNC_WORD: [u8; 4] = NETWORK_ID.to_be_bytes();
 
@@ -52,11 +60,7 @@ pub fn profile(index: usize) -> Result<ChannelProfile, LinkError> {
 }
 
 pub const fn slot_seconds(index: usize) -> u64 {
-    if index == 3 || index == 11 {
-        2
-    } else {
-        1
-    }
+    if index == 3 || index == 11 { 2 } else { 1 }
 }
 
 pub fn slot(node: NodeId, epoch: u64, index: usize) -> Result<u32, ScheduleError> {

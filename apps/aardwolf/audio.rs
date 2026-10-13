@@ -1,16 +1,14 @@
 use crate::{
-    common, policy,
+    LOCATION, common, policy,
     power::ACTIVITY,
-    storage::{RecorderStorage, SharedStorage, STORAGE_FLAGS},
-    LOCATION,
+    storage::{RecorderStorage, STORAGE_FLAGS, SharedStorage},
 };
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use defmt::{error, unwrap};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use raylar_audio_recorder_service::{
-    flac_frame_capacity, AudioRecorder, AudioRecorderConfig, AudioRecorderError, FlacConfig,
-    TimeMetadataSource,
+    AudioRecorder, AudioRecorderConfig, AudioRecorderError, TimeMetadataSource, flac_frame_capacity,
 };
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{PdmMicArray, PdmMicDma};
@@ -19,7 +17,7 @@ use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
 };
 use raylar_drivers::storage::StorageError;
-use raylar_logging_service::{info as log_info, LoggerHandle};
+use raylar_logging_service::{LoggerHandle, info as log_info};
 use raylar_storage_service::{StorageLayout, StorageServiceError};
 use raylar_time_service::UtcTimestamp;
 use static_cell::ConstStaticCell;
@@ -36,7 +34,11 @@ const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf)
 };
 pub static MICROPHONES: MicrophoneResources<DMA_SAMPLES> = MicrophoneResources::new();
-static AUDIO: AudioSource<CAPACITY, 2> = AudioSource::new(AudioFormat::new(16_000, 1, 1_000_000));
+static AUDIO: AudioSource<CAPACITY, 2> = AudioSource::new(AudioFormat::new(
+    crate::config::FLAC_CONFIG.sample_rate_hz,
+    1,
+    1_000_000,
+));
 static RECORDING: AtomicBool = AtomicBool::new(false);
 pub fn recording_active() -> bool {
     RECORDING.load(Ordering::Relaxed)
@@ -166,10 +168,7 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                 recording_seconds: 60,
                 storage_layout: StorageLayout::HourlyFolders
             },
-            FlacConfig {
-                block_samples: crate::config::FLAC_BLOCK_SAMPLES,
-                ..FlacConfig::default()
-            },
+            crate::config::FLAC_CONFIG,
             FLAC_FRAME.take(),
             FLAC_PCM.take(),
         )
@@ -243,8 +242,15 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                     write_max_us = write_max_us.max(progress.storage_elapsed_us);
                     backlog_max_samples = backlog_max_samples.max(progress.backlog_samples);
                     if metrics_started.elapsed() >= Duration::from_secs(10) {
-                        let _ = log_info!(log, "flac timing codec_max_us={} write_max_us={} frame_budget_us={} backlog_max_samples={} source_capacity_samples={}",
-                            codec_max_us, write_max_us, FLAC_SAMPLES as u64 * 1_000_000 / 16_000, backlog_max_samples, CAPACITY);
+                        let _ = log_info!(
+                            log,
+                            "flac timing codec_max_us={} write_max_us={} frame_budget_us={} backlog_max_samples={} source_capacity_samples={}",
+                            codec_max_us,
+                            write_max_us,
+                            FLAC_SAMPLES as u64 * 1_000_000 / 16_000,
+                            backlog_max_samples,
+                            CAPACITY
+                        );
                         metrics_started = Instant::now();
                         codec_max_us = 0;
                         write_max_us = 0;

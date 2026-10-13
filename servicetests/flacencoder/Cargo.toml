@@ -40,6 +40,7 @@ cortex-m-semihosting = { version = "0.5", optional = true }
 [features]
 cpu-benchmark = ["raylar-flac-encoder-service/benchmark", "dep:cortex-m-semihosting"]
 cpu-benchmark-fused-mean = ["cpu-benchmark"]
+cpu-benchmark-fixed-order1 = ["cpu-benchmark"]
 trustzone-secure = ["embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure"]
 
 [package.metadata.embassy]

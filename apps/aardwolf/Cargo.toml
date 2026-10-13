@@ -20,6 +20,7 @@ raylar-radio-service = { path = "../../crates/services/radio" }
 raylar-time-service = { path = "../../crates/services/time" }
 embassy-time.workspace = true
 heapless = "0.8.0"
+raylar-flac-encoder-service = { path = "../../crates/services/flacencoder" }
 raylar-audio-recorder-service = { path = "../../crates/services/audiorecorder", features = ["defmt"], optional = true }
 raylar-audiosource = { path = "../../crates/metadrivers/audiosource", features = ["defmt"], optional = true }
 raylar-board-v1p0 = { path = "../../crates/board/raylar_v1p0", optional = true }
