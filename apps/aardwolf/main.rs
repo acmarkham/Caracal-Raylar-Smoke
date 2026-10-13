@@ -201,7 +201,7 @@ async fn main(spawner: Spawner) -> ! {
         trace.firmware,
         trace.hardware.board_revision
     );
-    let _ = log_info!(
+    let _ = log_info!
         system_log,
         "versioning sd_card={:?} gps_module={:?} radio_module={:?}",
         trace.hardware.sd_card,
