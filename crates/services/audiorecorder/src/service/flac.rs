@@ -91,10 +91,11 @@ where
         if self.stream.is_none() && self.pcm_len != 0 {
             self.open_flac_stream().await?;
         }
+        let mut timing = (0, 0);
         if self.pcm_len == block
             || self.samples_in_recording + self.pcm_len == self.samples_per_recording
         {
-            self.append_flac_frame().await?;
+            timing = self.append_flac_frame().await?;
         }
         let rotated = self.samples_in_recording == self.samples_per_recording;
         if rotated {
@@ -105,24 +106,31 @@ where
             pcm_samples: status.consumed_samples,
             dropped_samples: 0,
             rotated,
+            codec_elapsed_us: timing.0,
+            storage_elapsed_us: timing.1,
+            backlog_samples: self.reader.stats().available_samples,
         })
     }
 
-    pub(super) async fn append_flac_frame(&mut self) -> Result<(), AudioRecorderError<S::Error>> {
+    pub(super) async fn append_flac_frame(
+        &mut self,
+    ) -> Result<(u64, u64), AudioRecorderError<S::Error>> {
         let stream = self.stream.ok_or(AudioRecorderError::NotStarted)?;
         let encoder = match &mut self.container {
             Container::Flac(e) => e,
             _ => unreachable!(),
         };
         let (output, pcm) = self.buffers.split();
+        let encode_started = embassy_time::Instant::now();
         let encoded = async {
             let mut analysis = encoder.analyze(&pcm[..self.pcm_len])?;
-            while !analysis.advance(64) {
+            while !analysis.advance(256) {
                 embassy_futures::yield_now().await;
             }
             encoder.encode_analyzed(analysis, output)
         }
         .await;
+        let codec_elapsed_us = encode_started.elapsed().as_micros();
         let frame = match encoded {
             Ok(frame) => frame,
             Err(error) => {
@@ -133,6 +141,7 @@ where
                 return Err(AudioRecorderError::Codec(error));
             }
         };
+        let write_started = embassy_time::Instant::now();
         if let Err(error) = self
             .storage
             .append_audio(stream, &output[..frame.bytes])
@@ -148,7 +157,7 @@ where
         encoder.commit(frame).map_err(AudioRecorderError::Codec)?;
         self.samples_in_recording += frame.samples;
         self.pcm_len = 0;
-        Ok(())
+        Ok((codec_elapsed_us, write_started.elapsed().as_micros()))
     }
 
     async fn open_flac_stream(&mut self) -> Result<(), AudioRecorderError<S::Error>> {

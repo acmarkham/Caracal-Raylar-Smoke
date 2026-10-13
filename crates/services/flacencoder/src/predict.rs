@@ -21,13 +21,43 @@ pub(crate) fn fold(value: i64) -> u64 {
     }
 }
 
+/// Exact quotient sums for every Rice parameter, without 31 wide shifts and
+/// cost updates per sample. Every residual is folded into at most 32 bits.
+struct RiceStats {
+    sum: u64,
+    ones: [u16; 32],
+}
+
+impl RiceStats {
+    fn new() -> Self {
+        Self {
+            sum: 0,
+            ones: [0; 32],
+        }
+    }
+
+    fn add(&mut self, mut folded: u32) {
+        self.sum += u64::from(folded);
+        // Count only set bits; correlated microphone residuals are small.
+        while folded != 0 {
+            self.ones[folded.trailing_zeros() as usize] += 1;
+            folded &= folded - 1;
+        }
+    }
+
+    fn clear(&mut self) {
+        self.sum = 0;
+        self.ones.fill(0);
+    }
+}
+
 /// A bounded search that can be advanced between executor yields.
 pub struct Analysis<'a> {
     samples: &'a [i32],
     depth: u8,
     order: u8,
     index: usize,
-    costs: [u64; 31],
+    rice: RiceStats,
     best_bytes: u64,
     best: Subframe,
 }
@@ -53,7 +83,7 @@ impl<'a> Analysis<'a> {
             depth,
             order: 0,
             index: 0,
-            costs: [0; 31],
+            rice: RiceStats::new(),
             best_bytes: (8 + if constant {
                 u64::from(depth)
             } else {
@@ -80,22 +110,21 @@ impl<'a> Analysis<'a> {
                 self.next_order();
                 continue;
             }
-            let u = fold(r);
-            for (k, cost) in self.costs.iter_mut().enumerate() {
-                *cost = (*cost + (u >> k) + 1 + k as u64).min(self.best_bytes * 8);
-            }
+            self.rice.add(fold(r) as u32);
             self.index += 1;
             if self.index == self.samples.len() {
                 // Evaluate 4-bit method first, then 5-bit: ties retain the simpler form.
                 for width in [4u8, 5] {
                     let maximum = if width == 4 { 14 } else { 30 };
+                    let mut quotients = self.rice.sum;
                     for k in 0..=maximum {
                         let cost = 8
                             + u64::from(self.order) * u64::from(self.depth)
                             + 2
                             + 4
                             + u64::from(width)
-                            + self.costs[k];
+                            + quotients
+                            + (self.samples.len() - self.order as usize) as u64 * (1 + k as u64);
                         let bytes = cost.div_ceil(8);
                         if bytes < self.best_bytes {
                             self.best_bytes = bytes;
@@ -105,6 +134,9 @@ impl<'a> Analysis<'a> {
                                 parameter: k as u8,
                             };
                         }
+                        // Q(k+1) = (Q(k) - number of set bits at position k) / 2.
+                        // This is exact for the sum of individually shifted values.
+                        quotients = (quotients - u64::from(self.rice.ones[k])) >> 1;
                     }
                 }
                 self.next_order();
@@ -116,7 +148,7 @@ impl<'a> Analysis<'a> {
     fn next_order(&mut self) {
         self.order += 1;
         self.index = self.order as usize;
-        self.costs.fill(0);
+        self.rice.clear();
     }
 
     pub fn result(&self) -> Result<Subframe, Error> {
@@ -127,6 +159,36 @@ impl<'a> Analysis<'a> {
             Ok(self.best)
         } else {
             Err(Error::AnalysisIncomplete)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RiceStats;
+
+    #[test]
+    fn quotient_recurrence_matches_direct_sums_including_full_blocks() {
+        for pattern in [0u32, 1, 2, 3, 0x8000_0000, 0xffff_fffe, 0xffff_ffff] {
+            let mut stats = RiceStats::new();
+            for _ in 0..4096 {
+                stats.add(pattern);
+            }
+            let mut q = stats.sum;
+            for k in 0..32 {
+                assert_eq!(q, u64::from(pattern >> k) * 4096);
+                q = (q - u64::from(stats.ones[k])) >> 1;
+            }
+        }
+        let values = [0, 1, 127, 128, 129, 65535, 65536, 0x7fff_ffff, 0xffff_fffe];
+        let mut stats = RiceStats::new();
+        for value in values {
+            stats.add(value);
+        }
+        let mut q = stats.sum;
+        for k in 0..32 {
+            assert_eq!(q, values.iter().map(|v| u64::from(v >> k)).sum::<u64>());
+            q = (q - u64::from(stats.ones[k])) >> 1;
         }
     }
 }

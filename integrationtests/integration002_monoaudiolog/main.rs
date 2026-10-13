@@ -1565,6 +1565,7 @@ where
                 pcm_samples,
                 dropped_samples,
                 rotated,
+                ..
             }) => {
                 if SEVERE_ERROR_ACTIVE.load(Ordering::Acquire) {
                     AUDIO_RECORDING_ACTIVE.store(false, Ordering::Release);

@@ -12,6 +12,8 @@ Audio uses the mono 16 kHz reference microphone configuration and creates one 32
 
 WAV remains the repository's default recording format and the Audio Recorder Service's `new` constructor. Aardwolf explicitly uses `new_flac_with_buffers` with const-initialized static workspace. The [FLAC service ADR](../../SpecAndDesign/ADR/services/audio/Service%20FLAC%20Encoder.md) records the codec and lifecycle design. Independent decoder checks and the SD fixture test are documented under [servicetests/flacencoder](../../servicetests/flacencoder/README.md); sustained capture with concurrent radio/logging still needs hardware validation.
 
+Every ten seconds, `flac timing` records maximum codec and append time plus peak source backlog. The frame budget is 128,000 microseconds and retention is 128,000 samples (eight seconds). Codec timing includes executor yields; append timing includes the shared storage lock wait. A growing backlog means recording is not keeping pace even while individual FLAC frames remain valid.
+
 The firmware uses a deliberately empty global allocator. The normal exFAT mount, file lookup, create, append and flush paths use bounded storage. Any unexpected allocation fails, which makes heap use visible during bring-up. This and the seven-day data-integrity target require hardware verification.
 
 Before a week-long campaign, verify RF packet-complete margins, GPS holdover timing, SD throughput, audio continuity while radio RX is active, the two SOC thresholds, and the card-full and card-absent cases on physical boards. Configure the antenna and regional EIRP/duty-cycle policy for the deployment; the checked-in firmware logs the antenna as `unknown` until that detail is supplied.

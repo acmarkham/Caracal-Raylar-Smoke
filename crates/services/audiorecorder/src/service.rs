@@ -53,6 +53,12 @@ pub struct RecorderProgress {
     pub pcm_samples: usize,
     pub dropped_samples: u64,
     pub rotated: bool,
+    /// Wall time spent analyzing and encoding the frame, including executor yields.
+    pub codec_elapsed_us: u64,
+    /// Wall time for the completed frame's append, including storage lock wait.
+    pub storage_elapsed_us: u64,
+    /// Samples still retained for this reader after processing the packet/frame.
+    pub backlog_samples: usize,
 }
 
 pub struct AudioRecorder<
@@ -354,6 +360,8 @@ where
             pcm_samples: status.consumed_samples,
             dropped_samples: status.dropped_since_last_read,
             rotated,
+            backlog_samples: self.reader.stats().available_samples,
+            ..RecorderProgress::default()
         })
     }
 

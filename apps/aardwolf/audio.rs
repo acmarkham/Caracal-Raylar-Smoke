@@ -229,12 +229,27 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                 continue;
             }
         }
+        let mut metrics_started = Instant::now();
+        let mut codec_max_us = 0;
+        let mut write_max_us = 0;
+        let mut backlog_max_samples = 0;
         loop {
             match recorder
                 .record_next_with_source_timeout(Duration::from_secs(2))
                 .await
             {
                 Ok(progress) => {
+                    codec_max_us = codec_max_us.max(progress.codec_elapsed_us);
+                    write_max_us = write_max_us.max(progress.storage_elapsed_us);
+                    backlog_max_samples = backlog_max_samples.max(progress.backlog_samples);
+                    if metrics_started.elapsed() >= Duration::from_secs(10) {
+                        let _ = log_info!(log, "flac timing codec_max_us={} write_max_us={} frame_budget_us={} backlog_max_samples={} source_capacity_samples={}",
+                            codec_max_us, write_max_us, FLAC_SAMPLES as u64 * 1_000_000 / 16_000, backlog_max_samples, CAPACITY);
+                        metrics_started = Instant::now();
+                        codec_max_us = 0;
+                        write_max_us = 0;
+                        backlog_max_samples = 0;
+                    }
                     if progress.dropped_samples != 0 {
                         AUDIO_LOSSES.fetch_add(
                             progress.dropped_samples.min(u32::MAX as u64) as u32,

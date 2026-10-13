@@ -98,5 +98,9 @@ opt-level = "s"
 codegen-units = 1
 debug = true
 
+# The real-time FLAC path needs throughput; retain size optimization elsewhere.
+[profile.release.package.raylar-flac-encoder-service]
+opt-level = 3
+
 [patch.crates-io]
 exfat-slim = { path = "third_party/exfat-slim" }
