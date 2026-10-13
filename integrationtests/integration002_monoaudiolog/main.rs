@@ -455,19 +455,6 @@ where
             .begin_stream(kind, layout)
             .await
     }
-    async fn begin_at(
-        &self,
-        kind: StreamKind,
-        layout: StorageLayout,
-        started_utc: UtcTimestamp,
-    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.inner
-            .lock()
-            .await
-            .borrow_mut()
-            .begin_stream_at(kind, layout, started_utc)
-            .await
-    }
     async fn write(
         &self,
         stream: StreamHandle,
@@ -511,13 +498,14 @@ where
         &mut self,
         layout: StorageLayout,
         started_utc: UtcTimestamp,
+        suffix: &str,
     ) -> Result<Self::Handle, Self::Error> {
         let started = Instant::now();
         info!("RTT audio boundary: begin stream start");
         let result = AUDIO_STORAGE_PROFILE
             .instrument(
-                self.storage
-                    .begin_at(StreamKind::Audio, layout, started_utc),
+                self.storage.inner.lock().await.borrow_mut()
+                    .begin_new_audio_with_suffix_at(layout, started_utc, suffix),
             )
             .await;
         let elapsed_us = Instant::now()
@@ -567,6 +555,10 @@ where
         }
         result
     }
+    async fn rewrite_audio(&mut self, stream: Self::Handle, offset: u64, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.storage.inner.lock().await.borrow_mut().rewrite(stream, offset, bytes).await
+    }
+
     async fn finish_audio(&mut self, stream: Self::Handle) -> Result<(), Self::Error> {
         let started = Instant::now();
         info!("RTT audio boundary: finish stream start");

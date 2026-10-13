@@ -1,6 +1,6 @@
 # ADR: Minimal FLAC Encoder Service
 
-- **Status:** Accepted design; implementation pending
+- **Status:** Implemented; hardware throughput and energy validation pending
 - **Date:** 2026-10-13
 - **Decision owners:** Firmware team
 
@@ -14,9 +14,9 @@ Follow [common constraints](../../../common/AGENTS.md), the [Audio policy](../..
 
 ## Decision
 
-Implement an independent Rust service crate at `crates/services/flacencoder`, provisionally named `raylar_flac_encoder_service`. It is a synchronous codec component invoked by the Audio Recorder Service, with no separate Embassy task, microphone subscription or storage handle. Use `#![no_std]`, fixed arrays and, where useful, bounded `heapless` collections. Neither the crate nor its firmware dependency graph may require `alloc`, an allocator or `std`.
+Implement an independent Rust service crate at `crates/services/flacencoder`, named `raylar-flac-encoder-service` (`raylar_flac_encoder_service` in Rust). It is a synchronous codec component invoked by the Audio Recorder Service, with no separate Embassy task, microphone subscription or storage handle. Use `#![no_std]`, fixed arrays and, where useful, bounded `heapless` collections. Neither the crate nor its firmware dependency graph may require `alloc`, an allocator or `std`.
 
-Use [flacenc](https://github.com/yotarok/flacenc-rs) as an algorithm and serialization reference, especially its [subframe selection](https://github.com/yotarok/flacenc-rs/blob/main/src/coding.rs) and [Rice parameter search](https://github.com/yotarok/flacenc-rs/blob/main/src/rice.rs). Do not add it as a Cargo dependency or vendor its allocation-based pipeline. Its reusable sample/error buffers and owned frame representations do not meet our memory constraint. Reimplement the required operations over caller-owned buffers. Record the reference revision during implementation; retain the applicable Apache-2.0 notices if code is adapted.
+Use [flacenc](https://github.com/yotarok/flacenc-rs) as an algorithm and serialization reference, especially its [subframe selection](https://github.com/yotarok/flacenc-rs/blob/f2ebcf85550ce337ceceed7ba25a1e84c034efc1/src/coding.rs) and [Rice parameter search](https://github.com/yotarok/flacenc-rs/blob/f2ebcf85550ce337ceceed7ba25a1e84c034efc1/src/rice.rs). The implementation reference is pinned to revision `f2ebcf85550ce337ceceed7ba25a1e84c034efc1`. Do not add it as a Cargo dependency or vendor its allocation-based pipeline. Its reusable sample/error buffers and owned frame representations do not meet our memory constraint. Reimplement the required operations over caller-owned buffers; retain the applicable Apache-2.0 notices if code is adapted.
 
 The bitstream authority is [RFC 9639](https://www.rfc-editor.org/rfc/rfc9639.html). Reference code does not replace format validation, particularly for 32-bit input.
 
@@ -68,7 +68,7 @@ The recorder accumulates a block from one or more AudioSource reads; microphone 
 
 ### Storage adaptation
 
-The current implementation has three WAV assumptions: `StreamKind::Audio` produces a `.wav` name in `crates/services/storage/src/policy.rs`; the `RecordingStorage` trait has no format/suffix argument; and aardwolf's `finalize_audio` adapter rewrites WAV fields at offsets 4 and 508.
+Before FLAC integration, the implementation had three WAV assumptions: `StreamKind::Audio` produced a `.wav` name in `crates/services/storage/src/policy.rs`; the `RecordingStorage` trait had no format/suffix argument; and aardwolf's `finalize_audio` adapter rewrote WAV fields at offsets 4 and 508. The implementation now supplies a validated suffix at stream creation and exposes generic `rewrite_audio` through the recording adapter.
 
 Extend stream creation with a bounded, validated file suffix or equivalent generic descriptor, supplied by the recorder (`wav` or `flac`). Storage still generates the complete path, retains exclusive new-file creation, and treats the suffix as naming data. Do not implement FLAC parsing or encoding in Storage.
 
@@ -153,9 +153,9 @@ Use a single `[i32; B]` input block and a caller-owned output buffer sized for a
 | 2048 | 8192 | 8224 | 16416 |
 | 4096 | 16384 | 16416 | 32800 |
 
-These are buffer budgets, not the complete application RAM footprint. Add small encoder state, at most 31 `u64` Rice-cost accumulators reused per order, and a metadata buffer capped at 1024 bytes. AudioSource retention, DMA, Storage buffering and task stacks are separate existing allocations. Reuse the recorder's format-specific workspace where possible instead of retaining its current 16 KiB WAV byte buffer in addition to all FLAC buffers.
+These are buffer budgets, not the complete application RAM footprint. Add small encoder state and at most 31 `u64` Rice-cost accumulators reused per order. The serialized metadata header is capped at 1024 bytes and reuses the frame output buffer; a bounded 900-byte comment scratch string preserves recording fields without truncation. AudioSource retention, DMA, Storage buffering and task stacks are separate existing allocations. Reuse the recorder's format-specific workspace instead of retaining its old 16 KiB WAV byte buffer in addition to all FLAC buffers.
 
-Allocate these buffers once in static resources or caller-owned persistent storage. Do not return large frame arrays by value or create block-sized temporaries on task stacks. If stable Rust requires a separate output-capacity const parameter, validate its relationship to `B` during construction. Every bit-writer operation checks capacity and returns an error rather than panicking or growing storage. Do not use recursion, unsafe code or dynamically dispatched allocated codec objects.
+Allocate these buffers once in static resources or caller-owned persistent storage. Aardwolf uses const-initialized static buffers and `new_flac_with_buffers`; the owned constructor is retained for the existing WAV API and host tests. Do not return large frame arrays by value or create block-sized temporaries on task stacks. The output-capacity const parameter is validated against `B` during construction. Every bit-writer operation checks capacity and returns an error rather than panicking or growing storage. Do not use recursion, unsafe code or dynamically dispatched allocated codec objects.
 
 An exhaustive initial search has a fixed upper bound of five orders and 31 Rice parameters per sample. Accumulate costs over input samples using the reusable small accumulator array, then perform a second pass for the selected representation. Its CPU cost is bounded, but must be measured on the STM32 target.
 
@@ -183,8 +183,8 @@ The supported block sizes, explicit frame properties and partition order zero fi
 
 ## Finalization and failures
 
-1. Snapshot metadata and validate configuration, buffer capacities and metadata bounds before opening a new stream.
-2. Write initial container metadata and append only fully encoded frames. Advance committed sample/frame statistics after successful append.
+1. Snapshot metadata and validate configuration, buffer capacities and metadata bounds before opening a new stream. Delay FLAC stream materialization until PCM arrives so an empty segment creates no file.
+2. Write initial container metadata on the first PCM packet and append only fully encoded frames. Advance committed sample/frame statistics after successful append.
 3. At the exact recording boundary, append any non-empty final partial frame.
 4. Rewrite final STREAMINFO statistics, then finish the Storage stream. A failed rewrite or close is a finalization failure and must be reported.
 5. Reset codec and block state before the next file. Preserve existing files and the application's storage/log reserve.
@@ -219,5 +219,7 @@ The implementation is complete only when the following checks pass:
 Keep host codec tests with the new crate and hardware service tests under `servicetests/flacencoder`, with recorder lifecycle cases in `servicetests/audiorecorder`. Host tooling may allocate; the firmware codec and its runtime dependencies may not. Use flacenc as a separate host-side reference where helpful, with matching capabilities and bit depths, but independent desktop decoding is the acceptance authority. Byte-for-byte equality with another encoder's compressed output is not required.
 
 ## Remaining implementation measurements
+
+Host validation covers 284 codec fixtures plus four recorder-produced files with exact integer round trips through FFmpeg and Xiph FLAC 1.5.0, including 32-bit PCM, both Rice methods, every fixed order, short final frames, and numeric frame boundaries. Firmware release builds cover aardwolf, the FLAC SD fixture test, the existing WAV recorder test, and Integration 002. The codec's default runtime dependency graph is empty and its embedded release objects contain no allocator references. The SD fixture test and concurrent capture/radio/logging measurements still require running on the board.
 
 The required format, supported orders, exact initial selection rule, residual bounds and memory strategy are decided. Confirm the deployed block size and executor scheduling from board measurements. Any future search heuristic must retain legal-residual validation and the verbatim size bound; any additional encoding capability requires an explicit design update.

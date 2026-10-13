@@ -15,19 +15,22 @@ defmt = [
     "raylar-audiosource/defmt",
     "raylar-storage-service/defmt",
     "raylar-time-service/defmt",
+    "raylar-flac-encoder-service/defmt",
 ]
 
 [dependencies]
 defmt = { workspace = true, optional = true }
 heapless = "0.8.0"
+raylar-flac-encoder-service = { path = "../flacencoder" }
 raylar-audiosource = { path = "../../metadrivers/audiosource" }
 raylar-storage-service = { path = "../storage" }
 raylar-time-service = { path = "../time", default-features = false }
 raylar-drivers = { path = "../../drivers" }
 embassy-time.workspace = true
+embassy-futures = "0.1.2"
 
 [dev-dependencies]
 critical-section = { version = "1.2.0", features = ["std"] }
 defmt = { workspace = true, features = ["unstable-test"] }
-embassy-time = { workspace = true, features = ["std"] }
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
 embassy-executor = { version = "0.10.0", features = ["executor-thread", "platform-std"] }

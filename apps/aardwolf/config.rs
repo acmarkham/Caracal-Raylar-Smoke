@@ -14,7 +14,10 @@ pub const EPOCH_US: i64 = 1_800_000_000;
 pub const MINUTE_US: i64 = 60_000_000;
 pub const ACTIVE_MINUTES: usize = 12;
 pub const LOG_RESERVE_BYTES: u64 = 100_000_000;
-pub const AUDIO_FILE_BYTES: u64 = 512 + 16_000 * 4 * 60;
+pub const FLAC_BLOCK_SAMPLES: usize = 2048;
+/// Worst-case verbatim frames plus the bounded native metadata header.
+pub const AUDIO_FILE_BYTES: u64 = 1024 + 16_000 * 4 * 60
+    + 32 * (16_000u64 * 60).div_ceil(FLAC_BLOCK_SAMPLES as u64);
 pub const LOG_BUDGET_BYTES: u64 = 1_000_000_000;
 pub const SYNC_WORD: [u8; 4] = NETWORK_ID.to_be_bytes();
 

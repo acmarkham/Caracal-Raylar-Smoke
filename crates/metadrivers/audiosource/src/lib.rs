@@ -92,6 +92,8 @@ pub struct ReadStatus {
 /// Keep callback work short: the producer cannot append while the callback is
 /// running.
 pub struct AudioChunk<'a> {
+    /// Loss reported before this chunk; a consumer can close its continuous prefix.
+    pub dropped_since_last_read: u64,
     pub first: &'a [i32],
     pub second: &'a [i32],
     pub position: u64,
@@ -291,6 +293,29 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
         })
     }
 
+    /// End the retained timeline after a hardware gap. Readers observe loss before
+    /// consuming new samples; timestamps restart at the next supplied packet.
+    pub fn report_discontinuity(&self, missing_samples: u64) {
+        let position = self.state.lock(|cell| {
+            let mut state = cell.borrow_mut();
+            let position = state.write_position;
+            for reader in &mut state.readers {
+                if reader.active {
+                    let dropped = (position - reader.cursor).saturating_add(missing_samples).max(1);
+                    reader.cursor = position;
+                    reader.dropped_samples = reader.dropped_samples.saturating_add(dropped);
+                    reader.pending_dropped = reader.pending_dropped.saturating_add(dropped);
+                    reader.overrun_count = reader.overrun_count.saturating_add(1);
+                    reader.pending_overruns = reader.pending_overruns.saturating_add(1);
+                }
+            }
+            state.first_position = None;
+            state.first_timestamp_ticks = None;
+            position
+        });
+        self.changed.sender().send(position);
+    }
+
     fn timestamp_at(&self, state: &State<CAPACITY, READERS>, position: u64) -> Option<u64> {
         let origin_position = state.first_position?;
         let origin_ticks = state.first_timestamp_ticks?;
@@ -362,6 +387,7 @@ impl<const CAPACITY: usize, const READERS: usize> Reader<'_, CAPACITY, READERS> 
             let first_len = length.min(CAPACITY - start);
             let timestamp_ticks = self.source.timestamp_at(&state, reader.cursor);
             let consumed = consume(AudioChunk {
+                dropped_since_last_read: reader.pending_dropped,
                 first: &state.samples[start..start + first_len],
                 second: &state.samples[..length - first_len],
                 position: reader.cursor,
@@ -503,5 +529,24 @@ mod tests {
         let status = reader.read(2, |_| 2).unwrap();
         assert_eq!(status.dropped_since_last_read, 0);
         assert_eq!(status.overruns_since_last_read, 0);
+    }
+
+    #[test]
+    fn hardware_gap_reports_loss_to_all_readers_and_restarts_timestamps() {
+        let source = AudioSource::<8, 2>::new(AudioFormat::new(16000, 1, 1000000));
+        let mut first = source.register(ReaderStart::Latest).unwrap();
+        let mut second = source.register(ReaderStart::Latest).unwrap();
+        source.write(&[1, 2, 3], 0).unwrap();
+        first.read(3, |_| 3).unwrap();
+        source.report_discontinuity(2);
+        source.write(&[4, 5], 9000).unwrap();
+        let status = first.read(2, |chunk| {
+            assert_eq!(chunk.dropped_since_last_read, 2);
+            assert_eq!(chunk.timestamp_ticks, Some(9000));
+            assert_eq!(chunk.first, &[4, 5]);
+            chunk.len()
+        }).unwrap();
+        assert_eq!(status.dropped_since_last_read, 2);
+        assert_eq!(second.read(2, |chunk| chunk.len()).unwrap().dropped_since_last_read, 5);
     }
 }

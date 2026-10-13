@@ -2,7 +2,7 @@ use raylar_drivers::storage::{BLOCK_BYTES, StorageDeviceIdentity, StorageTimesta
 use raylar_time_service::{TimeResources, UtcTimestamp};
 
 use crate::backend::StorageBackend;
-use crate::policy::{folder_path, stream_path};
+use crate::policy::{folder_path, stream_path_with_suffix};
 use crate::types::{StorageLayout, StorageServiceError, StreamHandle, StreamKind, StreamSlot};
 
 pub const DEFAULT_MAX_STREAMS: usize = 4;
@@ -84,7 +84,7 @@ where
         layout: StorageLayout,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         let timestamp = self.clock.current_utc();
-        self.begin_stream_with_timestamp(kind, layout, timestamp, false)
+        self.begin_stream_with_timestamp(kind, layout, timestamp, false, "wav")
             .await
     }
 
@@ -98,7 +98,7 @@ where
         layout: StorageLayout,
         started_utc: UtcTimestamp,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.begin_stream_with_timestamp(kind, layout, Some(started_utc), false)
+        self.begin_stream_with_timestamp(kind, layout, Some(started_utc), false, "wav")
             .await
     }
 
@@ -108,6 +108,7 @@ where
         layout: StorageLayout,
         timestamp: Option<UtcTimestamp>,
         exclusive: bool,
+        audio_suffix: &str,
     ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
         let index = self
             .slots
@@ -116,7 +117,7 @@ where
             .ok_or(StorageServiceError::TooManyStreams)?;
         let generation = self.generations[index].wrapping_add(1);
         let sequence = self.stream_sequence.wrapping_add(1);
-        let path = stream_path(kind, layout, timestamp.map(|time| time.seconds), sequence)?;
+        let path = stream_path_with_suffix(kind, layout, timestamp.map(|time| time.seconds), sequence, audio_suffix)?;
         let file_timestamp = timestamp.and_then(to_storage_timestamp);
         if let Some(folder) = folder_path::<B::Error>(path.as_str())? {
             self.backend
@@ -142,7 +143,12 @@ where
     }
 
     pub async fn begin_new_audio_at(&mut self, layout: StorageLayout, started_utc: UtcTimestamp) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.begin_stream_with_timestamp(StreamKind::Audio, layout, Some(started_utc), true).await
+        self.begin_new_audio_with_suffix_at(layout, started_utc, "wav").await
+    }
+
+    /// The producer supplies only naming data; storage never interprets the bytes.
+    pub async fn begin_new_audio_with_suffix_at(&mut self, layout: StorageLayout, started_utc: UtcTimestamp, suffix: &str) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.begin_stream_with_timestamp(StreamKind::Audio, layout, Some(started_utc), true, suffix).await
     }
 
     pub fn pending_bytes(&self) -> u64 {

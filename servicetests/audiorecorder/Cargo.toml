@@ -24,6 +24,7 @@ embassy-time.workspace = true
 embassy-sync = "0.7.2"
 embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"] }
 heapless = "0.8.0"
+static_cell.workspace = true
 defmt.workspace = true
 defmt-rtt.workspace = true
 panic-probe.workspace = true

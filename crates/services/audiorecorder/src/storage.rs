@@ -1,6 +1,5 @@
 use raylar_storage_service::{
-    StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, StreamKind,
-    UtcClock,
+    StorageBackend, StorageLayout, StorageService, StorageServiceError, StreamHandle, UtcClock,
 };
 use raylar_time_service::UtcTimestamp;
 
@@ -13,14 +12,18 @@ pub trait RecordingStorage {
         &mut self,
         layout: StorageLayout,
         started_utc: UtcTimestamp,
+        suffix: &str,
     ) -> Result<Self::Handle, Self::Error>;
     async fn append_audio(&mut self, stream: Self::Handle, bytes: &[u8])
         -> Result<(), Self::Error>;
     async fn finish_audio(&mut self, stream: Self::Handle) -> Result<(), Self::Error>;
-    /// Containers with a declared length can correct it on a partial stop.
-    async fn finalize_audio(&mut self, stream: Self::Handle, _samples: usize) -> Result<(), Self::Error> {
-        self.finish_audio(stream).await
-    }
+    /// Correct opaque container bytes before closing; unsupported rewrites must fail.
+    async fn rewrite_audio(
+        &mut self,
+        stream: Self::Handle,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error>;
 }
 
 impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize, const WRITE_BUFFER_BYTES: usize>
@@ -36,8 +39,9 @@ where
         &mut self,
         layout: StorageLayout,
         started_utc: UtcTimestamp,
+        suffix: &str,
     ) -> Result<StreamHandle, Self::Error> {
-        self.begin_stream_at(StreamKind::Audio, layout, started_utc)
+        self.begin_new_audio_with_suffix_at(layout, started_utc, suffix)
             .await
     }
 
@@ -51,5 +55,14 @@ where
 
     async fn finish_audio(&mut self, stream: StreamHandle) -> Result<(), Self::Error> {
         self.finish(stream).await
+    }
+
+    async fn rewrite_audio(
+        &mut self,
+        stream: StreamHandle,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error> {
+        self.rewrite(stream, offset, bytes).await
     }
 }

@@ -72,6 +72,7 @@ impl SharedStorage {
         &self,
         layout: StorageLayout,
         utc: UtcTimestamp,
+        suffix: &str,
     ) -> Result<
         StreamHandle,
         StorageServiceError<
@@ -88,7 +89,7 @@ impl SharedStorage {
             );
             return Err(StorageServiceError::OutOfSpace);
         }
-        flag_error(service.begin_new_audio_at(layout, utc).await)
+        flag_error(service.begin_new_audio_with_suffix_at(layout, utc, suffix).await)
     }
     pub async fn write(
         &self,
@@ -113,25 +114,18 @@ impl SharedStorage {
     > {
         flag_error(self.inner.lock().await.finish(stream).await)
     }
-    pub async fn finalize_wav(
+    pub async fn rewrite(
         &self,
         stream: StreamHandle,
-        samples: usize,
+        offset: u64,
+        bytes: &[u8],
     ) -> Result<
         (),
         StorageServiceError<
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        let bytes = (samples as u32).saturating_mul(4);
-        let mut service = self.inner.lock().await;
-        flag_error(
-            service
-                .rewrite(stream, 4, &(504u32 + bytes).to_le_bytes())
-                .await,
-        )?;
-        flag_error(service.rewrite(stream, 508, &bytes.to_le_bytes()).await)?;
-        flag_error(service.finish(stream).await)
+        flag_error(self.inner.lock().await.rewrite(stream, offset, bytes).await)
     }
     pub async fn flush(
         &self,
@@ -170,8 +164,9 @@ impl RecordingStorage for RecorderStorage {
         &mut self,
         layout: StorageLayout,
         utc: UtcTimestamp,
+        suffix: &str,
     ) -> Result<StreamHandle, Self::Error> {
-        self.shared.begin_audio(layout, utc).await
+        self.shared.begin_audio(layout, utc, suffix).await
     }
     async fn append_audio(
         &mut self,
@@ -183,12 +178,13 @@ impl RecordingStorage for RecorderStorage {
     async fn finish_audio(&mut self, stream: StreamHandle) -> Result<(), Self::Error> {
         self.shared.finish(stream).await
     }
-    async fn finalize_audio(
+    async fn rewrite_audio(
         &mut self,
         stream: StreamHandle,
-        samples: usize,
+        offset: u64,
+        bytes: &[u8],
     ) -> Result<(), Self::Error> {
-        self.shared.finalize_wav(stream, samples).await
+        self.shared.rewrite(stream, offset, bytes).await
     }
 }
 

@@ -9,7 +9,8 @@ use defmt::{error, unwrap};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 use raylar_audio_recorder_service::{
-    AudioRecorder, AudioRecorderConfig, AudioRecorderError, TimeMetadataSource,
+    flac_frame_capacity, AudioRecorder, AudioRecorderConfig, AudioRecorderError, FlacConfig,
+    TimeMetadataSource,
 };
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{PdmMicArray, PdmMicDma};
@@ -21,9 +22,14 @@ use raylar_drivers::storage::StorageError;
 use raylar_logging_service::{info as log_info, LoggerHandle};
 use raylar_storage_service::{StorageLayout, StorageServiceError};
 use raylar_time_service::UtcTimestamp;
+use static_cell::ConstStaticCell;
 
 const HALF_SAMPLES: usize = 1_600;
 const DMA_SAMPLES: usize = HALF_SAMPLES * 2;
+const FLAC_SAMPLES: usize = crate::config::FLAC_BLOCK_SAMPLES;
+const FLAC_BYTES: usize = flac_frame_capacity(FLAC_SAMPLES);
+static FLAC_PCM: ConstStaticCell<[i32; FLAC_SAMPLES]> = ConstStaticCell::new([0; FLAC_SAMPLES]);
+static FLAC_FRAME: ConstStaticCell<[u8; FLAC_BYTES]> = ConstStaticCell::new([0; FLAC_BYTES]);
 pub const CAPACITY: usize = 16_000 * 8;
 const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: MicrophoneMode::Mono,
@@ -96,6 +102,11 @@ async fn forward_task(log: Log) -> ! {
             continue;
         }
         if previous != 0 && state.sequence != previous + 1 {
+            if RECORDING.load(Ordering::Relaxed) {
+                AUDIO.report_discontinuity(
+                    (state.sequence - previous - 1).saturating_mul(HALF_SAMPLES as u64),
+                );
+            }
             AUDIO_LOSSES.fetch_add(
                 (state.sequence - previous - 1).min(u32::MAX as u64) as u32,
                 Ordering::Relaxed,
@@ -109,6 +120,9 @@ async fn forward_task(log: Log) -> ! {
         }
         previous = state.sequence;
         if state.error.is_some() {
+            if RECORDING.load(Ordering::Relaxed) {
+                AUDIO.report_discontinuity(HALF_SAMPLES as u64);
+            }
             AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
             continue;
         }
@@ -143,15 +157,23 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
         .with_node_id(node)
         .with_boot_id(u32::from(boot))
         .with_location_source(location_e7);
-    let mut recorder = unwrap!(AudioRecorder::<_, _, CAPACITY, 2>::new(
-        &AUDIO,
-        RecorderStorage { shared: storage },
-        metadata,
-        AudioRecorderConfig {
-            recording_seconds: 60,
-            storage_layout: StorageLayout::HourlyFolders
-        }
-    ));
+    let mut recorder = unwrap!(
+        AudioRecorder::<_, _, CAPACITY, 2, FLAC_BYTES, FLAC_SAMPLES>::new_flac_with_buffers(
+            &AUDIO,
+            RecorderStorage { shared: storage },
+            metadata,
+            AudioRecorderConfig {
+                recording_seconds: 60,
+                storage_layout: StorageLayout::HourlyFolders
+            },
+            FlacConfig {
+                block_samples: crate::config::FLAC_BLOCK_SAMPLES,
+                ..FlacConfig::default()
+            },
+            FLAC_FRAME.take(),
+            FLAC_PCM.take(),
+        )
+    );
     let mut activity = unwrap!(ACTIVITY.receiver());
     loop {
         if !ACTIVITY.try_get().unwrap_or_default().active() {
@@ -229,6 +251,18 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                     }
                 }
                 Err(error) => {
+                    if let AudioRecorderError::Discontinuity { dropped_samples } = error {
+                        AUDIO_LOSSES.fetch_add(
+                            dropped_samples.max(1).min(u32::MAX as u64) as u32,
+                            Ordering::Relaxed,
+                        );
+                        let _ = log_info!(
+                            log,
+                            "audio discontinuity dropped={}; closed FLAC prefix",
+                            dropped_samples
+                        );
+                        break;
+                    }
                     let recovering = !ACTIVITY.try_get().unwrap_or_default().active();
                     if recovering && matches!(error, AudioRecorderError::SourceTimeout) {
                         let _ = log_info!(log, "audio source wait ended during energy recovery");

@@ -64,7 +64,7 @@ The radio campaign varies LoRa spreading factor and band over time so long-term 
 ## Goals
 
 - Run unattended for a target duration of seven days.
-- Capture GPS-calibrated, timestamped audio into bounded WAV or FLAC segments.
+- Capture GPS-calibrated, timestamped audio into bounded FLAC segments by default, retaining WAV support in the recorder.
 - Persist useful system, location, power, time, audio, and radio diagnostics.
 - Exercise both 868 MHz and 2.4 GHz LR1121 operation across SF7, SF8, SF10, and SF12 profiles.
 - Let nodes hear other nodes' scheduled heartbeats and retain passive link measurements over time.
@@ -211,11 +211,12 @@ One node transmits about 1.969 s at 868 MHz and 1.222 s at 2.4 GHz per 30-minute
 
 ## Audio capture and time correlation
 
-Use the Audio Service and Audio Recorder Service to record mono 16 kHz audio as 32-bit integer WAV data, using the agreed high-quality decimation/filter configuration. Segment files on UTC minute boundaries after GPS/PPS-derived time is valid. Retain every completed file without overwrite, using minute-long WAV files in hour-long folders through the Storage Service. Each file's metadata/log record includes UTC file start time, monotonic system start, time validity/uncertainty, a hash of the Location Service estimate, firmware/device identity, calibration status, calibration correction in ppb, and the last PPS time relative to monotonic system time. Record the hash algorithm and input representation so files from the same location can be compared. During GPS holdover, continue recording on the calibrated minute boundaries and mark the increased time uncertainty.
+Use the Audio Service and Audio Recorder Service to record mono 16 kHz audio as lossless 32-bit integer FLAC by default, using the agreed high-quality decimation/filter configuration. Segment files on UTC minute boundaries after GPS/PPS-derived time is valid. Retain every completed file without overwrite, using minute-long FLAC files in hour-long folders through the Storage Service. Each file's metadata/log record includes UTC file start time, monotonic system start, time validity/uncertainty, a hash of the Location Service estimate, firmware/device identity, calibration status, calibration correction in ppb, and the last PPS time relative to monotonic system time. Record the hash algorithm and input representation so files from the same location can be compared. During GPS holdover, continue recording on the calibrated minute boundaries and mark the increased time uncertainty.
 
-Add FLAC as a selectable recording mode according to the [Minimal FLAC Encoder
-Service ADR](../../../services/audio/Service%20FLAC%20Encoder.md). Select WAV or
-FLAC before opening a file. FLAC preserves the same AudioSource PCM, defaults to
+Use FLAC according to the [Minimal FLAC Encoder
+Service ADR](../../../services/audio/Service%20FLAC%20Encoder.md). Aardwolf explicitly
+selects FLAC before opening a file; the global repository default remains WAV.
+FLAC preserves the same AudioSource PCM, defaults to
 32-bit mono, and retains the minute segmentation, hourly folders and metadata
 requirements above. Its initial nominal block size is 2048 samples, with 1024
 and 4096 supported; confirm the deployed choice from hardware measurements.
@@ -223,7 +224,7 @@ Storage supplies `.flac` naming and generic byte rewrites, while the recorder
 owns FLAC finalization. Budget capacity using the encoder's verbatim bound until
 measured compression results are available.
 
-At 16,000 samples/s × 4 bytes/sample, audio uses 3.84 MB per minute, 230.4 MB per hour, and 38.7 GB for seven days before WAV headers and filesystem overhead. A seven-day run creates 10,080 minute files in 168 hour folders. Plan for a card with sufficient usable capacity for those files, a system log below 1 GB, and a protected 100 MB log reserve; a nominal 64 GB card has sufficient nominal capacity if its usable free space is verified at startup.
+At 16,000 samples/s × 4 bytes/sample, raw PCM uses 3.84 MB per minute, 230.4 MB per hour, and 38.7 GB for seven days. FLAC capacity planning adds worst-case frame and metadata overhead without assuming a compression ratio: the initial 2048-sample profile reserves up to 3,856,032 audio/container bytes per minute before filesystem rounding. A seven-day run creates 10,080 minute files in 168 hour folders. Plan for a card with sufficient usable capacity for those files, a system log below 1 GB, and a protected 100 MB log reserve; a nominal 64 GB card has sufficient nominal capacity if its usable free space is verified at startup.
 
 Audio recording continues through radio probe windows unless power or a recording/storage fault requires a documented degraded mode. Radio scheduling, receive processing, and log draining do not block audio acquisition. Audio packet loss, timestamp gaps, overruns, file-finalization failures, and storage errors are surfaced in durable diagnostics when possible.
 

@@ -1,10 +1,17 @@
+mod flac;
+
+use embassy_time::{with_timeout, Duration};
 use raylar_audiosource::{AudioSource, Error as AudioSourceError, Reader, ReaderStart};
 use raylar_storage_service::StorageLayout;
 use raylar_time_service::UtcTimestamp;
-use embassy_time::{Duration, with_timeout};
 
+use crate::container::{flac_comment, Container};
 use crate::wav::WavError;
+use crate::{BorrowedBuffers, OwnedBuffers, RecorderBuffers};
 use crate::{MetadataSource, RecordingStorage, WavContainer};
+use raylar_flac_encoder_service::{
+    frame_capacity, Config as FlacConfig, Encoder, Error as FlacError,
+};
 
 /// Amortises SD/filesystem call latency while reserving only 256 ms of mono
 /// 16 kHz, 32-bit PCM.
@@ -35,6 +42,8 @@ pub enum AudioRecorderError<E> {
     NotStarted,
     AudioSource(AudioSourceError),
     SourceTimeout,
+    Codec(FlacError),
+    Discontinuity { dropped_samples: u64 },
     Storage(E),
 }
 
@@ -53,24 +62,41 @@ pub struct AudioRecorder<
     const AUDIO_CAPACITY: usize,
     const READERS: usize,
     const ENCODE_BYTES: usize = DEFAULT_ENCODE_BUFFER_BYTES,
+    const PCM_SAMPLES: usize = 0,
+    W = OwnedBuffers<ENCODE_BYTES, PCM_SAMPLES>,
 > {
     reader: Reader<'a, AUDIO_CAPACITY, READERS>,
     storage: S,
     metadata: M,
-    container: WavContainer,
+    container: Container,
+    recording_seconds: u32,
     storage_layout: StorageLayout,
     stream: Option<S::Handle>,
+    started: bool,
+    pending_start: Option<UtcTimestamp>,
+    pending_header_len: usize,
     sample_rate_hz: u32,
     frame_samples: usize,
     regular_samples_per_recording: usize,
     samples_per_recording: usize,
     samples_in_recording: usize,
     next_recording_started_utc: Option<UtcTimestamp>,
-    encoded: [u8; ENCODE_BYTES],
+    buffers: W,
+    pcm_len: usize,
+    expected_position: Option<u64>,
+    expected_timestamp: Option<u64>,
+    timestamp_hz: u32,
 }
 
-impl<'a, S, M, const AUDIO_CAPACITY: usize, const READERS: usize, const ENCODE_BYTES: usize>
-    AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES>
+impl<
+        'a,
+        S,
+        M,
+        const AUDIO_CAPACITY: usize,
+        const READERS: usize,
+        const ENCODE_BYTES: usize,
+        const PCM_SAMPLES: usize,
+    > AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES>
 where
     S: RecordingStorage,
     M: MetadataSource,
@@ -80,6 +106,83 @@ where
         storage: S,
         metadata: M,
         config: AudioRecorderConfig,
+    ) -> Result<Self, AudioRecorderError<S::Error>> {
+        Self::construct(source, storage, metadata, config, None, OwnedBuffers::new())
+    }
+
+    /// Explicit FLAC selection; the existing `new` constructor remains WAV.
+    pub fn new_flac(
+        source: &'a AudioSource<AUDIO_CAPACITY, READERS>,
+        storage: S,
+        metadata: M,
+        config: AudioRecorderConfig,
+        flac: FlacConfig,
+    ) -> Result<Self, AudioRecorderError<S::Error>> {
+        Self::construct(
+            source,
+            storage,
+            metadata,
+            config,
+            Some(flac),
+            OwnedBuffers::new(),
+        )
+    }
+
+    /// Use this constructor in firmware to avoid copying block-sized arrays.
+    pub fn new_flac_with_buffers(
+        source: &'a AudioSource<AUDIO_CAPACITY, READERS>,
+        storage: S,
+        metadata: M,
+        config: AudioRecorderConfig,
+        flac: FlacConfig,
+        encoded: &'a mut [u8; ENCODE_BYTES],
+        pcm: &'a mut [i32; PCM_SAMPLES],
+    ) -> Result<
+        AudioRecorder<
+            'a,
+            S,
+            M,
+            AUDIO_CAPACITY,
+            READERS,
+            ENCODE_BYTES,
+            PCM_SAMPLES,
+            BorrowedBuffers<'a, ENCODE_BYTES, PCM_SAMPLES>,
+        >,
+        AudioRecorderError<S::Error>,
+    > {
+        AudioRecorder::construct(
+            source,
+            storage,
+            metadata,
+            config,
+            Some(flac),
+            BorrowedBuffers { encoded, pcm },
+        )
+    }
+}
+
+impl<
+        'a,
+        S,
+        M,
+        const AUDIO_CAPACITY: usize,
+        const READERS: usize,
+        const ENCODE_BYTES: usize,
+        const PCM_SAMPLES: usize,
+        W,
+    > AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES, W>
+where
+    S: RecordingStorage,
+    M: MetadataSource,
+    W: RecorderBuffers<ENCODE_BYTES, PCM_SAMPLES>,
+{
+    fn construct(
+        source: &'a AudioSource<AUDIO_CAPACITY, READERS>,
+        storage: S,
+        metadata: M,
+        config: AudioRecorderConfig,
+        flac: Option<FlacConfig>,
+        buffers: W,
     ) -> Result<Self, AudioRecorderError<S::Error>> {
         let format = source.format();
         let frame_samples = usize::from(format.channels);
@@ -95,17 +198,30 @@ where
             .ok_or(AudioRecorderError::InvalidConfig)?;
         if frame_bytes == 0
             || ENCODE_BYTES == 0
-            || !ENCODE_BYTES.is_multiple_of(frame_bytes)
+            || (flac.is_none() && !ENCODE_BYTES.is_multiple_of(frame_bytes))
             || samples_per_recording == 0
         {
             return Err(AudioRecorderError::InvalidConfig);
         }
-        let container =
-            WavContainer::new(format, config.recording_seconds).map_err(|error| match error {
-                WavError::InvalidFormat | WavError::DataSizeOverflow => {
-                    AudioRecorderError::InvalidConfig
-                }
-            })?;
+        let container = if let Some(flac) = flac {
+            flac.validate().map_err(AudioRecorderError::Codec)?;
+            if format.channels != 1
+                || flac.sample_rate_hz != format.sample_rate_hz
+                || PCM_SAMPLES < flac.block_samples
+                || ENCODE_BYTES < frame_capacity(flac.block_samples)
+            {
+                return Err(AudioRecorderError::InvalidConfig);
+            }
+            Container::Flac(Encoder::new(flac).map_err(AudioRecorderError::Codec)?)
+        } else {
+            Container::Wav(WavContainer::new(format, config.recording_seconds).map_err(
+                |error| match error {
+                    WavError::InvalidFormat | WavError::DataSizeOverflow => {
+                        AudioRecorderError::InvalidConfig
+                    }
+                },
+            )?)
+        };
         let reader = source
             .register(ReaderStart::Latest)
             .map_err(AudioRecorderError::AudioSource)?;
@@ -114,20 +230,28 @@ where
             storage,
             metadata,
             container,
+            recording_seconds: config.recording_seconds,
             storage_layout: config.storage_layout,
             stream: None,
+            started: false,
+            pending_start: None,
+            pending_header_len: 0,
             sample_rate_hz: format.sample_rate_hz,
             frame_samples,
             regular_samples_per_recording: samples_per_recording,
             samples_per_recording,
             samples_in_recording: 0,
             next_recording_started_utc: None,
-            encoded: [0; ENCODE_BYTES],
+            buffers,
+            pcm_len: 0,
+            expected_position: None,
+            expected_timestamp: None,
+            timestamp_hz: format.timestamp_hz,
         })
     }
 
     pub async fn start(&mut self) -> Result<(), AudioRecorderError<S::Error>> {
-        if self.stream.is_some() {
+        if self.started {
             return Ok(());
         }
         // Establish the audio cursor immediately before taking the UTC
@@ -135,12 +259,19 @@ where
         // stream is opened and its header is written remain in the source's
         // retention buffer, preserving the planned UTC boundary.
         self.reader.seek_to_latest();
+        self.expected_position = None;
+        self.expected_timestamp = None;
         self.begin_recording().await?;
         Ok(())
     }
 
-    pub async fn start_at(&mut self, utc: UtcTimestamp) -> Result<(), AudioRecorderError<S::Error>> {
-        if self.stream.is_some() { return Ok(()); }
+    pub async fn start_at(
+        &mut self,
+        utc: UtcTimestamp,
+    ) -> Result<(), AudioRecorderError<S::Error>> {
+        if self.started {
+            return Ok(());
+        }
         self.next_recording_started_utc = Some(utc);
         self.start().await
     }
@@ -159,24 +290,37 @@ where
 
     /// Bound only the source wait. Storage writes run to completion so stopping
     /// the recorder cannot cancel a filesystem operation partway through.
-    pub async fn record_next_with_source_timeout(&mut self, timeout: Duration) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
+    pub async fn record_next_with_source_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
         self.record_next_inner(Some(timeout)).await
     }
 
-    async fn record_next_inner(&mut self, timeout: Option<Duration>) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
+    async fn record_next_inner(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
+        if matches!(self.container, Container::Flac(_)) {
+            return self.record_flac(timeout).await;
+        }
         let stream = self.stream.ok_or(AudioRecorderError::NotStarted)?;
         let sample_capacity = ENCODE_BYTES / 4;
         let remaining = self.samples_per_recording - self.samples_in_recording;
         let requested = sample_capacity.min(remaining);
         if let Some(timeout) = timeout {
-            with_timeout(timeout, self.reader.wait_for_samples(requested)).await
+            with_timeout(timeout, self.reader.wait_for_samples(requested))
+                .await
                 .map_err(|_| AudioRecorderError::SourceTimeout)?
                 .map_err(AudioRecorderError::AudioSource)?;
         } else {
-            self.reader.wait_for_samples(requested).await.map_err(AudioRecorderError::AudioSource)?;
+            self.reader
+                .wait_for_samples(requested)
+                .await
+                .map_err(AudioRecorderError::AudioSource)?;
         }
 
-        let encoded = &mut self.encoded;
+        let encoded = self.buffers.encoded();
         let status = self
             .reader
             .read(requested, |chunk| {
@@ -190,7 +334,10 @@ where
             .map_err(AudioRecorderError::AudioSource)?;
 
         self.storage
-            .append_audio(stream, &self.encoded[..status.consumed_samples * 4])
+            .append_audio(
+                stream,
+                &self.buffers.encoded()[..status.consumed_samples * 4],
+            )
             .await
             .map_err(AudioRecorderError::Storage)?;
         self.samples_in_recording += status.consumed_samples;
@@ -217,6 +364,9 @@ where
         // A later start is a new recording set whose first file may begin at
         // its then-current (unaligned) UTC time.
         self.next_recording_started_utc = None;
+        self.pending_start = None;
+        self.pending_header_len = 0;
+        self.started = false;
         Ok(())
     }
 
@@ -237,46 +387,99 @@ where
                 metadata.started_utc = started_utc;
                 let next = started_utc
                     .seconds
-                    .checked_add(self.container.declared_file_seconds().into())
+                    .checked_add(self.recording_seconds.into())
                     .and_then(|seconds| UtcTimestamp::new(seconds, 0))
                     .ok_or(AudioRecorderError::InvalidConfig)?;
                 (self.regular_samples_per_recording, next)
             } else {
                 first_recording_plan(
                     metadata.started_utc,
-                    self.container.declared_file_seconds(),
+                    self.recording_seconds,
                     self.sample_rate_hz,
                     self.frame_samples,
                 )
                 .ok_or(AudioRecorderError::InvalidConfig)?
             };
-        metadata.started_system_ticks = self.metadata.system_ticks_at(metadata.started_utc).or(metadata.started_system_ticks);
-        let header = self
-            .container
-            .header_for_samples(&metadata, samples_per_recording)
-            .map_err(|_| AudioRecorderError::InvalidConfig)?;
-        let stream = self
-            .storage
-            .begin_audio_stream(self.storage_layout, metadata.started_utc)
-            .await
-            .map_err(AudioRecorderError::Storage)?;
-        if let Err(error) = self.storage.append_audio(stream, &header).await {
-            let _ = self.storage.finish_audio(stream).await;
-            return Err(AudioRecorderError::Storage(error));
+        metadata.started_system_ticks = self
+            .metadata
+            .system_ticks_at(metadata.started_utc)
+            .or(metadata.started_system_ticks);
+        let header_len = match &mut self.container {
+            Container::Wav(wav) => {
+                let header = wav
+                    .header_for_samples(&metadata, samples_per_recording)
+                    .map_err(|_| AudioRecorderError::InvalidConfig)?;
+                // WAV tests can use a smaller payload buffer than the header.
+                let stream = self
+                    .storage
+                    .begin_audio_stream(self.storage_layout, metadata.started_utc, "wav")
+                    .await
+                    .map_err(AudioRecorderError::Storage)?;
+                if let Err(error) = self.storage.append_audio(stream, &header).await {
+                    let _ = self.storage.finish_audio(stream).await;
+                    return Err(AudioRecorderError::Storage(error));
+                }
+                self.stream = Some(stream);
+                0
+            }
+            Container::Flac(encoder) => {
+                encoder.reset();
+                let comment = flac_comment(&metadata, encoder.config())
+                    .map_err(|_| AudioRecorderError::InvalidConfig)?;
+                encoder
+                    .header(self.buffers.encoded(), &[comment.as_str()])
+                    .map_err(AudioRecorderError::Codec)?
+            }
+        };
+        if header_len != 0 {
+            // Materialize FLAC only when the first PCM packet is consumed.
+            self.pending_start = Some(metadata.started_utc);
+            self.pending_header_len = header_len;
         }
-        self.stream = Some(stream);
+        self.started = true;
         self.samples_per_recording = samples_per_recording;
         self.samples_in_recording = 0;
+        self.pcm_len = 0;
         self.next_recording_started_utc = Some(next_recording_started_utc);
         Ok(())
     }
 
     async fn finish_recording(&mut self) -> Result<(), AudioRecorderError<S::Error>> {
+        if matches!(self.container, Container::Flac(_)) && self.pcm_len != 0 {
+            self.append_flac_frame().await?;
+        }
         let stream = self.stream.take().ok_or(AudioRecorderError::NotStarted)?;
-        self.storage
-            .finalize_audio(stream, self.samples_in_recording)
-            .await
-            .map_err(AudioRecorderError::Storage)
+        let rewritten = match &self.container {
+            Container::Flac(encoder) => {
+                self.storage
+                    .rewrite_audio(stream, 8, &encoder.streaminfo())
+                    .await
+            }
+            Container::Wav(_) => {
+                let bytes = u32::try_from(
+                    self.samples_in_recording
+                        .checked_mul(4)
+                        .ok_or(AudioRecorderError::InvalidConfig)?,
+                )
+                .map_err(|_| AudioRecorderError::InvalidConfig)?;
+                match self
+                    .storage
+                    .rewrite_audio(stream, 4, &(504 + bytes).to_le_bytes())
+                    .await
+                {
+                    Ok(()) => {
+                        self.storage
+                            .rewrite_audio(stream, 508, &bytes.to_le_bytes())
+                            .await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+        };
+        // Close even if patching failed; never report the segment as finalized.
+        let closed = self.storage.finish_audio(stream).await;
+        rewritten.map_err(AudioRecorderError::Storage)?;
+        closed.map_err(AudioRecorderError::Storage)
     }
 }
 
@@ -308,192 +511,4 @@ fn first_recording_plan(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::task::{Context, Poll, Wake, Waker};
-    use std::vec::Vec;
-
-    use raylar_audiosource::{AudioFormat, AudioSource};
-    use raylar_time_service::UtcTimestamp;
-
-    use super::*;
-    use crate::RecordingMetadata;
-
-    struct FixedMetadata;
-
-    impl MetadataSource for FixedMetadata {
-        fn snapshot(&self) -> Option<RecordingMetadata> {
-            Some(RecordingMetadata::new(
-                UtcTimestamp::new(1_700_000_000, 0).unwrap(),
-            ))
-        }
-    }
-
-    #[derive(Default)]
-    struct MockStorage {
-        writes: Vec<Vec<u8>>,
-        layouts: Vec<StorageLayout>,
-        starts: Vec<UtcTimestamp>,
-        finishes: usize,
-        next_handle: u8,
-    }
-
-    impl RecordingStorage for MockStorage {
-        type Error = ();
-        type Handle = u8;
-
-        async fn begin_audio_stream(
-            &mut self,
-            layout: StorageLayout,
-            started_utc: UtcTimestamp,
-        ) -> Result<Self::Handle, Self::Error> {
-            self.layouts.push(layout);
-            self.starts.push(started_utc);
-            self.next_handle += 1;
-            Ok(self.next_handle)
-        }
-
-        async fn append_audio(
-            &mut self,
-            _stream: Self::Handle,
-            bytes: &[u8],
-        ) -> Result<(), Self::Error> {
-            self.writes.push(bytes.to_vec());
-            Ok(())
-        }
-
-        async fn finish_audio(&mut self, _stream: Self::Handle) -> Result<(), Self::Error> {
-            self.finishes += 1;
-            Ok(())
-        }
-    }
-
-    struct NoopWake;
-
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    fn block_on<F: core::future::Future>(future: F) -> F::Output {
-        let waker = Waker::from(Arc::new(NoopWake));
-        let mut context = Context::from_waker(&waker);
-        let mut future = core::pin::pin!(future);
-        loop {
-            match future.as_mut().poll(&mut context) {
-                Poll::Ready(output) => return output,
-                Poll::Pending => std::thread::yield_now(),
-            }
-        }
-    }
-
-    #[test]
-    fn recorder_owns_rotation_at_an_exact_sample_boundary() {
-        let source = AudioSource::<16, 1>::new(AudioFormat::new(4, 1, 1_000_000));
-        let config = AudioRecorderConfig {
-            recording_seconds: 1,
-            storage_layout: StorageLayout::DailyFolders,
-        };
-        let mut recorder = AudioRecorder::<_, _, 16, 1, 16>::new(
-            &source,
-            MockStorage::default(),
-            FixedMetadata,
-            config,
-        )
-        .unwrap();
-
-        source.write(&[99, 99], 0).unwrap();
-        block_on(recorder.start()).unwrap();
-        source.write(&[1, -2, 3, -4], 250).unwrap();
-        let progress = block_on(recorder.record_next()).unwrap();
-
-        assert_eq!(progress.pcm_samples, 4);
-        assert!(progress.rotated);
-        assert_eq!(recorder.storage().finishes, 1);
-        assert_eq!(recorder.storage().layouts, [StorageLayout::DailyFolders; 2]);
-        assert_eq!(&recorder.storage().writes[0][..4], b"RIFF");
-        assert_eq!(
-            recorder.storage().writes[1],
-            [1i32, -2, 3, -4]
-                .into_iter()
-                .flat_map(i32::to_le_bytes)
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(&recorder.storage().writes[2][..4], b"RIFF");
-
-        block_on(recorder.stop()).unwrap();
-        assert_eq!(recorder.storage().finishes, 2);
-    }
-
-    #[test]
-    fn read_is_split_instead_of_crossing_the_recording_boundary() {
-        let source = AudioSource::<16, 1>::new(AudioFormat::new(2, 1, 1_000_000));
-        let config = AudioRecorderConfig {
-            recording_seconds: 1,
-            storage_layout: StorageLayout::Flat,
-        };
-        let mut recorder = AudioRecorder::<_, _, 16, 1, 16>::new(
-            &source,
-            MockStorage::default(),
-            FixedMetadata,
-            config,
-        )
-        .unwrap();
-
-        block_on(recorder.start()).unwrap();
-        source.write(&[1, 2, 3, 4], 0).unwrap();
-        let first = block_on(recorder.record_next()).unwrap();
-        let second = block_on(recorder.record_next()).unwrap();
-
-        assert_eq!(first.pcm_samples, 2);
-        assert_eq!(second.pcm_samples, 2);
-        assert!(first.rotated);
-        assert!(second.rotated);
-    }
-
-    struct PartialMinuteMetadata;
-
-    impl MetadataSource for PartialMinuteMetadata {
-        fn snapshot(&self) -> Option<RecordingMetadata> {
-            Some(RecordingMetadata::new(
-                UtcTimestamp::new(1_700_000_038, 500_000).unwrap(),
-            ))
-        }
-    }
-
-    #[test]
-    fn first_recording_is_shortened_then_successors_start_on_the_boundary() {
-        let source = AudioSource::<128, 1>::new(AudioFormat::new(4, 1, 1_000_000));
-        let config = AudioRecorderConfig {
-            recording_seconds: 60,
-            storage_layout: StorageLayout::HourlyFolders,
-        };
-        let mut recorder = AudioRecorder::<_, _, 128, 1, 64>::new(
-            &source,
-            MockStorage::default(),
-            PartialMinuteMetadata,
-            config,
-        )
-        .unwrap();
-
-        block_on(recorder.start()).unwrap();
-        // 1_700_000_040 is the next multiple of 60: 1.5 seconds, or six frames.
-        source.write(&[1, 2, 3, 4, 5, 6], 0).unwrap();
-        let progress = block_on(recorder.record_next()).unwrap();
-
-        assert!(progress.rotated);
-        assert_eq!(recorder.storage().starts.len(), 2);
-        assert_eq!(recorder.storage().starts[0].seconds, 1_700_000_038);
-        assert_eq!(recorder.storage().starts[0].microseconds, 500_000);
-        assert_eq!(recorder.storage().starts[1].seconds, 1_700_000_040);
-        assert_eq!(recorder.storage().starts[1].microseconds, 0);
-        assert_eq!(recorder.storage().starts[1].seconds % 60, 0);
-        assert_eq!(
-            u32::from_le_bytes(recorder.storage().writes[0][508..512].try_into().unwrap()),
-            24
-        );
-        assert_eq!(
-            u32::from_le_bytes(recorder.storage().writes[2][508..512].try_into().unwrap()),
-            960
-        );
-    }
-}
+mod tests;

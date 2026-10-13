@@ -46,11 +46,6 @@ impl WavContainer {
         self.header_with_data_bytes(metadata, self.declared_data_bytes)
     }
 
-    pub(crate) const fn declared_file_seconds(&self) -> u32 {
-        let bytes_per_second = self.format.sample_rate_hz * self.format.channels as u32 * 4;
-        self.declared_data_bytes / bytes_per_second
-    }
-
     pub fn header_for_samples(
         &self,
         metadata: &RecordingMetadata,
@@ -151,7 +146,7 @@ fn format_ppb(value: i64) -> heapless::String<24> {
 
 // FNV-1a over a domain tag, NodeID and signed E7 coordinates. This obscures
 // coordinates from casual inspection but is not cryptographic protection.
-fn location_digest(latitude_e7: i32, longitude_e7: i32, node_id: u32) -> u64 {
+pub(crate) fn location_digest(latitude_e7: i32, longitude_e7: i32, node_id: u32) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     let build_salt = option_env!("RAYLAR_LOCATION_HASH_SALT").unwrap_or("raylar-public-salt");
     for byte in b"raylar-location-v1".iter()

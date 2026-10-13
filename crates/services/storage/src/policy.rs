@@ -2,12 +2,28 @@ use crate::types::{StorageLayout, StorageServiceError, StreamKind, PATH_CAPACITY
 use core::fmt::Write;
 use heapless::String;
 
+#[cfg(test)]
 pub(crate) fn stream_path<E>(
     kind: StreamKind,
     layout: StorageLayout,
     timestamp: Option<i64>,
     sequence: u32,
 ) -> Result<String<PATH_CAPACITY>, StorageServiceError<E>> {
+    stream_path_with_suffix(kind, layout, timestamp, sequence, "wav")
+}
+
+pub(crate) fn stream_path_with_suffix<E>(
+    kind: StreamKind,
+    layout: StorageLayout,
+    timestamp: Option<i64>,
+    sequence: u32,
+    audio_suffix: &str,
+) -> Result<String<PATH_CAPACITY>, StorageServiceError<E>> {
+    if audio_suffix.is_empty() || audio_suffix.len() > 8
+        || !audio_suffix.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    {
+        return Err(StorageServiceError::InvalidPath);
+    }
     if !layout.is_valid() {
         return Err(StorageServiceError::InvalidConfig);
     }
@@ -47,7 +63,7 @@ pub(crate) fn stream_path<E>(
 
     match kind {
         StreamKind::Log => write!(&mut path, "/log_{timestamp}_{sequence}.txt"),
-        StreamKind::Audio => write!(&mut path, "/aud_{timestamp}.wav"),
+        StreamKind::Audio => write!(&mut path, "/aud_{timestamp}.{audio_suffix}"),
         StreamKind::GpsTiming => write!(&mut path, "/gps_{timestamp}_{sequence}.pps"),
     }
     .map_err(|_| StorageServiceError::InvalidPath)?;
@@ -86,6 +102,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(path.as_str(), "/1783987200/aud_1784016510.wav");
+    }
+
+    #[test]
+    fn producer_suffix_keeps_storage_generic_and_cannot_change_directories() {
+        let path = stream_path_with_suffix::<()>(StreamKind::Audio, StorageLayout::HourlyFolders, Some(1784016510), 1, "flac").unwrap();
+        assert_eq!(path.as_str(), "/1784016000/aud_1784016510.flac");
+        for suffix in ["", "../flac", "x/y", "toooolong", "FLAC", "flac.wav"] {
+            assert_eq!(stream_path_with_suffix::<()>(StreamKind::Audio, StorageLayout::Flat, Some(1), 1, suffix), Err(StorageServiceError::InvalidPath));
+        }
     }
 
     #[test]
