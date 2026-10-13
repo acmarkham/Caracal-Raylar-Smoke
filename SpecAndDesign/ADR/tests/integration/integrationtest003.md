@@ -307,6 +307,10 @@ sequence numbers, and missing-value semantics must remain explicit.
 
 ## Local indications
 
+Use [UI policy](../../../Policy/ui.yaml) for startup, severe-error and
+GPS-green behaviour. This test has no UI default overrides; RX/TX indications
+below are additional test-specific activity signals.
+
 After a valid packet has been captured and its essential event data has been
 queued for logging:
 
@@ -322,13 +326,10 @@ unbounded indication queue; every packet is still logged.
 
 In addition:
 
-- pulse `SysGpsGreen` briefly whenever the Time Service publishes a newly
-  accepted GPS PPS anchor;
 - pulse `SysSdBlue` briefly after every successful TX completion;
-- play a short ascending pattern during firmware startup; and
-- play a distinct descending error pattern for radio recovery failures,
-  logging failures, and fatal startup failures. Fatal failures repeat the error
-  indication periodically.
+- classify radio recovery, logging and startup failures using UI error severity;
+  recoverable failures are counted, and severe/fatal failures use the shared
+  error indication.
 
 All indication delivery is bounded and best-effort. It must not block radio
 timing, packet processing, UTC capture, or logging.

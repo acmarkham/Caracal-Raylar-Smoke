@@ -2,6 +2,10 @@
 
 # ADR-0006: Power Management Service
 
+Shared behaviour defaults: [Power](../../../Policy/power.yaml).
+Target exceptions use the [policy override format](../../../Policy/policy_hierarchy.md).
+This ADR defines mechanisms and ownership; its illustrative values do not override policy.
+
 
 ---
 

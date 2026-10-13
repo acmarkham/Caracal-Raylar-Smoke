@@ -1,5 +1,31 @@
 # Integration Test: Audio recording, Time, and Logging
 
+## Shared policies
+
+Use the [policy hierarchy](../../../Policy/policy_hierarchy.md), particularly
+UI, GPS, Time, Storage, Audio, Logging, Versioning, Location, Power and Sensors.
+Shared policy values are inherited; the decisions below define this test's
+workload and its explicit exceptions.
+
+## Policy overrides
+
+```yaml
+policy_overrides:
+  - {policy: audio, key: recording_seconds, value: 60, reason: Minute files are the test measurement unit.}
+  - {policy: gps, key: duty_cycle.minimum_on_s, value: 60, reason: Allow phase convergence after reacquisition.}
+  - {policy: gps, key: duty_cycle.standby_s, value: 1800, reason: Exercise calibrated half-hour holdover.}
+  - {policy: gps, key: phase_qualified_shutdown.enabled, value: true, reason: Verify phase-qualified return to standby.}
+  - policy: ui
+    key: errors.leds
+    value: [SysMainRed, SysGpsRed]
+    reason: This recording test stops normal operation on severe failure and uses both red LEDs.
+  - policy: sensors
+    key: polling_interval_s
+    value: 30
+    applies_when: Registered accelerometer and magnetometer die-temperature sources.
+    reason: Die temperature needs less frequent sampling than raw motion.
+```
+
 ## Startup oscillator correction
 
 Integrationtest002 shall configure PLL1 and PLL3 from the 16 MHz HSE using the
@@ -86,7 +112,7 @@ Startup:
    v1.0 inductor; retain an explicit LDO diagnostic build option.
 2. Enable lipo charger for 200mA limit
 3. Enable all services needed e.g. GPS, SD card, audio
-4. Beep 1000Hz for 0.25s on/0.25s off three times
+4. Play the shared UI startup jingle.
 5. Start the Identity and Versioning Service, open the standard system log and
    immediately record its complete startup snapshot before audio startup:
    * raw STM32 96-bit UUID/UID
@@ -154,8 +180,8 @@ After GPS fix is acquired: Audio
    view. Immediately re-read the latched CCR4 using the driver's 32-bit
    `get_capture_value()` path before calculating `capture_ticks` or deltas.
 4. Start the audio service in mono, 16kHz using high quality e.g. SINC5 buffer, 32 bit int wav file (even though the effective resolution is probably 18 bit)
-5. Save data to minute long wav files, in hourly folders. 
-6. Start on top-of-the minute boundary e.g. 00s
+5. Record using the Audio interval override and the shared Storage layout.
+6. Align startup and segmentation according to the Audio policy.
 7. Toggle the SysSdBlue LED after each packet is written to storage
 8. Aggregate audio packet timestamps into one logfile record per second. Each
    record includes the first and last packet timestamps plus packet and sample
@@ -189,7 +215,7 @@ Every **10 seconds (0.1 Hz)**:
    Include the first anchor type, latest PPS residual, accepted and rejected
    anchor counts, and GPS calibration/reacquisition state and counters.
 3. Append the messages to the system log using the Logging Service.
-4. Briefly flash the SysGpsGreen LED as a hearbeat signal to show that it is correctly operating
+4. Leave `SysGpsGreen` to its sole UI owner; periodic logging must not flash it.
 
 Every **10 seconds (0.1 Hz)**: Raw motion sensors
 
@@ -229,14 +255,9 @@ recording valid data (for example, no SD card, SD-card initialization failure,
 filesystem mount/open/write failure, or an unrecoverable service failure):
 
 1. Stop normal test operation and do not attempt to record further audio.
-2. Play a distinctive error signal on the buzzer: three short descending tones.
-   This must be clearly different from both the three 1000 Hz startup beeps and
-   the successful-GPS trill.
-3. Flash both red system LEDs (`SysMainRed` and `SysGpsRed`) together at 1 Hz
-   with a 50% duty cycle, indefinitely. Normal green heartbeat indications must
-   stop while this severe-error state is active.
-4. Repeat the three-tone error signal every 10 seconds so that the fault remains
-   discoverable when the LEDs are not visible.
+2. Use the shared UI severe-error sound, repetition and latched flash behaviour.
+3. Apply the red-LED override above. Stop normal green heartbeat indications
+   while this severe-error state is active.
 
 Recoverable errors may continue to be logged and counted without entering this
 latched severe-error indication. Once entered, the severe-error state remains

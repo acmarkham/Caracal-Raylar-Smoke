@@ -1,0 +1,18 @@
+schema_version: 1
+policy: power
+scope: repo
+applies_to: Power Management Service; application sleep/SOC gates belong to the target ADR.
+defaults:
+  publish_interval_s: 1
+  low_battery_mv: 3550
+  critical_battery_mv: 3350
+  battery_present_mv: 2500
+  solar_present_mv: 4500
+  external_dc_present_mv: 4500
+  soc: Voltage-derived estimate; retain measured voltage for interpreting decisions.
+  unknown_soc: Preserve None/unknown; never treat it as a measured zero or sufficient charge.
+  workload_control: Application decides pause/resume thresholds and hysteresis; service reports state.
+sources:
+  - SpecAndDesign/ADR/services/power management/Service Power Management.md
+  - crates/services/powermanagement/src/types.rs
+  - crates/services/powermanagement/src/policy.rs

@@ -1,0 +1,21 @@
+schema_version: 1
+policy: logging
+scope: repo
+applies_to: Firmware using the Logging Service and persistent storage.
+defaults:
+  destination: Storage system_log stream.
+  startup: Persist Versioning snapshot and target configuration; flush before normal workload.
+  flush_interval_s: 10
+  producers: Enqueue bounded records; slow SD writes must not block acquisition or radio timing.
+  timestamps: Retain monotonic time; add UTC validity and uncertainty when correlating devices.
+  events: Record service-state changes, errors, recovery, and periodic loss/queue summaries.
+  missing_values: Report unknown/unavailable explicitly; never substitute a valid-looking zero.
+  overflow: Count enqueue failures, dropped/truncated records and write failures; report when possible.
+  long_records: Split required records into numbered parts rather than silently truncate them.
+  unavailable_storage: Continue independent work with bounded loss counters; mark the durable record incomplete.
+  acceptance: Lost required evidence prevents claiming a complete recording/test log.
+sources:
+  - SpecAndDesign/ADR/services/logging/Service Logging.md
+  - SpecAndDesign/ADR/tests/integration/integrationtest004.md
+  - crates/services/logging/src/service.rs
+  - apps/aardwolf/main.rs

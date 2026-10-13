@@ -1,0 +1,18 @@
+schema_version: 1
+policy: audio
+scope: repo
+applies_to: Audio Recorder Service; sample rate and channel selection belong to the target ADR.
+defaults:
+  container: WAV
+  recording_seconds: 3600
+  alignment: Start at the next whole UTC recording interval after valid UTC is available.
+  boundaries: Producer closes at exact sample-count boundaries; folder layout never sets duration.
+  finalization: Finalize the WAV header and finish its Storage stream before opening the next segment.
+  metadata: Preserve start time, time uncertainty, sample rate, channels and sample count.
+  discontinuity: Count and log lost packets/samples; do not present gaps as continuous valid audio.
+  storage_failure: Stop the affected recording without overwriting earlier files; report impairment.
+sources:
+  - SpecAndDesign/ADR/services/audio/Service Audio.md
+  - SpecAndDesign/ADR/patches/patch01.md
+  - crates/services/audiorecorder/src/service.rs
+  - crates/services/audiorecorder/src/metadata.rs

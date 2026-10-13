@@ -1,0 +1,15 @@
+schema_version: 1
+policy: sensors
+scope: repo
+applies_to: Sources registered with the Sensor Service.
+defaults:
+  polling_interval_s: 10
+  identity: Address measurements by source and kind; do not conflate temperatures from different devices.
+  units: Use explicit integer units, including milli-g, nanotesla and milli-degrees Celsius.
+  failure: Retain last valid value with its original timestamp; publish staleness/status and error counters.
+  composites: Compute only registered composites; require usable inputs and preserve validity.
+  state_delivery: Publish latest snapshots with watches; threshold events use bounded channels.
+sources:
+  - SpecAndDesign/ADR/services/sensors/Service Sensors.md
+  - crates/services/sensors/src/types.rs
+  - crates/services/sensors/src/service.rs

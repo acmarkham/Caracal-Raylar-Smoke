@@ -1,0 +1,14 @@
+schema_version: 1
+policy: versioning
+scope: repo
+applies_to: Firmware reporting persistent startup traceability.
+defaults:
+  authority: Consume the Versioning Service snapshot rather than query hardware independently.
+  startup_fields: [device_uid, derived_serial_ids, board_revision, firmware_version, git_identity, build_utc, build_profile, runtime_crc32, build_crc32, storage_identity, gps_version, radio_version]
+  missing_fields: Preserve explicit Unknown or Unavailable states.
+  persistence: Log and flush the startup snapshot before acquisition can stall or fail.
+  module_identity: Obtain cached identity through the owning driver/service; do not bypass ownership.
+sources:
+  - SpecAndDesign/ADR/services/versioning/Service versioning.md
+  - crates/services/versioning/src/snapshot.rs
+  - SpecAndDesign/ADR/tests/integration/integrationtest002.md

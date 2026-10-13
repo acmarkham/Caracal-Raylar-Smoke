@@ -1,5 +1,12 @@
 # Storage Service and Stream-Based Storage Model
 
+## Shared policy
+
+[Storage policy](../../../Policy/storage.yaml) defines the current shared layout,
+timestamp, naming and recovery defaults. [Audio policy](../../../Policy/audio.yaml)
+defines recording interval/alignment defaults. Alternative layouts below are
+supported API capabilities, not exceptions implicitly applied to all clients.
+
 # Context
 
 The storage driver provides low-level filesystem operations over ExFAT and SDMMC. It is intentionally unaware of application concepts such as log files, audio recordings, or GPS timing data.
@@ -169,13 +176,11 @@ Characteristics:
 
 * One logical WAV stream per producer-selected recording interval
 * Producer-owned segmentation
-* Files organised into daily folders
-* File names derived from UTC timestamps
-* Folder names derived from UTC midnight epoch
-* If the system starts, it will commence a file from the top of the minute (e.g. aud_1784016480.wav->Tue Jul 14 2026 08:08:00 GMT+0000) and fill it until it reaches the normal top of the hour mark (e.g. aud_1784019600.wav -> Tue Jul 14 2026 09:00:00 GMT+0000).
+* Layout and names follow the Storage policy unless explicitly overridden
+* Startup and recording alignment follow the Audio policy and target ADR
 * The producer can change its recording interval independently of the selected folder layout
 
-Example:
+Example of the supported `DailyFolders` alternative (not the default):
 
 ```text
 1783987200/
@@ -199,19 +204,11 @@ Persistent PPS timing information and optional NMEA sentence storage
 Characteristics:
 
 * One file per UTC day
-* Stored within a daily directory
+* Folder layout follows the Storage policy
 * Append-only
 * It should be easy to change the folder interval (e.g. from daily to hourly)
 
-Example:
-
-```text
-1784019600/
-
-    gps_1784019600.pps
-```
-
-The precise filename is determined by the storage policy.
+The filename, including its stream-sequence suffix, is determined by the Storage policy.
 
 ---
 
@@ -294,13 +291,8 @@ Clients never generate filenames.
 
 This allows naming conventions to evolve independently of application code.
 
-Current policy:
-
-| Stream     | Naming                              |
-| ---------- | ----------------------------------- |
-| Log        | Single append-only logfile          |
-| Audio      | UTC timestamped hourly WAV with UTC day directory |
-| GPS Timing | Daily file within UTC day directory |
+Current defaults are specified once in [Storage policy](../../../Policy/storage.yaml).
+Recording duration is independent of naming and folder interval.
 
 ---
 
@@ -308,20 +300,8 @@ Current policy:
 
 The Storage Service creates directories automatically.
 
-Current convention:
-
-```text
-/
-syslog.txt
-/1783987200/
-            aud_1783987200.wav
-            gps_1783987200.pps
-            aud_1783990800.wav
-            aud_1783994400.wav
-            aud_1784016480.wav
-            aud_1784019600.wav
-            
-```
+Use the Storage policy's standard layout and naming rules. A target ADR may
+explicitly select an alternative supported layout.
 
 The exact hierarchy remains an implementation detail.
 
@@ -347,7 +327,8 @@ Continue writing.
 
 ## Audio Stream
 
-Audio files on startup will commence on the top of the minute, so there is no need to open/append new files on startup.
+The recorder begins a new file at its policy-selected UTC boundary. Do not
+append to an unfinished WAV after reboot.
 
 ---
 

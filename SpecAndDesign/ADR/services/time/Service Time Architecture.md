@@ -1,5 +1,9 @@
 # Time Service Architecture
 
+Shared behaviour defaults: [Time](../../../Policy/time.yaml).
+Target exceptions use the [policy override format](../../../Policy/policy_hierarchy.md).
+This ADR defines mechanisms and ownership; its illustrative values do not override policy.
+
 # Context
 
 The system maintains a monotonic clock derived from the STM32U5 hardware timer. This clock:

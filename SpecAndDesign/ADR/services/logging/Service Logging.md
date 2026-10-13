@@ -1,5 +1,9 @@
 # Logging Service Architecture
 
+Shared behaviour defaults: [Logging](../../../Policy/logging.yaml) and [Storage](../../../Policy/storage.yaml).
+Target exceptions use the [policy override format](../../../Policy/policy_hierarchy.md).
+This ADR defines mechanisms and ownership; its illustrative values do not override policy.
+
 
 ## Constraints
 Read

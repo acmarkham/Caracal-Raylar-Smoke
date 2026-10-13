@@ -1,0 +1,18 @@
+schema_version: 1
+policy: radio
+scope: repo
+applies_to: Phase I Radio Messaging Service; direct radio-driver tests retain their own protocol.
+defaults:
+  timing: Convert UTC deadlines through the Time Service; driver deadlines remain monotonic.
+  rendezvous: {epoch_s: 300, broadcast_window_s: 60, slot_s: 5}
+  heartbeat_repetitions: 2
+  neighbour_expiry_s: 900
+  profile_selection: Select only complete profiles approved for the target region and hardware.
+  rf_configuration: ADR/run configuration supplies frequency, power, network and schedule identity.
+  invalid_timing: Report uncertainty, conversion and scheduler failures; never claim successful TX.
+  recovery: Use bounded driver/service recovery; log outcomes; reset policy belongs to the target ADR.
+  observations: Preserve packet-complete time, profile, RSSI/SNR and loss/error counters.
+sources:
+  - SpecAndDesign/ADR/services/radio/Service Radio Phase 1.md
+  - crates/services/radio/src/config.rs
+  - crates/services/radio/src/service.rs

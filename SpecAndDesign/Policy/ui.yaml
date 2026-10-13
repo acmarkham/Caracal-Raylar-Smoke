@@ -1,0 +1,46 @@
+schema_version: 1
+policy: ui
+scope: repo
+applies_to: Firmware using board LEDs or a buzzer, including tests.
+defaults:
+  delivery: Async, bounded; never delay acquisition, PPS capture, radio re-arming or storage.
+  ownership: One owner per LED/buzzer; coalesce routine activity; faults take priority.
+  startup:
+    enabled: true
+    trigger: Once per boot when indication hardware is ready; this does not signal full readiness.
+    pitches_hz: [1047, 1319, 1568]
+    tone_ms: 70
+    gap_ms: 35
+    volume: 96
+  gps_green:
+    led: SysGpsGreen
+    inactive: Off during off, standby, power transitions or receiver error.
+    searching: Solid while Searching or Reacquiring with the receiver powered.
+    tracking: Off between newly accepted GPS PPS anchors from the Time Service.
+    pulse_ms: 50
+    trigger: New accepted_anchors with active_time_source GpsPps and an active receiver.
+    rejected_pps: No pulse for raw, gated or rejected edges; no pulse for synthetic time.
+    refresh: React to receiver state as well as time publications, so standby promptly turns it off.
+  errors:
+    recoverable: Log and count; continue useful work without latching the severe indication.
+    severe: Stop affected unsafe/invalid work; independent healthy services may continue.
+    fatal: Stop normal operation when the target cannot operate safely; latch until reset.
+    enabled: true
+    pitches_hz: [440, 330, 220]
+    tone_ms: 140
+    gap_ms: 70
+    volume: 96
+    repeat_interval_s: 10
+    leds: [SysMainRed]
+    led_mode: flash
+    led_period_ms: 1000
+    led_duty_percent: 50
+    latched: true
+    priority: Suppress success/activity on a fault-owned LED; preserve unrelated role indicators.
+sources:
+  - integrationtests/integration003_radiorange/main.rs
+  - integrationtests/integration004_radioheartbeat/indication.rs
+  - integrationtests/integration002_monoaudiolog/main.rs
+  - SpecAndDesign/ADR/tests/integration/integrationtest002.md
+  - SpecAndDesign/ADR/drivers/leds/Driver LED Driver Architecture.md
+  - SpecAndDesign/ADR/drivers/buzzer/Driver Buzzer Architecture.md

@@ -1,5 +1,9 @@
 # ADR: Sensor Service Architecture
 
+Shared behaviour defaults: [Sensors](../../../Policy/sensors.yaml).
+Target exceptions use the [policy override format](../../../Policy/policy_hierarchy.md).
+This ADR defines mechanisms and ownership; its illustrative values do not override policy.
+
 ## Status
 
 Proposed

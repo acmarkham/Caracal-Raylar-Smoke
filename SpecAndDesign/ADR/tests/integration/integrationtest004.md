@@ -4,6 +4,23 @@
 - **Date:** 2026-10-05
 - **Decision owners:** Firmware team
 
+## Shared policies
+
+Use the [policy hierarchy](../../../Policy/policy_hierarchy.md), particularly
+UI, GPS, Time, Radio, Logging, Storage and Versioning. The accelerated schedule
+and role/activity indicators below are test-specific decisions.
+
+## Policy overrides
+
+```yaml
+policy_overrides:
+  - {policy: radio, key: rendezvous.epoch_s, value: 60, reason: Accelerate discovery and scheduling observations.}
+  - {policy: radio, key: rendezvous.broadcast_window_s, value: 40, reason: Separate presence and heartbeat subwindows.}
+  - {policy: radio, key: rendezvous.slot_s, value: 1, reason: Short-range SF7 test uses one-second slots.}
+  - {policy: radio, key: heartbeat_repetitions, value: 1, reason: Measure one scheduled heartbeat per epoch.}
+  - {policy: ui, key: errors.led_mode, value: solid, reason: Distinguish fatal state from the test's red TX pulses.}
+```
+
 ## Objective
 
 Validate the Phase I Radio Messaging Service on two or more Raylar nodes by
@@ -427,10 +444,11 @@ formatting must not block radio timing or use an unbounded queue.
 
 LED policy is:
 
+- shared UI startup/error sounds and GPS-green states;
 - `SysGpsRed`: solid on only for the latched base-station role;
 - `SysSdBlue`: short pulse after a successful local heartbeat or presence TX;
 - `SysMainGreen`: short pulse after a valid peer heartbeat or presence RX;
-- `SysMainRed`: solid on for a fatal initialization/service failure.
+- `SysMainRed`: fatal indication according to the explicit UI override above.
 
 Activity pulses are bounded and best-effort. They must not delay RX re-arming.
 

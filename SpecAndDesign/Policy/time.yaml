@@ -1,0 +1,30 @@
+schema_version: 1
+policy: time
+scope: repo
+applies_to: Time Service and all consumers of UTC.
+defaults:
+  authority: Time Service alone maps monotonic system time to UTC.
+  gps_anchor: Use PPS-correlated UTC, never NMEA serial-arrival time.
+  invalid_utc: Fail conversion explicitly; do not represent monotonic time as UTC.
+  uncertainty: Publish with every UTC estimate; consumers gate their own timed work.
+  pps_admission:
+    interval_tolerance_ppm: 20
+    reacquisition_discard_edges: 5
+    reacquisition_clean_intervals: 3
+    loss_timeout_ms: 1500
+  discipline:
+    phase_slew_s: 60
+    frequency_tracking_interval_s: 1800
+    frequency_tracking_gain_divisor: 4
+    frequency_tracking_max_step_ppb: 1000
+    continuity: Reacquisition and rate updates must not step UTC.
+  holdover:
+    behavior: Retain the calibrated oscillator model after PPS loss; grow uncertainty.
+    stability_ppb: 10000
+    degraded_uncertainty_us: 1000
+    warning_after_s: 90
+    validity: GPS loss does not immediately invalidate an established UTC mapping.
+sources:
+  - SpecAndDesign/ADR/services/time/Service Time Architecture.md
+  - crates/services/time/src/types.rs
+  - crates/services/time/src/service.rs

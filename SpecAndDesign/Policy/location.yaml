@@ -1,0 +1,15 @@
+schema_version: 1
+policy: location
+scope: repo
+applies_to: Location Service and consumers of its filtered GPS estimate.
+defaults:
+  minimum_satellites: 4
+  maximum_hdop_centi: 500
+  minimum_accepted_fixes: 3
+  estimate: Use the filtered service estimate; report source, validity, age and uncertainty.
+  gps_loss: Retain the last valid estimate and expose its age; never replace it with zero coordinates.
+  time: Location does not estimate UTC; use the Time Service for conversion.
+sources:
+  - SpecAndDesign/ADR/services/location/Service Location.md
+  - crates/services/location/src/types.rs
+  - crates/services/location/src/service.rs

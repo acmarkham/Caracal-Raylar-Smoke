@@ -1,0 +1,27 @@
+schema_version: 1
+policy: gps
+scope: repo
+applies_to: GPS receiver control; calibration handshake applies when used with the Time Service.
+defaults:
+  start_mode: Hot
+  first_search_s: 900
+  reacquisition_search_s: 90
+  duty_cycle: {minimum_on_s: 30, standby_s: 30}
+  initial_calibration:
+    with_time_service: Remain active until frequency_calibration_locked; elapsed time alone is insufficient.
+    driver_only_duration_s: 600
+  phase_qualified_shutdown:
+    enabled: false
+    maximum_on_s: 180
+    minimum_clean_pps_s: 0
+    residual_limit_us: 250
+    uncertainty_limit_us: 500
+    consecutive_accepted_anchors: 5
+    rejection: A rejected or gated PPS resets the streak.
+  search_timeout: Count and retry after normal standby; no automatic cold-start escalation.
+  indication: UI policy owns LED and sound meanings; the GPS driver does not.
+sources:
+  - SpecAndDesign/ADR/drivers/gps/Driver GPS Driver Architecture.md
+  - crates/drivers/src/gps/types.rs
+  - servicetests/storage/common.rs
+  - SpecAndDesign/ADR/tests/integration/integrationtest002.md

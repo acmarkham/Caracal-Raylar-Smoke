@@ -1,6 +1,15 @@
 # Caracal-Raylar-Smoke
 Smoke tests for Caracal Raylar boards using Rust Embassy
 
+## Design policies
+
+Shared defaults live in [SpecAndDesign/Policy](SpecAndDesign/Policy/policy_hierarchy.md).
+Read the relevant YAML policies when writing an ADR or implementing a service,
+driver test, integration test, or application. Use explicit ADR overrides for
+target exceptions; do not repeat common startup, GPS indication, error, or
+storage rules. The hierarchy is repository default, one optional scoped policy,
+then the target ADR.
+
 ## Automated firmware loop
 
 Use `scripts/firmware.ps1` to build one firmware package, flash it with

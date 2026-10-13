@@ -1,5 +1,11 @@
 # Integration Test: Power Monitoring and Logging
 
+## Shared policies
+
+Use [UI](../../../Policy/ui.yaml), [Power](../../../Policy/power.yaml),
+[Logging](../../../Policy/logging.yaml), [Storage](../../../Policy/storage.yaml)
+and, when enabled, [Time](../../../Policy/time.yaml). No policy overrides.
+
 ## Constraints
 Read
 ADR\common\AGENTS.md
@@ -38,7 +44,7 @@ Every **10 seconds (0.1 Hz)**:
 2. Generate a human-readable log message from the power service, and a message from the time service that can be used to relate system time back to human time (not with high precision - second level accuracy will be sufficient)
 3. Append the messages to the system log using the Logging Service.
 4. Flash the Green LED as a hearbeat signal to show that it is correctly operating
-5. In the event of any error, turn and leave on the RED led.
+5. Classify and indicate errors using the UI policy; log recoverable failures.
 The test should run continuously. 
 
 

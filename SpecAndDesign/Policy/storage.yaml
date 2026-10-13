@@ -1,0 +1,26 @@
+schema_version: 1
+policy: storage
+scope: repo
+applies_to: Persistent streams created through the Storage Service.
+defaults:
+  layout: HourlyFolders
+  timestamp: Non-negative integer Unix seconds in UTC; never local time or DST.
+  folder: "/{floor(start_utc_s / 3600) * 3600}"
+  naming:
+    audio: "aud_{start_utc_s}.wav"
+    gps_timing: "gps_{start_utc_s}_{sequence}.pps"
+  system_log:
+    layout: Flat
+    path: /syslog.txt
+    recovery: Reopen and append after reboot; may start before UTC is valid.
+  timestamped_streams: Require valid Time Service UTC at begin_stream; never invent a timestamp.
+  ownership: Storage chooses paths; each producer owns its stream lifetime and segmentation.
+  collision: Preserve existing data; audio creates a new file exclusively, never truncates a collision.
+  recovery: Append only to streams explicitly opened restart-safe; never resume an unfinished WAV.
+  media_failure: Return and account for errors; never report a failed write as persisted.
+sources:
+  - SpecAndDesign/ADR/services/storage/Service Storage Architecture.md
+  - SpecAndDesign/ADR/patches/patch01.md
+  - crates/services/storage/src/policy.rs
+  - crates/services/storage/src/service.rs
+  - crates/services/audiorecorder/src/service.rs

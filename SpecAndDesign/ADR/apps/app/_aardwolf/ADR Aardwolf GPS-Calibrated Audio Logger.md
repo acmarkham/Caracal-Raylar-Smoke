@@ -1,5 +1,35 @@
 # App Aardwolf: GPS-Calibrated Audio Logger and Link Probe
 
+## Shared policies
+
+Use the [policy hierarchy](../../../../Policy/policy_hierarchy.md) for shared
+UI, GPS, Time, Audio, Storage, Logging, Versioning, Location, Power, Sensors and
+Radio behaviour. Do not inherit defaults or exceptions through another test's
+ADR; Integration 002/004 are evidence for this application's design.
+
+## Policy overrides
+
+```yaml
+policy_overrides:
+  - {policy: audio, key: recording_seconds, value: 60, reason: Bound field recordings to minute files.}
+  - {policy: gps, key: duty_cycle.standby_s, value: 1800, reason: Low-power half-hour holdover between acquisitions.}
+  - {policy: gps, key: phase_qualified_shutdown.enabled, value: true, reason: Require clean timing before standby.}
+  - {policy: gps, key: phase_qualified_shutdown.minimum_clean_pps_s, value: 120, reason: Allow the clean frequency-observation window to complete.}
+  - {policy: radio, key: rendezvous.epoch_s, value: 1800, reason: Half-hour profile-probe campaign.}
+  - {policy: radio, key: rendezvous.broadcast_window_s, value: 720, reason: Twelve active profile minutes followed by sleep.}
+  - policy: radio
+    key: rendezvous.slot_s
+    value: 1
+    applies_when: Active profile minutes other than 4 and 12.
+    reason: Normal profiles fit one-second slots.
+  - policy: radio
+    key: rendezvous.slot_s
+    value: 2
+    applies_when: Active profile minutes 4 and 12.
+    reason: Long SF12 packets require two-second slots.
+  - {policy: radio, key: heartbeat_repetitions, value: 1, reason: One heartbeat per active profile minute.}
+```
+
 - **Status:** Requirements
 - **Date:** 2026-10-07
 - **Decision owners:** Firmware team
@@ -178,9 +208,9 @@ Use LEDs and the buzzer to indicate device health and status. Indications must b
 
 | Device | Indication |
 | --- | --- |
-| Buzzer | Distinct startup, first GPS fix, UTC calibration locked, and severe-error patterns. Optional packet-RX beep is a bench configuration and is disabled in field builds. |
-| `SysGpsGreen` | Brief pulse on each PPS while the receiver is searching or tracking; off between pulses and throughout standby, stop, and power transitions. |
-| `SysMainRed` | Severe error. |
+| Buzzer | Shared UI startup and severe-error patterns. Distinct first GPS fix and UTC calibration sounds are application-specific. Optional packet-RX beep is a bench configuration and is disabled in field builds. |
+| `SysGpsGreen` | Shared UI search, admitted-PPS and inactive states. |
+| `SysMainRed` | Shared UI severe-error indication. |
 | `SysSdBlue` | Brief pulse when an audio packet is ready for recording; pulse rate follows the actual packet rate. |
 | `SysMainGreen` | Brief pulse on valid radio RX. |
 | `SysGpsRed` | Brief pulse on radio TX. |

@@ -1,5 +1,9 @@
 # GPS Driver Architecture (STM32U5 + Embassy + Rust)
 
+Shared behaviour defaults: [GPS](../../../Policy/gps.yaml) and [Time](../../../Policy/time.yaml).
+Target exceptions use the [policy override format](../../../Policy/policy_hierarchy.md).
+This ADR defines mechanisms and ownership; its illustrative values do not override policy.
+
 ## Overview
 
 Implement a reusable GPS driver for an STM32U5 using Embassy. The driver should be designed as a long-lived async service that owns all GPS-related hardware and exposes data to the rest of the application through Embassy synchronization primitives.

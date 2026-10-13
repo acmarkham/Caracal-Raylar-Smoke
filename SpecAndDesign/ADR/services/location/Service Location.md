@@ -1,5 +1,9 @@
 # ADR-0012: Location Service Architecture
 
+Shared behaviour defaults: [Location](../../../Policy/location.yaml).
+Target exceptions use the [policy override format](../../../Policy/policy_hierarchy.md).
+This ADR defines mechanisms and ownership; its illustrative values do not override policy.
+
 ## Status
 
 Proposed
