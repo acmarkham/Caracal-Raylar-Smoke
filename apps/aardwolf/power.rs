@@ -46,7 +46,7 @@ type VoltageDriver = VoltageMonitorDriver<
 >;
 
 #[derive(Clone, Copy)]
-struct SharedI2c {
+pub(crate) struct SharedI2c {
     bus: &'static BusMutex,
 }
 impl embedded_hal::i2c::ErrorType for SharedI2c {
@@ -90,7 +90,7 @@ pub async fn start(
     sens: SensI2C<'static>,
     usb: UsbCdc<'static>,
     log: LoggerHandle<'static, 384, 32>,
-) {
+) -> SharedI2c {
     let SensI2C { i2c, scl, sda } = sens;
     let mut i2c_config = I2cConfig::default();
     i2c_config.frequency = Hertz(100_000);
@@ -135,6 +135,7 @@ pub async fn start(
     spawner.spawn(unwrap!(charger_task(charger)));
     spawner.spawn(unwrap!(power_task(service)));
     spawner.spawn(unwrap!(battery_policy_task(log)));
+    bus
 }
 
 #[embassy_executor::task]

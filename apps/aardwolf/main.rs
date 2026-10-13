@@ -180,7 +180,7 @@ async fn main(spawner: Spawner) -> ! {
         LocationConfig::default(),
     );
     spawner.spawn(unwrap!(location_task(location)));
-    power::start(spawner, adc_voltages, sens_i2c, usb_cdc, power_log).await;
+    let sensor_bus = power::start(spawner, adc_voltages, sens_i2c, usb_cdc, power_log).await;
     radio::start(spawner, ebyte_rf, node, boot, radio_log);
     spawner.spawn(unwrap!(ui_task(leds, buzzer)));
 
@@ -246,6 +246,11 @@ async fn main(spawner: Spawner) -> ! {
     STORAGE_READY.store(true, core::sync::atomic::Ordering::Relaxed);
     let logging = LoggingService::<_, 384, 32, 512>::new(&LOGGING, sink);
     spawner.spawn(unwrap!(logging_task(logging)));
+    spawner.spawn(unwrap!(diagnostics::sensors_task(
+        sensor_bus,
+        LOGGING.register("Sensor")
+    )));
+    spawner.spawn(unwrap!(diagnostics::cpu_task(LOGGING.register("Cpu"))));
     spawner.spawn(unwrap!(diagnostics::time_task(LOGGING.register("Time"))));
     spawner.spawn(unwrap!(diagnostics::gps_task(LOGGING.register("Gps"))));
     spawner.spawn(unwrap!(diagnostics::location_task(

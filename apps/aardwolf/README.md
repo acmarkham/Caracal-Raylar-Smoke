@@ -14,6 +14,8 @@ WAV remains the repository's default recording format and the Audio Recorder Ser
 
 Every ten seconds, `flac timing` records maximum codec and append time plus peak source backlog. The frame budget is 128,000 microseconds and retention is 128,000 samples (eight seconds). Codec timing includes executor yields; append timing includes the shared storage lock wait. A growing backlog means recording is not keeping pace even while individual FLAC frames remain valid.
 
+Every 60 seconds, `/syslog.txt` records three-axis acceleration in milli-g, three-axis magnetic field in nanotesla, and the LIS2HH12 and LIS2MDL die temperatures in milli-Celsius under `Sensor`. The `Cpu` component records average executor CPU load over the preceding 60-second window, with active, idle and elapsed milliseconds. These diagnostics also run during energy recovery. CPU idle measurement follows Integration 002 and includes interrupt work before the executor wakes. Sensor startup failures are retried each minute, and read failures are logged without stopping the app.
+
 The firmware uses a deliberately empty global allocator. The normal exFAT mount, file lookup, create, append and flush paths use bounded storage. Any unexpected allocation fails, which makes heap use visible during bring-up. This and the seven-day data-integrity target require hardware verification.
 
 Before a week-long campaign, verify RF packet-complete margins, GPS holdover timing, SD throughput, audio continuity while radio RX is active, the two SOC thresholds, and the card-full and card-absent cases on physical boards. Configure the antenna and regional EIRP/duty-cycle policy for the deployment; the checked-in firmware logs the antenna as `unknown` until that detail is supplied.

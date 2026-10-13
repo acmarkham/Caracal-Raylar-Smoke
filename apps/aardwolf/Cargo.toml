@@ -31,7 +31,7 @@ raylar-location-service = { path = "../../crates/services/location", features = 
 raylar-power-management-service = { path = "../../crates/services/powermanagement", features = ["defmt"], optional = true }
 raylar-versioning-service = { path = "../../crates/services/versioning", features = ["stm32", "defmt"], optional = true }
 embassy-stm32 = { workspace = true, optional = true }
-embassy-executor = { workspace = true, optional = true }
+embassy-executor = { workspace = true, features = ["trace"], optional = true }
 embassy-sync = "0.7.2"
 embassy-futures = "0.1.2"
 embedded-hal = "1.0.0"
