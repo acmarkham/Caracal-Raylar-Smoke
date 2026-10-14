@@ -2,6 +2,8 @@
 
 This app implements the [Aardwolf ADR](../../SpecAndDesign/ADR/apps/app/_aardwolf/ADR%20Aardwolf%20GPS-Calibrated%20Audio%20Logger.md) for Raylar v1.0. It starts in energy recovery, powers GPS and the microphone only after reported battery SOC exceeds 20%, and pauses audio, GPS, and radio when SOC falls below 10%. Heartbeats resume at the next complete UTC half-hour epoch after recovery.
 
+GPS green follows the shared UI policy: solid while the powered receiver is searching or reacquiring, a 50 ms pulse for each new GPS PPS anchor accepted by the Time Service while tracking, and off in standby, power transitions, receiver error, or off. Receiver state is checked every 50 ms independently of buzzer playback, so the search indication does not wait for PPS or a time publication.
+
 Build with `cargo build -p aardwolf --release --target thumbv8m.main-none-eabihf`. The binary is `target/thumbv8m.main-none-eabihf/release/aardwolf`. No automatic flashing is part of the build.
 
 `bench-external-power` bypasses the boot SOC gate for externally powered bench work, while still applying the below-10% pause once a valid SOC is reported. It must stay disabled for the solar run. `bench-rx-beep` enables a short audible indication for each valid heartbeat received; field builds leave it disabled.

@@ -1,4 +1,18 @@
 use crate::config::{AUDIO_FILE_BYTES, EPOCH_US, LOG_RESERVE_BYTES};
+use raylar_time_service::{TimeSource, TimeState};
+
+/// UI policy: solid search, one refresh pulse per admitted GPS anchor, inactive off.
+pub fn gps_green_on(
+    receiver_active: bool,
+    searching: bool,
+    time: &TimeState,
+    observed_anchors: &mut u32,
+) -> bool {
+    let accepted_gps_pps =
+        time.active_time_source == TimeSource::GpsPps && time.accepted_anchors != *observed_anchors;
+    *observed_anchors = time.accepted_anchors;
+    receiver_active && (searching || accepted_gps_pps)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Activity {

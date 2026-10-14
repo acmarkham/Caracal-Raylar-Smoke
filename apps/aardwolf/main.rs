@@ -182,7 +182,8 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(unwrap!(location_task(location)));
     let sensor_bus = power::start(spawner, adc_voltages, sens_i2c, usb_cdc, power_log).await;
     radio::start(spawner, ebyte_rf, node, boot, radio_log);
-    spawner.spawn(unwrap!(ui_task(leds, buzzer)));
+    spawner.spawn(unwrap!(led_task(leds)));
+    spawner.spawn(unwrap!(ui_task(buzzer)));
 
     STORAGE_FLAGS.fetch_or(
         raylar_radio_service::heartbeat_v4::LOGGING_IMPAIRED,
@@ -305,8 +306,8 @@ async fn logging_task(mut service: LoggingService<'static, SystemLogSink, 384, 3
 }
 
 #[embassy_executor::task]
-async fn ui_task(leds: Leds<'static>, buzzer: raylar_board_v1p0::Buzzer<'static>) -> ! {
-    use raylar_drivers::{buzzer as bz, leds as ld};
+async fn led_task(leds: Leds<'static>) -> ! {
+    use raylar_drivers::{gps::OperatingState, leds as ld};
     let Leds {
         sys_gps_green,
         sys_gps_red,
@@ -321,42 +322,31 @@ async fn ui_task(leds: Leds<'static>, buzzer: raylar_board_v1p0::Buzzer<'static>
         sys_main_green,
         sys_sd_blue,
     });
-    let mut buzzer = bz::init(bz::BuzzerResources {
-        timer: buzzer.tim,
-        pin: buzzer.pin,
-    });
-    let _ = buzzer
-        .play_tone(bz::PitchHz(900), Duration::from_millis(80), bz::Volume(80))
-        .await;
-    let mut last_pps = 0u64;
+    let mut observed_anchors = common::TIME_RESOURCES.time_state().accepted_anchors;
     let mut last_rx = 0u32;
     let mut last_tx = 0u32;
     let mut last_audio = 0u32;
-    let mut first_fix_signalled = false;
-    let mut lock_signalled = false;
-    let mut severe_signalled = false;
     loop {
         let gps = common::GPS_RESOURCES.stats();
         let rx = radio::VALID_RX.load(core::sync::atomic::Ordering::Relaxed);
         let tx = radio::COMPLETED_TX.load(core::sync::atomic::Ordering::Relaxed);
         let audio = audio::AUDIO_PACKETS.load(core::sync::atomic::Ordering::Relaxed);
-        let pps = gps.num_pps_events;
-        if gps.operating_state.is_tracking() && pps != last_pps {
+        let time = common::TIME_RESOURCES.time_state();
+        if policy::gps_green_on(
+            gps.powered && gps.operating_state.is_tracking(),
+            matches!(
+                gps.operating_state,
+                OperatingState::Searching | OperatingState::Reacquiring
+            ),
+            &time,
+            &mut observed_anchors,
+        ) {
             leds.on(ld::LedName::SysGpsGreen);
         } else {
             leds.off(ld::LedName::SysGpsGreen);
         }
         if rx != last_rx {
             leds.on(ld::LedName::SysMainGreen);
-            if cfg!(feature = "bench-rx-beep") {
-                let _ = buzzer
-                    .play_tone(
-                        bz::PitchHz(1_500),
-                        Duration::from_millis(20),
-                        bz::Volume(35),
-                    )
-                    .await;
-            }
         } else {
             leds.off(ld::LedName::SysMainGreen);
         }
@@ -370,19 +360,54 @@ async fn ui_task(leds: Leds<'static>, buzzer: raylar_board_v1p0::Buzzer<'static>
         } else {
             leds.off(ld::LedName::SysSdBlue);
         }
-        last_pps = pps;
         last_rx = rx;
         last_tx = tx;
         last_audio = audio;
-        let severe = STORAGE_SEVERE.load(core::sync::atomic::Ordering::Relaxed)
-            || (STORAGE_READY.load(core::sync::atomic::Ordering::Relaxed)
-                && STORAGE_FLAGS.load(core::sync::atomic::Ordering::Relaxed) != 0)
-            || audio::AUDIO_LOSSES.load(core::sync::atomic::Ordering::Relaxed) != 0;
-        if severe {
+        if severe_error() {
             leds.on(ld::LedName::SysMainRed);
         } else {
             leds.off(ld::LedName::SysMainRed);
         }
+        // Poll receiver state even without Time publications; standby clears
+        // GPS green within 50 ms. Buzzer playback runs independently.
+        Timer::after_millis(50).await;
+    }
+}
+
+fn severe_error() -> bool {
+    STORAGE_SEVERE.load(core::sync::atomic::Ordering::Relaxed)
+        || (STORAGE_READY.load(core::sync::atomic::Ordering::Relaxed)
+            && STORAGE_FLAGS.load(core::sync::atomic::Ordering::Relaxed) != 0)
+        || audio::AUDIO_LOSSES.load(core::sync::atomic::Ordering::Relaxed) != 0
+}
+
+#[embassy_executor::task]
+async fn ui_task(buzzer: raylar_board_v1p0::Buzzer<'static>) -> ! {
+    use raylar_drivers::buzzer as bz;
+    let mut buzzer = bz::init(bz::BuzzerResources {
+        timer: buzzer.tim,
+        pin: buzzer.pin,
+    });
+    let _ = buzzer
+        .play_tone(bz::PitchHz(900), Duration::from_millis(80), bz::Volume(80))
+        .await;
+    let mut last_rx = 0u32;
+    let mut first_fix_signalled = false;
+    let mut lock_signalled = false;
+    let mut severe_signalled = false;
+    loop {
+        let gps = common::GPS_RESOURCES.stats();
+        let rx = radio::VALID_RX.load(core::sync::atomic::Ordering::Relaxed);
+        if cfg!(feature = "bench-rx-beep") && rx != last_rx {
+            let _ = buzzer
+                .play_tone(
+                    bz::PitchHz(1_500),
+                    Duration::from_millis(20),
+                    bz::Volume(35),
+                )
+                .await;
+        }
+        last_rx = rx;
         if !first_fix_signalled && gps.got_first_fix {
             first_fix_signalled = true;
             let _ = buzzer
@@ -407,7 +432,7 @@ async fn ui_task(leds: Leds<'static>, buzzer: raylar_board_v1p0::Buzzer<'static>
                 )
                 .await;
         }
-        if severe && !severe_signalled {
+        if severe_error() && !severe_signalled {
             severe_signalled = true;
             let _ = buzzer
                 .play_tone(

@@ -1,7 +1,42 @@
 use crate::{config, policy::*};
 use embassy_time::{Instant, TICK_HZ};
 use raylar_radio_service::NodeId;
-use raylar_time_service::{TimeError, TimeState, UtcStatus, UtcTimestamp};
+use raylar_time_service::{TimeError, TimeSource, TimeState, UtcStatus, UtcTimestamp};
+
+#[test]
+fn gps_green_searches_without_pps_and_clears_when_inactive() {
+    let time = TimeState::invalid();
+    let mut observed = 0;
+    assert!(gps_green_on(true, true, &time, &mut observed));
+    assert!(gps_green_on(true, true, &time, &mut observed));
+    // Standby may retain rail power, but is not an active receiver.
+    assert!(!gps_green_on(false, true, &time, &mut observed));
+    assert!(!gps_green_on(false, false, &time, &mut observed));
+    assert!(gps_green_on(true, true, &time, &mut observed));
+}
+
+#[test]
+fn gps_green_pulses_only_for_new_admitted_gps_anchors() {
+    let mut time = TimeState::invalid();
+    time.active_time_source = TimeSource::GpsPps;
+    let mut observed = 0;
+    // Raw, gated or rejected PPS does not change accepted_anchors.
+    assert!(!gps_green_on(true, false, &time, &mut observed));
+    time.accepted_anchors = 1;
+    assert!(gps_green_on(true, false, &time, &mut observed));
+    assert!(!gps_green_on(true, false, &time, &mut observed));
+    time.accepted_anchors = 2;
+    assert!(!gps_green_on(false, false, &time, &mut observed));
+    // Waking must not replay an anchor observed while inactive.
+    assert!(!gps_green_on(true, false, &time, &mut observed));
+    time.active_time_source = TimeSource::Other(0);
+    time.accepted_anchors = 3;
+    assert!(!gps_green_on(true, false, &time, &mut observed));
+    time.active_time_source = TimeSource::GpsPps;
+    assert!(!gps_green_on(true, false, &time, &mut observed));
+    time.accepted_anchors = 4;
+    assert!(gps_green_on(true, false, &time, &mut observed));
+}
 
 #[test]
 fn calibrated_utc_mapping_survives_quality_loss_without_changing_status() {
