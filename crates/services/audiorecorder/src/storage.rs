@@ -8,6 +8,12 @@ pub trait RecordingStorage {
     type Error;
     type Handle: Copy;
 
+    /// Check a whole paired recording before creating either file. Implementations
+    /// with protected reserves override this; raw StorageService checks free bytes.
+    async fn admit_audio_bytes(&mut self, _bytes: u64) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     async fn begin_audio_stream(
         &mut self,
         layout: StorageLayout,
@@ -34,6 +40,22 @@ where
 {
     type Error = StorageServiceError<B::Error>;
     type Handle = StreamHandle;
+
+    async fn admit_audio_bytes(&mut self, bytes: u64) -> Result<(), Self::Error> {
+        let (_, free, cluster) = self
+            .space_info()
+            .await?
+            .ok_or(StorageServiceError::InvalidConfig)?;
+        let cluster = u64::from(cluster.max(1));
+        // Two files can each consume a partial final cluster.
+        let need = bytes
+            .saturating_add(cluster.saturating_mul(2))
+            .saturating_add(self.pending_bytes());
+        if free < need {
+            return Err(StorageServiceError::OutOfSpace);
+        }
+        Ok(())
+    }
 
     async fn begin_audio_stream(
         &mut self,

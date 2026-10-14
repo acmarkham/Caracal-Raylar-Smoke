@@ -1,6 +1,6 @@
 # ADR: Multichannel Audio Recording with a Reference Channel
 
-- **Status:** Proposed for review
+- **Status:** Implemented; host and laboratory board checks passed, deployment quality and concurrency validation pending
 - **Date:** 2026-10-14
 - **Decision owners:** Firmware team
 
@@ -128,7 +128,7 @@ Quantized values use the symmetric range `[-Q, Q]`; the most negative value of a
 
 Establish the supported PCM bounds from the resolved microphone packing, shift and gain settings. Those bounds must guarantee that subtraction and absolute-value peak detection fit `i32`, excluding `i32::MIN` as a difference. Reject incompatible capture configurations and account for out-of-range samples explicitly. Arbitrary full-range `i32` PCM is outside this firmware codec's input contract.
 
-Headroom for subtraction does not automatically make the intermediate product `d*Q` safe. Keep scaling within 32 bits as well: use direct multiplication only where the proven bound permits it, otherwise an exact bounded quotient/remainder routine. For `Q=2^(b-1)-1`, the latter can use at most `b-1` modular-doubling steps, followed by subtracting the original magnitude and rounding. Comparing a remainder with `M-remainder` avoids overflowing a doubled remainder. This needs only scalar state, at most eleven steps at 12-bit precision, and no per-sample wide arithmetic or division. Compute reusable block constants once; do not add general-purpose wide-integer routines, floating-point normalization or sample-sized temporaries.
+Headroom for subtraction does not automatically make the intermediate product `d*Q` safe. Keep scaling within 32 bits as well: use a native 32-bit multiply/divide path where the product fits, otherwise an exact bounded quotient/remainder routine. For `Q=2^(b-1)-1`, the latter uses at most `b-1` modular-doubling steps, followed by subtracting the original magnitude and rounding. Comparing a remainder with `M-remainder` avoids overflowing a doubled remainder. This needs only scalar state, at most eleven steps at 12-bit precision, and no per-sample wide arithmetic or wide division. Compute reusable block constants once; do not add general-purpose wide-integer routines, floating-point normalization or sample-sized temporaries.
 
 The absolute reconstructed channel error is at most `M_c/(2*Q) + 0.5` PCM units, including reconstruction rounding. A large transient increases the error bound for its whole channel block. This is one reason to evaluate shorter blocks. The codec does not adjust scale to improve apparent compression or silently drop low-energy differences.
 
@@ -278,7 +278,7 @@ Audio Recorder with one reader and segment coordinator
                     Storage Service
 ```
 
-Keep CRCL codec work outside the core recorder task. Small modules own quantization, Rice selection, record serialization and paired-session coordination. Firmware uses `#![no_std]`, static or caller-owned buffers, no allocator and no new unsafe code. Shared control/status uses `embassy_sync::watch`; PCM continues to use AudioSource's timeline.
+Keep CRCL codec work outside the core recorder task. Small modules own quantization, Rice selection, record serialization and paired-session coordination. Firmware uses `#![no_std]`, static or caller-owned buffers and no allocator. The codec and paired recorder contain no unsafe code; hardware ownership and the required unsafe interrupt-trait entry points stay in the existing STM32 driver. Shared control/status uses `embassy_sync::watch`; PCM continues to use AudioSource's timeline.
 
 The existing `RecordingStorage` interface already supports explicit start UTC, a format suffix, byte append, generic rewrite and finish. Use two handles in hexaphonic mode, with one metadata snapshot and segment identity. The filesystem layout is, for example:
 
@@ -347,9 +347,19 @@ Implementation acceptance requires:
 3. **Alignment and lifecycle:** uniquely indexed synthetic six-channel fixtures demonstrate zero insertion, deletion or relative shift across source wraps, mismatched codec blocks, minute/hour changes, deliberate stops and restarts. Reference and sidecar totals, source indices and segment identities agree. Exercise storage/collision failure at every paired setup, append and finalization stage, plus capture gaps and power-loss tails.
 4. **Hardware synchronization:** verify all six channels' startup and relative timing through the production driver, using known common stimuli and expected geometry. Distinguish acoustic delay from clock/filter/DMA misalignment and repeat after capture restart.
 5. **Downstream quality:** record a full-resolution six-channel baseline in a bounded lab/test profile. Compare reconstructed data against that baseline using the actual beamformer and angle estimator over the required frequency bands, angles, distances, SNRs, diffuse noise, transients and clipping. Measure pairwise phase/coherence, beam pattern or output SNR, and angle error distributions. Include block boundaries to detect scale-change artifacts. Agree numeric degradation limits before choosing the production precision; PCM SNR alone is insufficient.
-6. **Embedded operation:** build without `std`, `alloc`, allocator references or new unsafe code; inspect static RAM and stacks. Sustain the deployment rate under concurrent services and realistic SD stalls, with bounded backlog and no codec-induced loss. Measure worst-case latency, storage rate and energy. Preserve existing mono WAV/FLAC behavior and their required interoperability checks.
+6. **Embedded operation:** build the codec without `std`, `alloc` or allocator references, and keep codec/recorder code safe; inspect static RAM and stacks. Sustain the deployment rate under concurrent services and realistic SD stalls, with bounded backlog and no codec-induced loss. Measure worst-case latency, storage rate and energy. Preserve existing mono WAV/FLAC behavior and their required interoperability checks.
 
 Keep codec tests with the new crate, paired recorder cases with the recorder tests, host decoding/evaluation tooling under `scripts/`, and a bounded board exercise under `servicetests/crclencoder`. Host tooling and the lab baseline may allocate or temporarily store all six raw channels; production hexaphonic recording uses the selected reference-plus-differences format.
+
+## Implementation and validation status
+
+The implementation adds `crates/services/crclencoder` and `HexaphonicRecorder` alongside the existing mono recorder in `crates/services/audiorecorder`. Aardwolf selects the paired path with the `hexaphonic` Cargo feature; mono remains its default. The paired service supports WAV and FLAC references, all four precisions, direct/temporal/automatic Rice, in-place 32-bit quantization, matched rotation and failure handling, CRC-32C, time checkpoints and SHA-256 binding. `scripts/crcl_decode.py` supplies independent host verification, six-channel reconstruction and explicit prefix recovery. Optional location-age metadata is omitted when the current metadata source cannot supply an age; the existing reference metadata retains its available location fields.
+
+Array capture now checks independent DMA completion counts for all six microphones and consumes no DMA synchronization-copy buffer. Timestamp handlers run before Embassy clears the hardware flags and count only enabled notifications; a half-transfer flag can latch while its interrupt is disabled. Completion time is also checked against the capture clock to detect collapsed interrupts. All array-driver clients bind the additional channel handlers. Software-published DMA halves and restarts have been exercised; acoustic phase and filter-delay calibration remain separate checks.
+
+Host checks cover in-place arithmetic against a wider mathematical reference, every precision and prediction policy, packed fallback, exact reference PCM through WAV and desktop FLAC decoding, record integrity, paired rotation/tails, gaps and storage failures. The final 2026-10-14 STM32U595 live matrix passed 12 profiles and capture restart. A laboratory Time Service anchor then supported a finalized 960,000-frame minute pair at timestamp `1792046700`, with observed maximum combined codec time 38,051 microseconds, write time 20,681 microseconds and backlog 9,918 scalar samples in a 96,000-scalar-sample ring. These measurements exclude radio and persistent logging concurrency. See the [test instructions and build record](../../../../servicetests/crclencoder/README.md).
+
+GPS did not establish valid UTC during the three-minute observation window. GPS timing, card-extracted desktop round trips, calibrated acoustic alignment, downstream quality thresholds and sustained deployment concurrency/energy remain acceptance work. The initial 10-bit profile is an evaluation setting until those quality measurements select a production precision.
 
 ## Alternatives and consequences
 

@@ -1,23 +1,34 @@
 use crate::{
-    LOCATION, common, policy,
+    common, policy,
     power::ACTIVITY,
-    storage::{RecorderStorage, STORAGE_FLAGS, SharedStorage},
+    storage::{RecorderStorage, SharedStorage, STORAGE_FLAGS},
+    LOCATION,
 };
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use defmt::{error, unwrap};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
+#[cfg(not(feature = "hexaphonic"))]
+use raylar_audio_recorder_service::AudioRecorder;
+#[cfg(feature = "hexaphonic")]
 use raylar_audio_recorder_service::{
-    AudioRecorder, AudioRecorderConfig, AudioRecorderError, TimeMetadataSource, flac_frame_capacity,
+    crcl, CaptureParameters, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder,
+    ReferenceFormat,
+};
+use raylar_audio_recorder_service::{
+    flac_frame_capacity, AudioRecorderConfig, AudioRecorderError, TimeMetadataSource,
 };
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{PdmMicArray, PdmMicDma};
+#[cfg(feature = "hexaphonic")]
+use raylar_drivers::mic_array::stm32::{DmaChannels, Pins, Stm32MicrophoneDriver};
+#[cfg(not(feature = "hexaphonic"))]
 use raylar_drivers::mic_array::stm32::{MonoPins, Stm32MonoMicrophoneDriver};
 use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
 };
 use raylar_drivers::storage::StorageError;
-use raylar_logging_service::{LoggerHandle, info as log_info};
+use raylar_logging_service::{info as log_info, LoggerHandle};
 use raylar_storage_service::{StorageLayout, StorageServiceError};
 use raylar_time_service::UtcTimestamp;
 use static_cell::ConstStaticCell;
@@ -28,15 +39,32 @@ const FLAC_SAMPLES: usize = crate::config::FLAC_BLOCK_SAMPLES;
 const FLAC_BYTES: usize = flac_frame_capacity(FLAC_SAMPLES);
 static FLAC_PCM: ConstStaticCell<[i32; FLAC_SAMPLES]> = ConstStaticCell::new([0; FLAC_SAMPLES]);
 static FLAC_FRAME: ConstStaticCell<[u8; FLAC_BYTES]> = ConstStaticCell::new([0; FLAC_BYTES]);
-pub const CAPACITY: usize = 16_000 * 8;
+pub const CAPACITY: usize = if cfg!(feature = "hexaphonic") {
+    127_998
+} else {
+    16_000 * 8
+};
+#[cfg(feature = "hexaphonic")]
+static SPATIAL_PCM: ConstStaticCell<[i32; crate::config::CRCL_BLOCK_FRAMES * 6]> =
+    ConstStaticCell::new([0; crate::config::CRCL_BLOCK_FRAMES * 6]);
+#[cfg(feature = "hexaphonic")]
+static SPATIAL_OUTPUT: ConstStaticCell<
+    [u8; crcl::workspace_capacity(crate::config::CRCL_BLOCK_FRAMES, crate::config::CRCL_BITS)],
+> = ConstStaticCell::new(
+    [0; crcl::workspace_capacity(crate::config::CRCL_BLOCK_FRAMES, crate::config::CRCL_BITS)],
+);
 const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
-    mode: MicrophoneMode::Mono,
+    mode: if cfg!(feature = "hexaphonic") {
+        MicrophoneMode::Hexaphonic
+    } else {
+        MicrophoneMode::Mono
+    },
     ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf)
 };
 pub static MICROPHONES: MicrophoneResources<DMA_SAMPLES> = MicrophoneResources::new();
 static AUDIO: AudioSource<CAPACITY, 2> = AudioSource::new(AudioFormat::new(
     crate::config::FLAC_CONFIG.sample_rate_hz,
-    1,
+    crate::config::AUDIO_CHANNELS,
     1_000_000,
 ));
 static RECORDING: AtomicBool = AtomicBool::new(false);
@@ -62,6 +90,7 @@ fn storage_is_full<E>(error: &AudioRecorderError<StorageServiceError<StorageErro
     )
 }
 
+#[cfg(not(feature = "hexaphonic"))]
 pub fn start(
     spawner: Spawner,
     mic: PdmMicArray<'static>,
@@ -88,6 +117,66 @@ pub fn start(
     spawner.spawn(unwrap!(recorder_task(storage, node, boot, log)));
 }
 
+#[cfg(feature = "hexaphonic")]
+pub fn start(
+    spawner: Spawner,
+    mic: PdmMicArray<'static>,
+    storage: &'static SharedStorage,
+    node: u32,
+    boot: u16,
+    log: Log,
+) {
+    let PdmMicArray {
+        cck0,
+        sd0,
+        cck1,
+        sd1,
+        sd2,
+        sd3,
+        dma:
+            PdmMicDma {
+                ch0,
+                ch1,
+                ch2,
+                ch3,
+                ch4,
+                ch5,
+            },
+        ..
+    } = mic;
+    let driver = unwrap!(Stm32MicrophoneDriver::new(
+        Pins {
+            cck0,
+            sd0,
+            cck1,
+            sd1,
+            sd2,
+            sd3
+        },
+        DmaChannels {
+            ch0: embassy_stm32::dma::Channel::new(ch0, crate::MicIrqs),
+            ch1: embassy_stm32::dma::Channel::new(ch1, crate::MicIrqs),
+            ch2: embassy_stm32::dma::Channel::new(ch2, crate::MicIrqs),
+            ch3: embassy_stm32::dma::Channel::new(ch3, crate::MicIrqs),
+            ch4: embassy_stm32::dma::Channel::new(ch4, crate::MicIrqs),
+            ch5: embassy_stm32::dma::Channel::new(ch5, crate::MicIrqs),
+        },
+        &MICROPHONES,
+        MIC_CONFIG
+    ));
+    MICROPHONES.set_enabled(ACTIVITY.try_get().unwrap_or_default().active() && capture_allowed());
+    spawner.spawn(unwrap!(capture_array_task(driver)));
+    spawner.spawn(unwrap!(forward_task(log)));
+    spawner.spawn(unwrap!(recorder_task(storage, node, boot, log)));
+}
+
+#[cfg(feature = "hexaphonic")]
+#[embassy_executor::task]
+async fn capture_array_task(driver: Stm32MicrophoneDriver<'static, DMA_SAMPLES>) -> ! {
+    driver.run().await
+}
+
+#[cfg(not(feature = "hexaphonic"))]
 #[embassy_executor::task]
 async fn capture_task(driver: Stm32MonoMicrophoneDriver<'static, DMA_SAMPLES>) -> ! {
     driver.run().await
@@ -97,17 +186,34 @@ async fn capture_task(driver: Stm32MonoMicrophoneDriver<'static, DMA_SAMPLES>) -
 async fn forward_task(log: Log) -> ! {
     let mut frames = unwrap!(MICROPHONES.frame_receiver());
     let mut previous = 0u64;
+    let mut previous_origin = 0u64;
     loop {
         let state = frames.changed().await;
+        if state.running && state.started_at_ticks != 0 {
+            if previous_origin != 0
+                && previous_origin != state.started_at_ticks
+                && RECORDING.load(Ordering::Relaxed)
+            {
+                AUDIO.report_discontinuity(
+                    HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
+                );
+                AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
+                let _ = log_info!(
+                    log,
+                    "capture restarted; missing sample count is a lower bound"
+                );
+            }
+            previous_origin = state.started_at_ticks;
+        }
         if !state.running || state.sequence == 0 {
             previous = 0;
             continue;
         }
-        if previous != 0 && state.sequence != previous + 1 {
+        if previous != 0 && state.sequence > previous + 1 {
             if RECORDING.load(Ordering::Relaxed) {
-                AUDIO.report_discontinuity(
-                    (state.sequence - previous - 1).saturating_mul(HALF_SAMPLES as u64),
-                );
+                AUDIO.report_discontinuity((state.sequence - previous - 1).saturating_mul(
+                    HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
+                ));
             }
             AUDIO_LOSSES.fetch_add(
                 (state.sequence - previous - 1).min(u32::MAX as u64) as u32,
@@ -123,7 +229,9 @@ async fn forward_task(log: Log) -> ! {
         previous = state.sequence;
         if state.error.is_some() {
             if RECORDING.load(Ordering::Relaxed) {
-                AUDIO.report_discontinuity(HALF_SAMPLES as u64);
+                AUDIO.report_discontinuity(
+                    HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
+                );
             }
             AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
             continue;
@@ -132,10 +240,24 @@ async fn forward_task(log: Log) -> ! {
             continue;
         }
         let frame = MICROPHONES.frame(state);
-        let channel = frame.active_channels()[0];
+        let channels = frame.active_channels();
+        if channels.len() != crate::config::AUDIO_CHANNELS as usize {
+            AUDIO.report_discontinuity(
+                HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
+            );
+            AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        let channel_count = channels.len();
+        // Hexaphonic timestamps refer to the first acquired sample, not the DMA completion.
+        let ticks = if cfg!(feature = "hexaphonic") {
+            state.started_at_ticks + (state.sequence - 1) * HALF_SAMPLES as u64 * 1_000_000 / 16_000
+        } else {
+            state.completed_at_ticks
+        };
         if AUDIO
-            .write_from_fn(channel.len(), state.completed_at_ticks, |index| {
-                (channel[index] as i32) >> 8
+            .write_from_fn(channels[0].len() * channel_count, ticks, |index| {
+                (channels[index % channel_count][index / channel_count] as i32) >> 8
             })
             .is_err()
         {
@@ -153,12 +275,61 @@ fn location_e7() -> Option<(i32, i32)> {
         .then_some((state.latitude.degrees_e7, state.longitude.degrees_e7))
 }
 
+#[cfg(feature = "hexaphonic")]
+fn hex_recorder(
+    storage: &'static SharedStorage,
+    node: u32,
+    metadata: TimeMetadataSource<'static, 4, 8>,
+) -> HexaphonicRecorder<'static, RecorderStorage, TimeMetadataSource<'static, 4, 8>, CAPACITY, 2> {
+    use core::fmt::Write;
+    let mut device = heapless::String::<32>::new();
+    unwrap!(write!(device, "{node:08x}"));
+    let metadata = unwrap!(metadata.with_device_id(&device));
+    let resolved = unwrap!(raylar_drivers::mic_array::stm32::resolve_config(MIC_CONFIG));
+    unwrap!(HexaphonicRecorder::new(
+        &AUDIO,
+        RecorderStorage { shared: storage },
+        metadata,
+        HexaphonicConfig {
+            recorder: AudioRecorderConfig {
+                recording_seconds: 60,
+                storage_layout: StorageLayout::HourlyFolders
+            },
+            spatial: crcl::Config {
+                block_frames: crate::config::CRCL_BLOCK_FRAMES,
+                bits: crate::config::CRCL_BITS,
+                prediction: crcl::Prediction::DirectRice,
+                max_abs_pcm: 1 << 23
+            },
+            reference: ReferenceFormat::Flac(crate::config::FLAC_CONFIG),
+            capture: CaptureParameters {
+                pdm_clock_hz: resolved.microphone_clock_hz,
+                sinc_order: MIC_CONFIG.sinc_filter.order(),
+                decimation: resolved.decimation,
+                cic_scale: MIC_CONFIG.cic_scale as u8,
+                hpf_enabled: MIC_CONFIG.high_pass_filter,
+                pcm_shift: 8,
+                gain_tenths_db: MIC_CONFIG.cic_scale.gain_tenths_db(),
+                origin_ticks: Some(|| MICROPHONES.state().started_at_ticks)
+            },
+            calibration_id: None,
+        },
+        HexaphonicBuffers {
+            pcm: SPATIAL_PCM.take(),
+            spatial_output: SPATIAL_OUTPUT.take(),
+            reference_pcm: FLAC_PCM.take(),
+            reference_output: FLAC_FRAME.take()
+        }
+    ))
+}
+
 #[embassy_executor::task]
 async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, log: Log) -> ! {
     let metadata = TimeMetadataSource::new(&common::TIME_RESOURCES)
         .with_node_id(node)
         .with_boot_id(u32::from(boot))
         .with_location_source(location_e7);
+    #[cfg(not(feature = "hexaphonic"))]
     let mut recorder = unwrap!(
         AudioRecorder::<_, _, CAPACITY, 2, FLAC_BYTES, FLAC_SAMPLES>::new_flac_with_buffers(
             &AUDIO,
@@ -173,6 +344,8 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
             FLAC_PCM.take(),
         )
     );
+    #[cfg(feature = "hexaphonic")]
+    let mut recorder = hex_recorder(storage, node, metadata);
     let mut activity = unwrap!(ACTIVITY.receiver());
     loop {
         if !ACTIVITY.try_get().unwrap_or_default().active() {
@@ -244,10 +417,10 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                     if metrics_started.elapsed() >= Duration::from_secs(10) {
                         let _ = log_info!(
                             log,
-                            "flac timing codec_max_us={} write_max_us={} frame_budget_us={} backlog_max_samples={} source_capacity_samples={}",
+                            "audio timing codec_max_us={} write_max_us={} frame_budget_us={} backlog_max_samples={} source_capacity_samples={}",
                             codec_max_us,
                             write_max_us,
-                            FLAC_SAMPLES as u64 * 1_000_000 / 16_000,
+                            if cfg!(feature = "hexaphonic") { crate::config::CRCL_BLOCK_FRAMES as u64 } else { FLAC_SAMPLES as u64 } * 1_000_000 / 16_000,
                             backlog_max_samples,
                             CAPACITY
                         );

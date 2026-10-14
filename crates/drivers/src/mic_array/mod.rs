@@ -422,7 +422,6 @@ pub struct CaptureState {
 /// Static DMA buffers and publication state shared by driver and consumers.
 pub struct MicrophoneResources<const BUFFER: usize, const WATCHERS: usize = DEFAULT_WATCHERS> {
     buffers: UnsafeCell<[[u32; BUFFER]; MAX_MICROPHONES]>,
-    sync: UnsafeCell<[u32; BUFFER]>,
     state: Watch<CriticalSectionRawMutex, CaptureState, WATCHERS>,
     enabled: Watch<CriticalSectionRawMutex, bool, 1>,
 }
@@ -439,7 +438,6 @@ impl<const BUFFER: usize, const WATCHERS: usize> MicrophoneResources<BUFFER, WAT
     pub const fn new() -> Self {
         Self {
             buffers: UnsafeCell::new([[0; BUFFER]; MAX_MICROPHONES]),
-            sync: UnsafeCell::new([0; BUFFER]),
             state: Watch::new_with(CaptureState {
                 running: false,
                 sequence: 0,

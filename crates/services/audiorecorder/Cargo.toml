@@ -16,12 +16,14 @@ defmt = [
     "raylar-storage-service/defmt",
     "raylar-time-service/defmt",
     "raylar-flac-encoder-service/defmt",
+    "raylar-crcl-encoder-service/defmt",
 ]
 
 [dependencies]
 defmt = { workspace = true, optional = true }
 heapless = "0.8.0"
 raylar-flac-encoder-service = { path = "../flacencoder" }
+raylar-crcl-encoder-service = { path = "../crclencoder" }
 raylar-audiosource = { path = "../../metadrivers/audiosource" }
 raylar-storage-service = { path = "../storage" }
 raylar-time-service = { path = "../time", default-features = false }

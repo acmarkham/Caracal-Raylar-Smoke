@@ -6,6 +6,7 @@ use core::pin::{pin, Pin};
 use core::ptr;
 use core::sync::atomic::{fence, AtomicU32, Ordering};
 
+use embassy_futures::select::{select, Either};
 use embassy_stm32::dma::linked_list::{RunMode, Table};
 use embassy_stm32::dma::{Channel, Dir, ReadableRingBuffer, TransferOptions};
 use embassy_stm32::gpio::{AfType, AnyPin, Flex, OutputType, Pull, Speed};
@@ -14,7 +15,6 @@ use embassy_stm32::peripherals::{PB8, PC2, PD3, PD6, PE4, PE7};
 use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_futures::select::{select, Either};
 use embassy_time::{Duration, Instant, Timer, TICK_HZ};
 
 use super::stm32_config::*;
@@ -40,11 +40,11 @@ impl InterruptTimestamp {
         }
     }
 
-    fn write(&self, value: u64) {
+    fn write(&self, value: u64, completions: u32) {
         self.version.fetch_add(1, Ordering::SeqCst);
         self.low.store(value as u32, Ordering::SeqCst);
         self.high.store((value >> 32) as u32, Ordering::SeqCst);
-        self.count.fetch_add(1, Ordering::SeqCst);
+        self.count.fetch_add(completions, Ordering::SeqCst);
         self.version.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -71,6 +71,8 @@ impl InterruptTimestamp {
 static DMA0_INTERRUPT_TICKS: InterruptTimestamp = InterruptTimestamp::new();
 static DMA5_INTERRUPT_TICKS: InterruptTimestamp = InterruptTimestamp::new();
 static DMA0_COMPLETION: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static ARRAY_COMPLETION: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static ARRAY_COUNTS: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
 
 /// Owns the mono GPDMA channel and its circular descriptors. The table must
 /// stay at a fixed address for as long as GPDMA follows its linked-list links.
@@ -154,7 +156,7 @@ impl Drop for MonoDmaTransfer<'_> {
     }
 }
 
-/// Add this handler alongside Embassy's DMA channel 0 handler in `bind_interrupts!`.
+/// Put this handler BEFORE Embassy's DMA channel 0 handler in `bind_interrupts!`.
 pub struct Dma0TimestampHandler;
 
 impl
@@ -163,12 +165,15 @@ impl
     > for Dma0TimestampHandler
 {
     unsafe fn on_interrupt() {
-        DMA0_INTERRUPT_TICKS.write(Instant::now().as_ticks());
-        DMA0_COMPLETION.signal(());
+        let completions = dma_completions(0);
+        if completions != 0 {
+            DMA0_INTERRUPT_TICKS.write(Instant::now().as_ticks(), completions);
+            DMA0_COMPLETION.signal(());
+        }
     }
 }
 
-/// Add this handler alongside Embassy's DMA channel 5 handler in `bind_interrupts!`.
+/// Put this handler BEFORE Embassy's DMA channel 5 handler in `bind_interrupts!`.
 pub struct Dma5TimestampHandler;
 
 impl
@@ -177,8 +182,54 @@ impl
     > for Dma5TimestampHandler
 {
     unsafe fn on_interrupt() {
-        DMA5_INTERRUPT_TICKS.write(Instant::now().as_ticks());
+        let completions = dma_completions(5);
+        if completions != 0 {
+            DMA5_INTERRUPT_TICKS.write(Instant::now().as_ticks(), completions);
+            ARRAY_COMPLETION.signal(());
+        }
     }
+}
+
+// These handlers observe flags before Embassy clears them. Every physical
+// channel therefore contributes to the coherent-frame admission check.
+macro_rules! array_timestamp_handler {
+    ($name:ident, $irq:ident, $channel:expr) => {
+        pub struct $name;
+        impl embassy_stm32::interrupt::typelevel::Handler<embassy_stm32::interrupt::typelevel::$irq>
+            for $name
+        {
+            unsafe fn on_interrupt() {
+                let completions = dma_completions($channel);
+                if completions != 0 {
+                    ARRAY_COUNTS[$channel - 1].fetch_add(completions, Ordering::SeqCst);
+                }
+            }
+        }
+    };
+}
+array_timestamp_handler!(Dma1TimestampHandler, GPDMA1_CHANNEL1, 1);
+array_timestamp_handler!(Dma2TimestampHandler, GPDMA1_CHANNEL2, 2);
+array_timestamp_handler!(Dma3TimestampHandler, GPDMA1_CHANNEL3, 3);
+array_timestamp_handler!(Dma4TimestampHandler, GPDMA1_CHANNEL4, 4);
+
+fn dma_completions(index: usize) -> u32 {
+    let channel = pac::GPDMA1.ch(index);
+    let status = channel.sr().read();
+    let enabled = channel.cr().read();
+    // A disabled half-transfer flag can latch midway through each linked-list
+    // item. Count only enabled notifications; each item is one published half.
+    u32::from(status.htf() && enabled.htie()) + u32::from(status.tcf() && enabled.tcie())
+}
+
+fn array_counts() -> [u32; 6] {
+    [
+        DMA0_INTERRUPT_TICKS.count(),
+        ARRAY_COUNTS[0].load(Ordering::SeqCst),
+        ARRAY_COUNTS[1].load(Ordering::SeqCst),
+        ARRAY_COUNTS[2].load(Ordering::SeqCst),
+        ARRAY_COUNTS[3].load(Ordering::SeqCst),
+        DMA5_INTERRUPT_TICKS.count(),
+    ]
 }
 
 pub struct Pins<'d> {
@@ -342,120 +393,133 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
         resources.state.sender().send(CaptureState::default());
     }
 
-    /// Runs continuous capture. DMA errors are published and capture resumes.
+    /// Captures one complete DMA half from every active microphone without sample copies.
     pub async fn run(self) -> ! {
         configure_pins(self.pins);
-        configure_mdf(self.config);
-
-        let half = BUFFER / 2;
         let buffers = self.resources.buffers.get().cast::<[u32; BUFFER]>();
-        let sync = unsafe { &mut *self.resources.sync.get() };
-
-        // Each ring has exclusive DMA access to one row of the static resource.
-        let mut mic1 = make_ring(self.dma.ch0, 0, unsafe { &mut *buffers.add(0) });
-        let mut mic2 = make_ring(self.dma.ch1, 1, unsafe { &mut *buffers.add(1) });
-        let mut mic3 = make_ring(self.dma.ch2, 2, unsafe { &mut *buffers.add(2) });
-        let mut mic4 = make_ring(self.dma.ch3, 3, unsafe { &mut *buffers.add(3) });
-        let mut mic5 = make_ring(self.dma.ch4, 4, unsafe { &mut *buffers.add(4) });
-        let mut mic6 = make_ring(self.dma.ch5, 5, unsafe { &mut *buffers.add(5) });
-
-        mic1.set_alignment(half);
-        mic2.set_alignment(half);
-        mic3.set_alignment(half);
-        mic4.set_alignment(half);
-        mic5.set_alignment(half);
-        mic6.set_alignment(half);
-
-        mic1.start();
-        if self.config.requested.mode == MicrophoneMode::Hexaphonic {
-            mic2.start();
-            mic3.start();
-            mic4.start();
-            mic5.start();
-            mic6.start();
-        }
-
-        // This timestamp deliberately precedes the enable writes: it is the
-        // closest software bound on the instant at which all filters start.
-        let started_at_ticks = Instant::now().as_ticks();
-        enable_filters(self.config.requested.mode);
-
+        // The array owns the six DMA descriptor tables in their final positions.
+        let mut rings = [
+            make_ring(self.dma.ch0, 0, unsafe { &mut *buffers.add(0) }),
+            make_ring(self.dma.ch1, 1, unsafe { &mut *buffers.add(1) }),
+            make_ring(self.dma.ch2, 2, unsafe { &mut *buffers.add(2) }),
+            make_ring(self.dma.ch3, 3, unsafe { &mut *buffers.add(3) }),
+            make_ring(self.dma.ch4, 4, unsafe { &mut *buffers.add(4) }),
+            make_ring(self.dma.ch5, 5, unsafe { &mut *buffers.add(5) }),
+        ];
+        let count = self.config.requested.mode.channel_count();
         let publisher = self.resources.state.sender();
-        let channel_count = self.config.requested.mode.channel_count() as u8;
+        let mut enabled = self
+            .resources
+            .enabled
+            .receiver()
+            .expect("one capture controller");
+        let completion = if count == 1 {
+            &DMA0_COMPLETION
+        } else {
+            &ARRAY_COMPLETION
+        };
+        let mut running = false;
+        let mut started_at_ticks = 0;
         let mut sequence = 0u64;
-        publisher.send(CaptureState {
-            running: true,
-            started_at_ticks,
-            channel_count,
-            ..CaptureState::default()
-        });
-
+        let mut previous = [0; 6];
         loop {
-            let result = if self.config.requested.mode == MicrophoneMode::Mono {
-                mic1.read_exact(&mut sync[..half]).await.map(|_| ())
-            } else {
-                // The reference design's channels are synchronous. Waiting for
-                // filter 5 therefore emits one coherent six-channel frame.
-                mic6.read_exact(&mut sync[..half]).await.map(|_| ())
-            };
-
-            let completed_at_ticks = match self.config.requested.mode {
-                MicrophoneMode::Mono => DMA0_INTERRUPT_TICKS.read(),
-                MicrophoneMode::Hexaphonic => DMA5_INTERRUPT_TICKS.read(),
-            };
-            let dma_interrupt_count = match self.config.requested.mode {
-                MicrophoneMode::Mono => DMA0_INTERRUPT_TICKS.count(),
-                MicrophoneMode::Hexaphonic => DMA5_INTERRUPT_TICKS.count(),
-            };
-            let filter_status = filter_status(match self.config.requested.mode {
-                MicrophoneMode::Mono => 0,
-                MicrophoneMode::Hexaphonic => 5,
-            });
-            match result {
-                Ok(()) => {
-                    sequence = sequence.wrapping_add(1);
-                    fence(Ordering::Acquire);
-                    publisher.send(CaptureState {
-                        running: true,
-                        sequence,
-                        half: ((sequence - 1) & 1) as u8,
-                        started_at_ticks,
-                        completed_at_ticks,
-                        channel_count,
-                        dma_interrupt_count,
-                        filter_status,
-                        error: None,
-                    });
-                }
-                Err(error) => {
-                    #[cfg(feature = "defmt")]
-                    defmt::warn!(
-                        "microphone DMA ring error: {:?} irq_count={} filter_status={=u32:#010x} doverr={} sat={} ckab={} rfovr={}",
-                        error,
-                        dma_interrupt_count,
-                        filter_status,
-                        (filter_status & DOVRF) != 0,
-                        (filter_status & SATF) != 0,
-                        (filter_status & CKABF) != 0,
-                        (filter_status & RFOVRF) != 0,
-                    );
-                    if self.config.requested.mode == MicrophoneMode::Mono {
-                        mic1.clear();
-                    } else {
-                        mic6.clear();
+            if !self.resources.enabled.try_get().unwrap_or(true) {
+                if running {
+                    disable_filters();
+                    write(MDF_CKGCR, 0);
+                    for index in 0..count {
+                        pac::GPDMA1.ch(index).cr().modify(|w| w.set_reset(true));
                     }
-                    publisher.send(CaptureState {
-                        running: true,
-                        sequence,
-                        half: (sequence & 1) as u8,
-                        started_at_ticks,
-                        completed_at_ticks,
-                        channel_count,
-                        dma_interrupt_count,
-                        filter_status,
-                        error: Some(Error::Dma),
-                    });
+                    publisher.send(CaptureState::default());
+                    running = false;
                 }
+                enabled.changed().await;
+                continue;
+            }
+            if !running {
+                configure_mdf(self.config);
+                for ring in &mut rings[..count] {
+                    ring.start();
+                }
+                let _ = completion.try_take();
+                previous = array_counts();
+                started_at_ticks = Instant::now().as_ticks();
+                sequence = 0;
+                enable_filters(self.config.requested.mode);
+                publisher.send(CaptureState {
+                    running: true,
+                    started_at_ticks,
+                    channel_count: count as u8,
+                    ..CaptureState::default()
+                });
+                running = true;
+            }
+            if let Either::First(_) = select(enabled.changed(), completion.wait()).await {
+                continue;
+            }
+            let counts = array_counts();
+            let completed_at_ticks = if count == 1 {
+                DMA0_INTERRUPT_TICKS.read()
+            } else {
+                DMA5_INTERRUPT_TICKS.read()
+            };
+            let mut valid = true;
+            let mut status = 0;
+            let half_ticks =
+                (BUFFER as u64 / 2 * TICK_HZ) / u64::from(self.config.actual_sample_rate_hz);
+            let expected_ticks =
+                started_at_ticks.saturating_add((sequence + 1).saturating_mul(half_ticks));
+            // Sticky DMA flags cannot count arbitrarily many events while an
+            // IRQ is masked. The capture clock also detects a collapsed loss.
+            valid &= completed_at_ticks.abs_diff(expected_ticks) <= (half_ticks / 4).max(1);
+            for index in 0..count {
+                valid &= counts[index].wrapping_sub(previous[index]) == 1;
+                let current = filter_status(index);
+                status |= current;
+                // CKAB flags belong to the serial interfaces; only 0..3 are
+                // connected in the six-filter mapping. Keep them diagnostic.
+                // Actual data admission requires all six independent DMA advances.
+                valid &= current & (DOVRF | RFOVRF) == 0;
+            }
+            previous = counts;
+            if valid {
+                sequence += 1;
+                fence(Ordering::Acquire);
+                publisher.send(CaptureState {
+                    running: true,
+                    sequence,
+                    half: ((sequence - 1) & 1) as u8,
+                    started_at_ticks,
+                    completed_at_ticks,
+                    channel_count: count as u8,
+                    dma_interrupt_count: counts[count - 1],
+                    filter_status: status,
+                    error: None,
+                });
+            } else {
+                #[cfg(feature = "defmt")]
+                defmt::warn!(
+                    "array capture discontinuity counts={:?} status={=u32:#010x}",
+                    counts,
+                    status
+                );
+                publisher.send(CaptureState {
+                    running: true,
+                    sequence,
+                    started_at_ticks,
+                    completed_at_ticks,
+                    channel_count: count as u8,
+                    dma_interrupt_count: counts[count - 1],
+                    filter_status: status,
+                    error: Some(Error::Dma),
+                    ..CaptureState::default()
+                });
+                disable_filters();
+                write(MDF_CKGCR, 0);
+                for index in 0..count {
+                    pac::GPDMA1.ch(index).cr().modify(|w| w.set_reset(true));
+                }
+                running = false;
             }
         }
     }
@@ -546,10 +610,17 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
                 previous_interrupt_count = DMA0_INTERRUPT_TICKS.count();
                 sequence = 0;
                 enable_filters(MicrophoneMode::Mono);
-                publisher.send(CaptureState { running: true, started_at_ticks, channel_count: 1, ..CaptureState::default() });
+                publisher.send(CaptureState {
+                    running: true,
+                    started_at_ticks,
+                    channel_count: 1,
+                    ..CaptureState::default()
+                });
                 running = true;
             }
-            if let Either::First(_) = select(enabled.changed(), DMA0_COMPLETION.wait()).await { continue; }
+            if let Either::First(_) = select(enabled.changed(), DMA0_COMPLETION.wait()).await {
+                continue;
+            }
             let completed_at_ticks = DMA0_INTERRUPT_TICKS.read();
             let dma_interrupt_count = DMA0_INTERRUPT_TICKS.count();
             let interrupt_delta = dma_interrupt_count.wrapping_sub(previous_interrupt_count);

@@ -16,6 +16,9 @@ pub const MINUTE_US: i64 = 60_000_000;
 pub const ACTIVE_MINUTES: usize = 12;
 pub const LOG_RESERVE_BYTES: u64 = 100_000_000;
 pub const FLAC_BLOCK_SAMPLES: usize = 2048;
+pub const AUDIO_CHANNELS: u8 = if cfg!(feature = "hexaphonic") { 6 } else { 1 };
+pub const CRCL_BLOCK_FRAMES: usize = 1024;
+pub const CRCL_BITS: u8 = 10;
 /// Measured low-CPU profile: exact Rice search, one fixed predictor order.
 pub const FLAC_CONFIG: FlacConfig = FlacConfig {
     sample_rate_hz: 16_000,
@@ -24,8 +27,18 @@ pub const FLAC_CONFIG: FlacConfig = FlacConfig {
     prediction: FlacPrediction::Fixed(1),
 };
 /// Worst-case verbatim frames plus the bounded native metadata header.
-pub const AUDIO_FILE_BYTES: u64 =
-    1024 + 16_000 * 4 * 60 + 32 * (16_000u64 * 60).div_ceil(FLAC_BLOCK_SAMPLES as u64);
+pub const AUDIO_FILE_BYTES: u64 = 1024
+    + 16_000 * 4 * 61
+    + 32 * (16_000u64 * 61).div_ceil(FLAC_BLOCK_SAMPLES as u64)
+    + if cfg!(feature = "hexaphonic") {
+        // Conservative 61-second PCM allowance, five packed differences, DATA/TIME/header/END.
+        4096 + 16_000 * 61 * 5 * CRCL_BITS as u64 / 8
+            + 96 * (16_000u64 * 61).div_ceil(CRCL_BLOCK_FRAMES as u64)
+            + 548 * 60
+            + 92
+    } else {
+        0
+    };
 pub const LOG_BUDGET_BYTES: u64 = 1_000_000_000;
 pub const SYNC_WORD: [u8; 4] = NETWORK_ID.to_be_bytes();
 
@@ -60,7 +73,11 @@ pub fn profile(index: usize) -> Result<ChannelProfile, LinkError> {
 }
 
 pub const fn slot_seconds(index: usize) -> u64 {
-    if index == 3 || index == 11 { 2 } else { 1 }
+    if index == 3 || index == 11 {
+        2
+    } else {
+        1
+    }
 }
 
 pub fn slot(node: NodeId, epoch: u64, index: usize) -> Result<u32, ScheduleError> {

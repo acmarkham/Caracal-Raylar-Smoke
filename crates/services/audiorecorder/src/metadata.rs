@@ -54,13 +54,20 @@ impl RecordingMetadata {
 pub trait MetadataSource {
     /// Return `None` until the metadata required to start a recording is valid.
     fn snapshot(&self) -> Option<RecordingMetadata>;
-    fn system_ticks_at(&self, _utc: UtcTimestamp) -> Option<u64> { None }
+    fn system_ticks_at(&self, _utc: UtcTimestamp) -> Option<u64> {
+        None
+    }
+    /// UTC for an acquisition anchor, rather than the time of metadata serialization.
+    fn utc_at_ticks(&self, _ticks: u64) -> Option<UtcTimestamp> {
+        None
+    }
 }
 
 /// Minimal metadata source which gates recording on valid UTC.
 pub struct TimeMetadataSource<'a, const WATCHERS: usize, const ANCHOR_DEPTH: usize> {
     time: &'a TimeResources<WATCHERS, ANCHOR_DEPTH>,
     node_id: Option<u32>,
+    device_id: String<DEVICE_ID_CAPACITY>,
     boot_id: Option<u32>,
     card_id: Option<String<IDENTIFIER_CAPACITY>>,
     firmware_hash: String<FIRMWARE_HASH_CAPACITY>,
@@ -75,6 +82,7 @@ impl<'a, const WATCHERS: usize, const ANCHOR_DEPTH: usize>
         Self {
             time,
             node_id: None,
+            device_id: String::new(),
             boot_id: None,
             card_id: None,
             firmware_hash: String::new(),
@@ -88,13 +96,26 @@ impl<'a, const WATCHERS: usize, const ANCHOR_DEPTH: usize>
         self
     }
 
+    pub fn with_device_id(mut self, device: &str) -> Result<Self, core::fmt::Error> {
+        if device.is_empty() {
+            return Err(core::fmt::Error);
+        }
+        let mut id = String::new();
+        id.push_str(device).map_err(|_| core::fmt::Error)?;
+        self.device_id = id;
+        Ok(self)
+    }
+
     pub fn with_boot_id(mut self, boot_id: u32) -> Self {
         self.boot_id = Some(boot_id);
         self
     }
 
     pub fn with_card_id(mut self, card_id: &str) -> Self {
-        let _ = self.card_id.get_or_insert_with(String::new).push_str(card_id);
+        let _ = self
+            .card_id
+            .get_or_insert_with(String::new)
+            .push_str(card_id);
         self
     }
 
@@ -126,7 +147,11 @@ impl<'a, const WATCHERS: usize, const ANCHOR_DEPTH: usize>
         self.boot_id = boot_id;
         if let Some(card) = card {
             let id = self.card_id.get_or_insert_with(String::new);
-            let _ = write!(id, "{:02x}-{:08x}", card.manufacturer_id, card.serial_number);
+            let _ = write!(
+                id,
+                "{:02x}-{:08x}",
+                card.manufacturer_id, card.serial_number
+            );
         }
         if let Some(hash) = firmware_hash {
             let _ = self.firmware_hash.push_str(hash);
@@ -139,7 +164,17 @@ impl<const WATCHERS: usize, const ANCHOR_DEPTH: usize> MetadataSource
     for TimeMetadataSource<'_, WATCHERS, ANCHOR_DEPTH>
 {
     fn system_ticks_at(&self, utc: UtcTimestamp) -> Option<u64> {
-        self.time.time_state().utc_to_system_holdover(utc).ok().map(|instant| instant.as_ticks())
+        self.time
+            .time_state()
+            .utc_to_system_holdover(utc)
+            .ok()
+            .map(|instant| instant.as_ticks())
+    }
+    fn utc_at_ticks(&self, ticks: u64) -> Option<UtcTimestamp> {
+        self.time
+            .time_state()
+            .system_to_utc_holdover(embassy_time::Instant::from_ticks(ticks))
+            .ok()
     }
 
     fn snapshot(&self) -> Option<RecordingMetadata> {
@@ -148,22 +183,32 @@ impl<const WATCHERS: usize, const ANCHOR_DEPTH: usize> MetadataSource
         let mut metadata = RecordingMetadata::new(state.system_to_utc_holdover(now).ok()?);
         metadata.started_system_ticks = Some(embassy_time::Instant::now().as_ticks());
         metadata.node_id = self.node_id;
+        metadata.device_id = self.device_id.clone();
         metadata.boot_id = self.boot_id;
         metadata.card_id = self.card_id.clone();
         metadata.firmware_hash = self.firmware_hash.clone();
-        if let Some((latitude, longitude)) = self.location.or_else(|| self.location_source.and_then(|source| source())) {
+        if let Some((latitude, longitude)) = self
+            .location
+            .or_else(|| self.location_source.and_then(|source| source()))
+        {
             metadata.latitude_e7 = Some(latitude);
             metadata.longitude_e7 = Some(longitude);
         }
         metadata.calibration_ppb = Some(state.calibrated_frequency_error_ppb);
-        metadata.utc_status = match state.utc_status { raylar_time_service::UtcStatus::Invalid => 0, raylar_time_service::UtcStatus::Synchronized => 1, raylar_time_service::UtcStatus::Degraded => 2 };
+        metadata.utc_status = match state.utc_status {
+            raylar_time_service::UtcStatus::Invalid => 0,
+            raylar_time_service::UtcStatus::Synchronized => 1,
+            raylar_time_service::UtcStatus::Degraded => 2,
+        };
         metadata.uncertainty_us = state.uncertainty_us;
         metadata.calibration_locked = state.frequency_calibration_locked;
         metadata.last_pps_system_ticks = state.last_anchor_system_time.map(|v| v.as_ticks());
-        metadata.last_gps_pps_utc = state
-            .last_anchor_utc
-            .filter(|_| matches!(state.active_time_source, raylar_time_service::TimeSource::GpsPps));
+        metadata.last_gps_pps_utc = state.last_anchor_utc.filter(|_| {
+            matches!(
+                state.active_time_source,
+                raylar_time_service::TimeSource::GpsPps
+            )
+        });
         Some(metadata)
     }
 }
-

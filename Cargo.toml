@@ -10,6 +10,7 @@ members = [
     "crates/services/logging",
     "crates/services/audiorecorder",
     "crates/services/flacencoder",
+    "crates/services/crclencoder",
     "crates/services/powermanagement",
     "crates/services/location",
     "crates/services/radio",
@@ -33,6 +34,7 @@ members = [
     "servicetests/logging",
     "servicetests/audiorecorder",
     "servicetests/flacencoder",
+    "servicetests/crclencoder",
     "servicetests/powermanagement",
     "servicetests/location",
     "servicetests/sensors",
@@ -100,6 +102,9 @@ debug = true
 
 # The real-time FLAC path needs throughput; retain size optimization elsewhere.
 [profile.release.package.raylar-flac-encoder-service]
+opt-level = 3
+
+[profile.release.package.raylar-crcl-encoder-service]
 opt-level = 3
 
 [patch.crates-io]

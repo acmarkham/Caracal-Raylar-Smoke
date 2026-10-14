@@ -55,7 +55,12 @@ const GPS_ON_TIME: Duration = Duration::from_secs(60);
 const GPS_STANDBY_TIME: Duration = Duration::from_secs(30 * 60);
 
 bind_interrupts!(struct MicIrqs {
-    GPDMA1_CHANNEL0 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>, Dma0TimestampHandler;
+    GPDMA1_CHANNEL0 => Dma0TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>;
+    GPDMA1_CHANNEL1 => raylar_drivers::mic_array::stm32::Dma1TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH1>;
+    GPDMA1_CHANNEL2 => raylar_drivers::mic_array::stm32::Dma2TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH2>;
+    GPDMA1_CHANNEL3 => raylar_drivers::mic_array::stm32::Dma3TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH3>;
+    GPDMA1_CHANNEL4 => raylar_drivers::mic_array::stm32::Dma4TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH4>;
+    GPDMA1_CHANNEL5 => raylar_drivers::mic_array::stm32::Dma5TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH5>;
 });
 
 #[embassy_executor::main]
@@ -113,6 +118,9 @@ async fn main(spawner: Spawner) -> ! {
         env!("CARGO_PKG_VERSION")
     );
     let audio_config = aardwolf::config::FLAC_CONFIG;
+    let _ = log_info!(audio_log, "recording mode={} channels={} crcl_block_frames={} crcl_bits={} spatial_arithmetic=i32_in_place spatial_prediction=DirectRice",
+        if cfg!(feature="hexaphonic") { "hexaphonic" } else { "mono" },
+        aardwolf::config::AUDIO_CHANNELS, aardwolf::config::CRCL_BLOCK_FRAMES, aardwolf::config::CRCL_BITS);
     let _ = log_info!(
         audio_log,
         "audio config format=flac rate_hz={} channels=1 depth_bits={} block_samples={} prediction={:?} rice_search=exact_bit_counts rice_methods=4,5 partitions=1 fallback=constant,verbatim frame_budget_us={}",
@@ -190,7 +198,7 @@ async fn main(spawner: Spawner) -> ! {
         core::sync::atomic::Ordering::Relaxed,
     );
     let backend = common::storage_driver_with_fatal_handler(sd, mark_storage_failure).await;
-    let mut service = unwrap!(StorageService::<_, _, 512, 2, 16_384>::new(
+    let mut service = unwrap!(StorageService::<_, _, 512, 3, 16_384>::new(
         backend,
         &common::TIME_RESOURCES
     ));

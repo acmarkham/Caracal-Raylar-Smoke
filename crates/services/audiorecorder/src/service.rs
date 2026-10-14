@@ -43,6 +43,7 @@ pub enum AudioRecorderError<E> {
     AudioSource(AudioSourceError),
     SourceTimeout,
     Codec(FlacError),
+    Spatial(raylar_crcl_encoder_service::Error),
     Discontinuity { dropped_samples: u64 },
     Storage(E),
 }

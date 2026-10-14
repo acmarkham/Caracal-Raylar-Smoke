@@ -167,7 +167,7 @@ static MAGNETOMETER_TEMPERATURE_SOURCE: StaticCell<MagnetometerSource> = StaticC
 static HEAP: Heap = Heap::empty();
 
 bind_interrupts!(struct MicIrqs {
-    GPDMA1_CHANNEL0 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>, Dma0TimestampHandler;
+    GPDMA1_CHANNEL0 => Dma0TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>;
 });
 
 // Embassy's thread-mode executor calls these trace hooks immediately before

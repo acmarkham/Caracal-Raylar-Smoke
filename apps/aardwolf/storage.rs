@@ -8,7 +8,9 @@ use raylar_storage_service::{
 };
 use raylar_time_service::UtcTimestamp;
 
-use crate::{common, policy};
+use crate::common;
+#[cfg(not(feature = "hexaphonic"))]
+use crate::policy;
 
 pub static STORAGE_FLAGS: AtomicU16 =
     AtomicU16::new(raylar_radio_service::heartbeat_v4::STORAGE_UNAVAILABLE);
@@ -40,7 +42,7 @@ type Service = StorageService<
     common::BoardStorageBackend,
     &'static raylar_time_service::TimeResources<4, 8>,
     512,
-    2,
+    3,
     16_384,
 >;
 pub struct SharedStorage {
@@ -68,6 +70,7 @@ impl SharedStorage {
                 .await,
         )
     }
+    #[cfg(not(feature = "hexaphonic"))]
     pub async fn begin_audio(
         &self,
         layout: StorageLayout,
@@ -89,7 +92,11 @@ impl SharedStorage {
             );
             return Err(StorageServiceError::OutOfSpace);
         }
-        flag_error(service.begin_new_audio_with_suffix_at(layout, utc, suffix).await)
+        flag_error(
+            service
+                .begin_new_audio_with_suffix_at(layout, utc, suffix)
+                .await,
+        )
     }
     pub async fn write(
         &self,
@@ -160,13 +167,46 @@ impl RecordingStorage for RecorderStorage {
         <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
     >;
     type Handle = StreamHandle;
+    async fn admit_audio_bytes(&mut self, bytes: u64) -> Result<(), Self::Error> {
+        let mut service = self.shared.inner.lock().await;
+        let (_, free, cluster) =
+            flag_error(service.space_info().await)?.ok_or(StorageServiceError::InvalidConfig)?;
+        let required = crate::config::LOG_RESERVE_BYTES
+            .saturating_add(bytes)
+            .saturating_add(u64::from(cluster.max(1)) * 2)
+            .saturating_add(service.pending_bytes());
+        if free < required {
+            STORAGE_FLAGS.fetch_or(
+                raylar_radio_service::heartbeat_v4::STORAGE_FULL,
+                Ordering::Relaxed,
+            );
+            return Err(StorageServiceError::OutOfSpace);
+        }
+        Ok(())
+    }
     async fn begin_audio_stream(
         &mut self,
         layout: StorageLayout,
         utc: UtcTimestamp,
         suffix: &str,
     ) -> Result<StreamHandle, Self::Error> {
-        self.shared.begin_audio(layout, utc, suffix).await
+        // The paired recorder already admits the whole pair before either creation.
+        // Keep mono admission in begin_audio; hexaphonic calls generic creation here.
+        #[cfg(feature = "hexaphonic")]
+        {
+            flag_error(
+                self.shared
+                    .inner
+                    .lock()
+                    .await
+                    .begin_new_audio_with_suffix_at(layout, utc, suffix)
+                    .await,
+            )
+        }
+        #[cfg(not(feature = "hexaphonic"))]
+        {
+            self.shared.begin_audio(layout, utc, suffix).await
+        }
     }
     async fn append_audio(
         &mut self,

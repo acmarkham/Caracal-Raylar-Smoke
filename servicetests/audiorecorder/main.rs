@@ -55,12 +55,12 @@ static SD_WRITE_FLASHES: SyncChannel<CriticalSectionRawMutex, (), 4> = SyncChann
 type Driver = Stm32MicrophoneDriver<'static, DMA_SAMPLES>;
 
 bind_interrupts!(struct MicIrqs {
-    GPDMA1_CHANNEL0 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>, Dma0TimestampHandler;
-    GPDMA1_CHANNEL1 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH1>;
-    GPDMA1_CHANNEL2 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH2>;
-    GPDMA1_CHANNEL3 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH3>;
-    GPDMA1_CHANNEL4 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH4>;
-    GPDMA1_CHANNEL5 => embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH5>, Dma5TimestampHandler;
+    GPDMA1_CHANNEL0 => Dma0TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH0>;
+    GPDMA1_CHANNEL1 => raylar_drivers::mic_array::stm32::Dma1TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH1>;
+    GPDMA1_CHANNEL2 => raylar_drivers::mic_array::stm32::Dma2TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH2>;
+    GPDMA1_CHANNEL3 => raylar_drivers::mic_array::stm32::Dma3TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH3>;
+    GPDMA1_CHANNEL4 => raylar_drivers::mic_array::stm32::Dma4TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH4>;
+    GPDMA1_CHANNEL5 => Dma5TimestampHandler, embassy_stm32::dma::InterruptHandler<peripherals::GPDMA1_CH5>;
 });
 
 #[embassy_executor::main]

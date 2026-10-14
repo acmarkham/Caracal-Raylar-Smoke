@@ -19,8 +19,11 @@ pub(crate) fn stream_path_with_suffix<E>(
     sequence: u32,
     audio_suffix: &str,
 ) -> Result<String<PATH_CAPACITY>, StorageServiceError<E>> {
-    if audio_suffix.is_empty() || audio_suffix.len() > 8
-        || !audio_suffix.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    if audio_suffix.is_empty()
+        || audio_suffix.len() > 8
+        || !audio_suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric())
     {
         return Err(StorageServiceError::InvalidPath);
     }
@@ -106,10 +109,35 @@ mod tests {
 
     #[test]
     fn producer_suffix_keeps_storage_generic_and_cannot_change_directories() {
-        let path = stream_path_with_suffix::<()>(StreamKind::Audio, StorageLayout::HourlyFolders, Some(1784016510), 1, "flac").unwrap();
+        let path = stream_path_with_suffix::<()>(
+            StreamKind::Audio,
+            StorageLayout::HourlyFolders,
+            Some(1784016510),
+            1,
+            "flac",
+        )
+        .unwrap();
         assert_eq!(path.as_str(), "/1784016000/aud_1784016510.flac");
-        for suffix in ["", "../flac", "x/y", "toooolong", "FLAC", "flac.wav"] {
-            assert_eq!(stream_path_with_suffix::<()>(StreamKind::Audio, StorageLayout::Flat, Some(1), 1, suffix), Err(StorageServiceError::InvalidPath));
+        let sidecar = stream_path_with_suffix::<()>(
+            StreamKind::Audio,
+            StorageLayout::HourlyFolders,
+            Some(1784016510),
+            1,
+            "CRCL",
+        )
+        .unwrap();
+        assert_eq!(sidecar.as_str(), "/1784016000/aud_1784016510.CRCL");
+        for suffix in ["", "../flac", "x/y", "toooolong", "flac.wav", "é"] {
+            assert_eq!(
+                stream_path_with_suffix::<()>(
+                    StreamKind::Audio,
+                    StorageLayout::Flat,
+                    Some(1),
+                    1,
+                    suffix
+                ),
+                Err(StorageServiceError::InvalidPath)
+            );
         }
     }
 
