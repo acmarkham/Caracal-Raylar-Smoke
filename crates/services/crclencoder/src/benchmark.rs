@@ -2,7 +2,7 @@
 //! Whole-block kernels use the same opt-level=3 as the encoder. Extra buffers
 //! here isolate actions; the production transform still has no scratch arrays.
 use crate::{
-    bits::{fold, Bits},
+    bits::{fold, legacy::Bits},
     estimate_rice_k, shift_for_peak, Channel, Config, Encoder, Transform,
 };
 use core::hint::black_box;
@@ -323,7 +323,7 @@ fn encode_payload(m: &mut Memory) -> u32 {
     encode_bits(m, false, true)
 }
 
-// This uses the actual capacity-checked production Bits implementation.
+// Frozen pre-reservoir writer: historical baseline remains directly comparable.
 fn encode_bits(m: &mut Memory, single: bool, from_quant: bool) -> u32 {
     let mut pos = 88;
     for c in 0..AUX {

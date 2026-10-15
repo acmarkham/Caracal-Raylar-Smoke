@@ -85,6 +85,40 @@ fn u32_at(bytes: &[u8], i: usize) -> u32 {
     u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap())
 }
 
+/// Independently reconstruct every payload with the frozen byte writer, across
+/// all representations/precisions/tails exercised by the existing codec matrix.
+fn assert_legacy_payloads(record: &[u8], frames: usize, bits: u8, pcm: &[i32]) {
+    let mut offset = u16::from_le_bytes(record[6..8].try_into().unwrap()) as usize;
+    for c in 0..5 {
+        let d = 28 + c * 12;
+        let mode = record[d + 1];
+        let k = record[d + 3];
+        let size = u32_at(record, d + 8) as usize;
+        let mut payload = vec![0xa5; size];
+        let mut writer = crate::bits::legacy::Bits::new(&mut payload);
+        let mut previous = 0;
+        for n in 0..frames {
+            let q = pcm[n * 6 + c + 1];
+            match mode {
+                0 => {}
+                3 => writer.write(q as u32, bits).unwrap(),
+                2 if n == 0 => writer.write(q as u32, bits).unwrap(),
+                1 | 2 => {
+                    let residual = if mode == 2 { q - previous } else { q };
+                    let u = crate::bits::fold(residual);
+                    writer.unary(u >> k).unwrap();
+                    writer.write(u & ((1 << k) - 1), k).unwrap();
+                }
+                _ => panic!("representation"),
+            }
+            previous = q;
+        }
+        assert_eq!(writer.finish(), Ok(size));
+        assert_eq!(payload, &record[offset..offset + size]);
+        offset += size;
+    }
+}
+
 #[test]
 fn all_modes_roundtrip_quantized_values_and_preserve_reference_in_place() {
     let mut representations = [false; 4];
@@ -121,6 +155,7 @@ fn all_modes_roundtrip_quantized_values_and_preserve_reference_in_place() {
                     let expected = transform.pcm.to_vec();
                     let encoder = Encoder::new(config).unwrap();
                     let len = encoder.data(transform, &mut out).unwrap();
+                    assert_legacy_payloads(&out[..len], frames, bits, &expected);
                     assert!(len <= record_capacity(frames, bits));
                     assert_eq!(u32_at(&out, 88), crc32c(&out[..88]));
                     assert_eq!(u32_at(&out, len - 4), crc32c(&out[..len - 4]));
@@ -227,6 +262,7 @@ fn cheap_temporal_roundtrip_scales_channels_independently_and_ignores_reference(
                     let descriptors = t.channels;
                     let encoder = Encoder::new(config).unwrap();
                     let len = encoder.data(t, &mut out).unwrap();
+                    assert_legacy_payloads(&out[..len], frames, bits, &pcm);
                     assert!(len <= config.record_capacity(frames));
                     assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 88);
                     let mut payload = 88;

@@ -32,7 +32,7 @@ fn main() -> ! {
     let before = DWT::cycle_count();
     cortex_m::asm::delay(1024);
     assert_ne!(before, DWT::cycle_count());
-    info!("CRCL_LOOP_META core_hz=144000000 frames=1024 auxiliary_channels=5 bits=10 min_shift=6 repeats=129 warmups=8 interrupts=off supply=smps fixture=sine500_noise128_seed12345678 filter=optional_dcblock_shift8");
+    info!("CRCL_LOOP_META core_hz=144000000 frames=1024 auxiliary_channels=5 bits=10 min_shift=6 repeats=129 warmups=8 interrupts=off supply=smps fixture=sine500_noise128_seed12345678 filter=optional_dcblock_shift8 writer=reservoir32_single");
     benchmark::run(
         MEMORY.take(),
         DWT::cycle_count,

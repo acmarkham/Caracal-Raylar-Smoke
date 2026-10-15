@@ -12,6 +12,19 @@ The first quantized sample is a signed `bits`-wide warm-up; subsequent values us
 
 V2 always uses temporal Rice, without a packed fallback. `Config::record_capacity` bounds channel payload to the warm-up plus `(bits+2)` bits per remaining value on average, with byte padding. For `k < bits`, the estimated mean bounds summed quotients below twice the residual count; for `k = bits`, each quotient is at most one. Use `config.workspace_capacity()` for the existing output buffer. The 1024-frame/10-bit DATA bound is 7,768 bytes; this is a bounded output buffer, not additional quantization workspace.
 
+Rice emission combines codes up to 32 bits into one append to a native `u32`
+MSB-first reservoir. Longer unary runs append zero chunks, then the combined
+stop bit and remainder. Every complete code is capacity-checked before appending;
+full reservoirs flush four bytes and the final partial word flushes only its
+valid bytes with zero padding. Byte-slice stores support unaligned payload starts.
+This changes packing work only: quantized integers, Rice k, file version, payload
+bytes, padding and reconstruction are unchanged for both CRCL versions. The writer
+adds only scalar state; no PCM or residual buffer, heap allocation or u64 reservoir
+is introduced. The original byte writer is compiled only for tests/benchmarks as a
+compatibility and timing reference.
+See [Analysis 004](../../../docs/audio/multichannel/analysis004.md) for production
+before/after cycle measurements and the remaining optimization priorities.
+
 ## Binary layout
 
 All integer fields remain little endian and bit payloads remain MSB first. The magic is unchanged, but version `2` and flags `1` identify independent temporal shift coding without CRC or a reference digest. V1 files continue to decode with their original semantics.

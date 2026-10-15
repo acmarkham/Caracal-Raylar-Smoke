@@ -250,8 +250,7 @@ impl Encoder {
                             q
                         };
                         let u = fold(r);
-                        bits.unary(u >> info.k)?;
-                        bits.write(u & ((1 << info.k) - 1), info.k)?;
+                        bits.rice(u, info.k)?;
                     }
                 }
                 previous = q;

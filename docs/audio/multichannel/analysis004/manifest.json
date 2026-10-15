@@ -1,0 +1,24 @@
+{
+  "artifacts": {
+    "aardwolf-build.json": "c21f3c8aa0dcc74a5f856dc0529939ab4774064273552ced2bd267d90cf3eefb",
+    "before-after.png": "af4f6ea4070be6cdc3fc9f085a7997d069072845da2c1aeb53e4ecd10422c879",
+    "benchmark-build.json": "2d10721dc5619a9151a3a3c0adf414c1784d3f3e5000d0573e0b04055873ab63",
+    "cycles.csv": "90cf879b658c0d526fd553070522798d8616225542a55b2688b4eb161d6f5a30",
+    "cycles.json": "e920f2710faf9f08ea2681182ac71d3e470260c489c1c36b2a5cb45082073e53",
+    "hot-functions.asm": "32f0b797940a730b4f25d4dff23a6ff3057204972e9e27a029e2ffa63ccd84b2",
+    "target-run1.log": "6f3500f9e233d874853fe14b4164fdfcaee8d2b1bd52b92fbad8ef699e55bb46",
+    "target-run2.log": "bb0f7a8e19c52053f4f733c952266c9415f7d99bb06adf14b0f27ed84db4db47"
+  },
+  "report_sha256": "6a483a8c07e26b55a9fdef3b9bb7d16b43e6515ee5062013fe6e617eef177341",
+  "reproduction_source_sha256": {
+    "crates/services/crclencoder/src/bits.rs": "e6fd71d97198b1ee9f9d4847c0a4a209e24f7c3f540e150e47cb165517388709",
+    "crates/services/crclencoder/src/bits_legacy.rs": "65949978dd0f3f6d3380074e8c9c5dfc96f067f29f9065f6637f0bc7419dcf67",
+    "crates/services/crclencoder/src/bits_tests.rs": "fc9449cb4965ab30c3de67f994635dc5f39ea7c19abe8fca40a1f382ab626cae",
+    "crates/services/crclencoder/src/tests.rs": "cd9bcbc5e2a02881383de594bd23e301a251d853b759b8fd14eb4ea0d303664a",
+    "crates/services/crclencoder/src/format.rs": "d516422b99c93a8f551578cc34dff064bfce001ed75f1c537d7dc756e76a30c9",
+    "crates/services/crclencoder/src/benchmark.rs": "171d68d3ab7a114eeb82f217ca7ec539f65b872b3a9a1a6787e449c710f489bc",
+    "scripts/crcl_reservoir_report.py": "fcdea2944e9916ae79b8598a25c324022c7773f1dbe44814a01a40211f952674",
+    "scripts/crcl_bench_inspect.py": "b63d5cdd1000ef124a9881d10c3c852bdfd3a92b118c1a877f6db3835eb3fa64",
+    "servicetests/crclencoder/loop_benchmark.rs": "fe6edb434e1fc0f1ab274527ccf6119f1d88ea6caf529447bb3250f6dec6f9e3"
+  }
+}

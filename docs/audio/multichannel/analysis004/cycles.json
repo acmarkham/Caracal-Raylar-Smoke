@@ -1,0 +1,644 @@
+{
+  "core_hz": 144000000,
+  "frames": 1024,
+  "auxiliary_channels": 5,
+  "writer": "checked_u32_reservoir_single_codeword",
+  "baseline_build": {
+    "schema_version": 1,
+    "package": "service-test-crclencoder",
+    "binary": "crcl-loop-benchmark",
+    "firmware_version": "0.1.0",
+    "source_git": "935162c4908d4a09d3bc4603df1177e800000565-dirty",
+    "source_tree_dirty": true,
+    "build_timestamp_utc": "2026-10-15T15:28:06Z",
+    "build_profile": "release",
+    "board_revision": "Raylar v1.0",
+    "target": "thumbv8m.main-none-eabihf",
+    "artifact_sha256": "71f1ad53d2400061788ae0b77097bfd1b26d0d9708e90d6b7a4a98b95b3f3496",
+    "runtime_crc32": null
+  },
+  "build": {
+    "schema_version": 1,
+    "package": "service-test-crclencoder",
+    "binary": "crcl-loop-benchmark",
+    "firmware_version": "0.1.0",
+    "source_git": "768caffbef5191c92da24f886b5e22ed2c5e6d49-dirty",
+    "source_tree_dirty": true,
+    "build_timestamp_utc": "2026-10-15T16:40:26Z",
+    "build_profile": "release",
+    "board_revision": "Raylar v1.0",
+    "target": "thumbv8m.main-none-eabihf",
+    "artifact_sha256": "71f912865571c614da7081f7eb94b50a4d1a12f2a1e0daca888299e2219cd71c",
+    "runtime_crc32": null
+  },
+  "run1": {
+    "empty": {
+      "batch": 1,
+      "min": 66,
+      "median": 66,
+      "p90": 66,
+      "max": 66,
+      "checksum": 0,
+      "cycles_per_block": 66.0,
+      "ms_per_block": 0.0004583333333333333
+    },
+    "copy_6ch": {
+      "batch": 1,
+      "min": 44723,
+      "median": 44723,
+      "p90": 44723,
+      "max": 44723,
+      "checksum": 37,
+      "cycles_per_block": 44723.0,
+      "ms_per_block": 0.3105763888888889
+    },
+    "optional_hpf_5ch": {
+      "batch": 1,
+      "min": 45737,
+      "median": 45737,
+      "p90": 45737,
+      "max": 45738,
+      "checksum": 21849,
+      "cycles_per_block": 45737.0,
+      "ms_per_block": 0.31761805555555556
+    },
+    "peak_validate_5ch": {
+      "batch": 1,
+      "min": 81950,
+      "median": 81950,
+      "p90": 81950,
+      "max": 81952,
+      "checksum": 25253,
+      "cycles_per_block": 81950.0,
+      "ms_per_block": 0.5690972222222223
+    },
+    "scale_select_5ch": {
+      "batch": 256,
+      "min": 72288,
+      "median": 72288,
+      "p90": 72288,
+      "max": 72288,
+      "checksum": 0,
+      "cycles_per_block": 282.375,
+      "ms_per_block": 0.0019609375
+    },
+    "truncate_shift_5ch": {
+      "batch": 1,
+      "min": 34804,
+      "median": 34804,
+      "p90": 34804,
+      "max": 34804,
+      "checksum": 126,
+      "cycles_per_block": 34804.0,
+      "ms_per_block": 0.24169444444444443
+    },
+    "round_quantize_5ch": {
+      "batch": 1,
+      "min": 43918,
+      "median": 43918,
+      "p90": 43918,
+      "max": 43918,
+      "checksum": 126,
+      "cycles_per_block": 43918.0,
+      "ms_per_block": 0.3049861111111111
+    },
+    "temporal_delta_5ch": {
+      "batch": 1,
+      "min": 31526,
+      "median": 31526,
+      "p90": 31526,
+      "max": 31526,
+      "checksum": 55,
+      "cycles_per_block": 31526.0,
+      "ms_per_block": 0.21893055555555554
+    },
+    "sum_pre_folded_5ch": {
+      "batch": 1,
+      "min": 21626,
+      "median": 21626,
+      "p90": 21626,
+      "max": 21627,
+      "checksum": 99793,
+      "cycles_per_block": 21626.0,
+      "ms_per_block": 0.15018055555555557
+    },
+    "fold_sum_residual_5ch": {
+      "batch": 1,
+      "min": 38873,
+      "median": 38873,
+      "p90": 38873,
+      "max": 38873,
+      "checksum": 99793,
+      "cycles_per_block": 38873.0,
+      "ms_per_block": 0.2699513888888889
+    },
+    "rice_k_5ch": {
+      "batch": 256,
+      "min": 53361,
+      "median": 53361,
+      "p90": 53361,
+      "max": 53361,
+      "checksum": 0,
+      "cycles_per_block": 208.44140625,
+      "ms_per_block": 0.001447509765625
+    },
+    "quantize_delta_sum_fused_5ch": {
+      "batch": 1,
+      "min": 78736,
+      "median": 78736,
+      "p90": 78736,
+      "max": 78739,
+      "checksum": 99793,
+      "cycles_per_block": 78736.0,
+      "ms_per_block": 0.5467777777777778
+    },
+    "rice_bytes_pre_folded_5ch": {
+      "batch": 1,
+      "min": 1166324,
+      "median": 1166324,
+      "p90": 1166324,
+      "max": 1166325,
+      "checksum": 5183,
+      "cycles_per_block": 1166324.0,
+      "ms_per_block": 8.099472222222222
+    },
+    "rice_single_codeword_5ch": {
+      "batch": 1,
+      "min": 799978,
+      "median": 799978,
+      "p90": 799978,
+      "max": 799980,
+      "checksum": 5183,
+      "cycles_per_block": 799978.0,
+      "ms_per_block": 5.555402777777778
+    },
+    "rice_words_codeword_5ch": {
+      "batch": 1,
+      "min": 545148,
+      "median": 545148,
+      "p90": 545148,
+      "max": 545148,
+      "checksum": 5183,
+      "cycles_per_block": 545148.0,
+      "ms_per_block": 3.78575
+    },
+    "payload_from_quant_5ch": {
+      "batch": 1,
+      "min": 1176554,
+      "median": 1176554,
+      "p90": 1176554,
+      "max": 1176556,
+      "checksum": 5183,
+      "cycles_per_block": 1176554.0,
+      "ms_per_block": 8.17051388888889
+    },
+    "crcl_header_only": {
+      "batch": 1,
+      "min": 299,
+      "median": 299,
+      "p90": 299,
+      "max": 299,
+      "checksum": 88,
+      "cycles_per_block": 299.0,
+      "ms_per_block": 0.002076388888888889
+    },
+    "crcl_header_payload_copy": {
+      "batch": 1,
+      "min": 9746,
+      "median": 9746,
+      "p90": 9746,
+      "max": 9746,
+      "checksum": 5183,
+      "cycles_per_block": 9746.0,
+      "ms_per_block": 0.06768055555555555
+    },
+    "production_transform": {
+      "batch": 1,
+      "min": 779028,
+      "median": 779028,
+      "p90": 779028,
+      "max": 779030,
+      "checksum": 6,
+      "cycles_per_block": 779028.0,
+      "ms_per_block": 5.409916666666667
+    },
+    "production_transform_budget256": {
+      "batch": 1,
+      "min": 783172,
+      "median": 783172,
+      "p90": 783172,
+      "max": 783173,
+      "checksum": 6,
+      "cycles_per_block": 783172.0,
+      "ms_per_block": 5.438694444444445
+    },
+    "production_serialize": {
+      "batch": 1,
+      "min": 515654,
+      "median": 515654,
+      "p90": 515654,
+      "max": 515655,
+      "checksum": 5183,
+      "cycles_per_block": 515654.0,
+      "ms_per_block": 3.5809305555555557
+    },
+    "production_codec_budget256": {
+      "batch": 1,
+      "min": 1298751,
+      "median": 1298751,
+      "p90": 1298751,
+      "max": 1298753,
+      "checksum": 5183,
+      "cycles_per_block": 1298751.0,
+      "ms_per_block": 9.019104166666667
+    },
+    "production_peak_scale_phases": {
+      "batch": 1,
+      "min": 379686,
+      "median": 379686,
+      "p90": 379686,
+      "max": 379687,
+      "checksum": 0,
+      "cycles_per_block": 379686.0,
+      "ms_per_block": 2.6367083333333334
+    },
+    "production_quant_stats_k_phases": {
+      "batch": 1,
+      "min": 400244,
+      "median": 400244,
+      "p90": 400244,
+      "max": 400245,
+      "checksum": 0,
+      "cycles_per_block": 400244.0,
+      "ms_per_block": 2.779472222222222
+    }
+  },
+  "run2": {
+    "empty": {
+      "batch": 1,
+      "min": 66,
+      "median": 66,
+      "p90": 66,
+      "max": 66,
+      "checksum": 0,
+      "cycles_per_block": 66.0,
+      "ms_per_block": 0.0004583333333333333
+    },
+    "copy_6ch": {
+      "batch": 1,
+      "min": 44723,
+      "median": 44723,
+      "p90": 44723,
+      "max": 44723,
+      "checksum": 37,
+      "cycles_per_block": 44723.0,
+      "ms_per_block": 0.3105763888888889
+    },
+    "optional_hpf_5ch": {
+      "batch": 1,
+      "min": 45737,
+      "median": 45737,
+      "p90": 45737,
+      "max": 45739,
+      "checksum": 21849,
+      "cycles_per_block": 45737.0,
+      "ms_per_block": 0.31761805555555556
+    },
+    "peak_validate_5ch": {
+      "batch": 1,
+      "min": 81950,
+      "median": 81950,
+      "p90": 81950,
+      "max": 81950,
+      "checksum": 25253,
+      "cycles_per_block": 81950.0,
+      "ms_per_block": 0.5690972222222223
+    },
+    "scale_select_5ch": {
+      "batch": 256,
+      "min": 72288,
+      "median": 72288,
+      "p90": 72288,
+      "max": 72288,
+      "checksum": 0,
+      "cycles_per_block": 282.375,
+      "ms_per_block": 0.0019609375
+    },
+    "truncate_shift_5ch": {
+      "batch": 1,
+      "min": 34804,
+      "median": 34804,
+      "p90": 34804,
+      "max": 34804,
+      "checksum": 126,
+      "cycles_per_block": 34804.0,
+      "ms_per_block": 0.24169444444444443
+    },
+    "round_quantize_5ch": {
+      "batch": 1,
+      "min": 43918,
+      "median": 43918,
+      "p90": 43918,
+      "max": 43918,
+      "checksum": 126,
+      "cycles_per_block": 43918.0,
+      "ms_per_block": 0.3049861111111111
+    },
+    "temporal_delta_5ch": {
+      "batch": 1,
+      "min": 31526,
+      "median": 31526,
+      "p90": 31526,
+      "max": 31527,
+      "checksum": 55,
+      "cycles_per_block": 31526.0,
+      "ms_per_block": 0.21893055555555554
+    },
+    "sum_pre_folded_5ch": {
+      "batch": 1,
+      "min": 21626,
+      "median": 21626,
+      "p90": 21626,
+      "max": 21627,
+      "checksum": 99793,
+      "cycles_per_block": 21626.0,
+      "ms_per_block": 0.15018055555555557
+    },
+    "fold_sum_residual_5ch": {
+      "batch": 1,
+      "min": 38873,
+      "median": 38873,
+      "p90": 38873,
+      "max": 38873,
+      "checksum": 99793,
+      "cycles_per_block": 38873.0,
+      "ms_per_block": 0.2699513888888889
+    },
+    "rice_k_5ch": {
+      "batch": 256,
+      "min": 53361,
+      "median": 53361,
+      "p90": 53361,
+      "max": 53361,
+      "checksum": 0,
+      "cycles_per_block": 208.44140625,
+      "ms_per_block": 0.001447509765625
+    },
+    "quantize_delta_sum_fused_5ch": {
+      "batch": 1,
+      "min": 78736,
+      "median": 78736,
+      "p90": 78736,
+      "max": 78736,
+      "checksum": 99793,
+      "cycles_per_block": 78736.0,
+      "ms_per_block": 0.5467777777777778
+    },
+    "rice_bytes_pre_folded_5ch": {
+      "batch": 1,
+      "min": 1166324,
+      "median": 1166324,
+      "p90": 1166324,
+      "max": 1166325,
+      "checksum": 5183,
+      "cycles_per_block": 1166324.0,
+      "ms_per_block": 8.099472222222222
+    },
+    "rice_single_codeword_5ch": {
+      "batch": 1,
+      "min": 799978,
+      "median": 799978,
+      "p90": 799978,
+      "max": 799979,
+      "checksum": 5183,
+      "cycles_per_block": 799978.0,
+      "ms_per_block": 5.555402777777778
+    },
+    "rice_words_codeword_5ch": {
+      "batch": 1,
+      "min": 545148,
+      "median": 545148,
+      "p90": 545148,
+      "max": 545149,
+      "checksum": 5183,
+      "cycles_per_block": 545148.0,
+      "ms_per_block": 3.78575
+    },
+    "payload_from_quant_5ch": {
+      "batch": 1,
+      "min": 1176554,
+      "median": 1176554,
+      "p90": 1176554,
+      "max": 1176555,
+      "checksum": 5183,
+      "cycles_per_block": 1176554.0,
+      "ms_per_block": 8.17051388888889
+    },
+    "crcl_header_only": {
+      "batch": 1,
+      "min": 299,
+      "median": 299,
+      "p90": 299,
+      "max": 299,
+      "checksum": 88,
+      "cycles_per_block": 299.0,
+      "ms_per_block": 0.002076388888888889
+    },
+    "crcl_header_payload_copy": {
+      "batch": 1,
+      "min": 9746,
+      "median": 9746,
+      "p90": 9746,
+      "max": 9746,
+      "checksum": 5183,
+      "cycles_per_block": 9746.0,
+      "ms_per_block": 0.06768055555555555
+    },
+    "production_transform": {
+      "batch": 1,
+      "min": 779028,
+      "median": 779028,
+      "p90": 779028,
+      "max": 779030,
+      "checksum": 6,
+      "cycles_per_block": 779028.0,
+      "ms_per_block": 5.409916666666667
+    },
+    "production_transform_budget256": {
+      "batch": 1,
+      "min": 783172,
+      "median": 783172,
+      "p90": 783172,
+      "max": 783173,
+      "checksum": 6,
+      "cycles_per_block": 783172.0,
+      "ms_per_block": 5.438694444444445
+    },
+    "production_serialize": {
+      "batch": 1,
+      "min": 515654,
+      "median": 515654,
+      "p90": 515654,
+      "max": 515655,
+      "checksum": 5183,
+      "cycles_per_block": 515654.0,
+      "ms_per_block": 3.5809305555555557
+    },
+    "production_codec_budget256": {
+      "batch": 1,
+      "min": 1298751,
+      "median": 1298751,
+      "p90": 1298751,
+      "max": 1298753,
+      "checksum": 5183,
+      "cycles_per_block": 1298751.0,
+      "ms_per_block": 9.019104166666667
+    },
+    "production_peak_scale_phases": {
+      "batch": 1,
+      "min": 379686,
+      "median": 379686,
+      "p90": 379686,
+      "max": 379686,
+      "checksum": 0,
+      "cycles_per_block": 379686.0,
+      "ms_per_block": 2.6367083333333334
+    },
+    "production_quant_stats_k_phases": {
+      "batch": 1,
+      "min": 400244,
+      "median": 400244,
+      "p90": 400244,
+      "max": 400244,
+      "checksum": 0,
+      "cycles_per_block": 400244.0,
+      "ms_per_block": 2.779472222222222
+    }
+  },
+  "max_median_difference_cycles": 0.0,
+  "comparison": {
+    "empty": {
+      "before_cycles": 68.0,
+      "after_cycles": 66.0,
+      "saved_percent": 2.941176470588236
+    },
+    "copy_6ch": {
+      "before_cycles": 38587.0,
+      "after_cycles": 44723.0,
+      "saved_percent": -15.901728561432616
+    },
+    "optional_hpf_5ch": {
+      "before_cycles": 46194.0,
+      "after_cycles": 45737.0,
+      "saved_percent": 0.9893059704723539
+    },
+    "peak_validate_5ch": {
+      "before_cycles": 83748.0,
+      "after_cycles": 81950.0,
+      "saved_percent": 2.146916941300092
+    },
+    "scale_select_5ch": {
+      "before_cycles": 289.40234375,
+      "after_cycles": 282.375,
+      "saved_percent": 2.4282262745150995
+    },
+    "truncate_shift_5ch": {
+      "before_cycles": 34615.0,
+      "after_cycles": 34804.0,
+      "saved_percent": -0.5460060667340727
+    },
+    "round_quantize_5ch": {
+      "before_cycles": 43859.0,
+      "after_cycles": 43918.0,
+      "saved_percent": -0.13452199092547357
+    },
+    "temporal_delta_5ch": {
+      "before_cycles": 32746.0,
+      "after_cycles": 31526.0,
+      "saved_percent": 3.7256458804128756
+    },
+    "sum_pre_folded_5ch": {
+      "before_cycles": 21965.0,
+      "after_cycles": 21626.0,
+      "saved_percent": 1.5433644434327376
+    },
+    "fold_sum_residual_5ch": {
+      "before_cycles": 39028.0,
+      "after_cycles": 38873.0,
+      "saved_percent": 0.39715076355436585
+    },
+    "rice_k_5ch": {
+      "before_cycles": 201.46484375,
+      "after_cycles": 208.44140625,
+      "saved_percent": -3.462918080465349
+    },
+    "quantize_delta_sum_fused_5ch": {
+      "before_cycles": 78740.0,
+      "after_cycles": 78736.0,
+      "saved_percent": 0.005080010160019022
+    },
+    "rice_bytes_pre_folded_5ch": {
+      "before_cycles": 1109182.0,
+      "after_cycles": 1166324.0,
+      "saved_percent": -5.151724423944848
+    },
+    "rice_single_codeword_5ch": {
+      "before_cycles": 759061.0,
+      "after_cycles": 799978.0,
+      "saved_percent": -5.390475864258604
+    },
+    "rice_words_codeword_5ch": {
+      "before_cycles": 541886.0,
+      "after_cycles": 545148.0,
+      "saved_percent": -0.601971632409759
+    },
+    "payload_from_quant_5ch": {
+      "before_cycles": 1124527.0,
+      "after_cycles": 1176554.0,
+      "saved_percent": -4.626567436797879
+    },
+    "crcl_header_only": {
+      "before_cycles": 308.0,
+      "after_cycles": 299.0,
+      "saved_percent": 2.922077922077926
+    },
+    "crcl_header_payload_copy": {
+      "before_cycles": 8481.0,
+      "after_cycles": 9746.0,
+      "saved_percent": -14.915693904020744
+    },
+    "production_transform": {
+      "before_cycles": 830214.0,
+      "after_cycles": 779028.0,
+      "saved_percent": 6.165398318987636
+    },
+    "production_transform_budget256": {
+      "before_cycles": 834035.0,
+      "after_cycles": 783172.0,
+      "saved_percent": 6.098425126043871
+    },
+    "production_serialize": {
+      "before_cycles": 1688225.0,
+      "after_cycles": 515654.0,
+      "saved_percent": 69.45584859837996
+    },
+    "production_codec_budget256": {
+      "before_cycles": 2522520.0,
+      "after_cycles": 1298751.0,
+      "saved_percent": 48.513748156605295
+    },
+    "production_peak_scale_phases": {
+      "before_cycles": 430863.0,
+      "after_cycles": 379686.0,
+      "saved_percent": 11.87778945975867
+    },
+    "production_quant_stats_k_phases": {
+      "before_cycles": 400253.0,
+      "after_cycles": 400244.0,
+      "saved_percent": 0.002248577774555116
+    }
+  },
+  "fixture_unchanged": true,
+  "record_bytes": 5183,
+  "unit_tests_passed": 13
+}

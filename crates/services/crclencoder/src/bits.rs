@@ -1,52 +1,102 @@
 use crate::Error;
 
-// Adapted from the capacity-checked FLAC bit writer; CRCL sample work stays 32-bit.
+#[cfg(any(test, feature = "loop-benchmark"))]
+#[path = "bits_legacy.rs"]
+pub(crate) mod legacy;
+#[cfg(test)]
+#[path = "bits_tests.rs"]
+mod tests;
+
+/// Capacity-checked MSB-first u32 reservoir. Payloads may start at any byte
+/// alignment; flushes use safe byte-slice stores, never aligned pointer casts.
 pub(crate) struct Bits<'a> {
     bytes: &'a mut [u8],
+    /// Number of complete bytes flushed (a multiple of four).
     position: usize,
+    word: u32,
+    /// Pending bits occupy the high end of word; unused low bits are zero.
+    used: u32,
+    remaining: usize,
 }
 impl<'a> Bits<'a> {
     pub fn new(bytes: &'a mut [u8]) -> Self {
-        Self { bytes, position: 0 }
+        let remaining = bytes.len().saturating_mul(8);
+        Self {
+            bytes,
+            position: 0,
+            word: 0,
+            used: 0,
+            remaining,
+        }
     }
+    #[inline]
     pub fn write(&mut self, value: u32, width: u8) -> Result<(), Error> {
-        if width > 32
-            || self
-                .position
-                .checked_add(width as usize)
-                .is_none_or(|end| end > self.bytes.len().saturating_mul(8))
-        {
+        if width > 32 || width as usize > self.remaining {
             return Err(Error::OutputTooSmall);
         }
-        let mut remaining = width as usize;
-        while remaining != 0 {
-            let index = self.position / 8;
-            let offset = self.position % 8;
-            if offset == 0 {
-                self.bytes[index] = 0;
+        self.remaining -= width as usize;
+        self.append(value, u32::from(width));
+        Ok(())
+    }
+
+    /// Emit the entire common Rice codeword in one append. Long unary runs use
+    /// zero-word appends followed by the combined stop bit and remainder.
+    #[inline]
+    pub fn rice(&mut self, value: u32, k: u8) -> Result<(), Error> {
+        if k > 31 {
+            return Err(Error::InvalidConfig);
+        }
+        let k = u32::from(k);
+        let mut zeros = value >> k;
+        let width = zeros.checked_add(1 + k).ok_or(Error::OutputTooSmall)?;
+        if width as usize > self.remaining {
+            return Err(Error::OutputTooSmall);
+        }
+        self.remaining -= width as usize;
+        let code = (1 << k) | (value & ((1 << k) - 1));
+        if width <= 32 {
+            self.append(code, width);
+        } else {
+            while zeros >= 32 {
+                self.append(0, 32);
+                zeros -= 32;
             }
-            let take = remaining.min(8 - offset);
-            let part = (value >> (remaining - take)) & ((1 << take) - 1);
-            self.bytes[index] |= (part as u8) << (8 - offset - take);
-            self.position += take;
-            remaining -= take;
+            self.append(0, zeros);
+            self.append(code, k + 1);
         }
         Ok(())
     }
-    pub fn unary(&mut self, mut zeros: u32) -> Result<(), Error> {
-        if zeros as usize >= self.bytes.len().saturating_mul(8) - self.position {
-            return Err(Error::OutputTooSmall);
+
+    /// Caller has reserved capacity and proved width <= 32. One field can
+    /// cross at most one reservoir boundary. No shift by 32 is evaluated.
+    #[inline(always)]
+    fn append(&mut self, value: u32, width: u32) {
+        if width == 0 {
+            return;
         }
-        while zeros != 0 {
-            let take = zeros.min(32) as u8;
-            self.write(0, take)?;
-            zeros -= u32::from(take);
+        let free = 32 - self.used;
+        self.word |= (value << (32 - width)) >> self.used;
+        if width < free {
+            self.used += width;
+        } else {
+            self.bytes[self.position..self.position + 4].copy_from_slice(&self.word.to_be_bytes());
+            self.position += 4;
+            self.used = width - free;
+            self.word = if self.used == 0 {
+                0
+            } else {
+                value << (32 - self.used)
+            };
         }
-        self.write(1, 1)
     }
-    pub fn finish(mut self) -> Result<usize, Error> {
-        self.write(0, ((8 - self.position % 8) % 8) as u8)?;
-        Ok(self.position / 8)
+
+    pub fn finish(self) -> Result<usize, Error> {
+        // Capacity checked on every append guarantees that this rounded byte
+        // count fits. Pending low bits already contain the required zero pad.
+        let tail = self.used.div_ceil(8) as usize;
+        self.bytes[self.position..self.position + tail]
+            .copy_from_slice(&self.word.to_be_bytes()[..tail]);
+        Ok(self.position + tail)
     }
 }
 

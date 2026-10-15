@@ -1,11 +1,14 @@
 """Inspect reproducibility inputs and disassemble benchmark hot functions."""
 from pathlib import Path
+import argparse
 import hashlib
 import json
 import subprocess
 
 root=Path(__file__).resolve().parents[1]
-out=root/'docs/audio/multichannel/analysis003'
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--output',type=Path,default=root/'docs/audio/multichannel/analysis003')
+out=parser.parse_args().output
 out.mkdir(parents=True,exist_ok=True)
 for name in ['aardwolf','crcl-loop-benchmark']:
     p=root/'target/thumbv8m.main-none-eabihf/release'/name

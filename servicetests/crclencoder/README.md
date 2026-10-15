@@ -15,6 +15,8 @@ rtk proxy powershell -ExecutionPolicy Bypass -File scripts/run_crcl_loop_benchma
 Each stage has eight warm-ups and 129 measurements; the board remains idle after
 `CRCL LOOP BENCH PASS`. See [Analysis 003](../../docs/audio/multichannel/analysis003.md)
 for measured cycles, pipeline pseudocode, caveats, artifacts and reproduction.
+The production single-codeword/u32-reservoir integration and repeat measurements
+are recorded in [Analysis 004](../../docs/audio/multichannel/analysis004.md).
 The package now has two binaries, so select `-Bin service-test-crclencoder` for
 the existing microphone/SD diagnostics below; the benchmark runner selects its
 own binary explicitly.
