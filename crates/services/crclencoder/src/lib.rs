@@ -6,6 +6,8 @@ mod cheap;
 mod format;
 mod quantize;
 mod sha256;
+#[cfg(feature = "loop-benchmark")]
+pub mod benchmark;
 
 pub use cheap::{estimate_rice_k, shift_for_peak};
 pub use format::{crc32c, segment_identity, Completion, Encoder, Header, TimeAnchor};

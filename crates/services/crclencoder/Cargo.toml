@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 default = []
 defmt = ["dep:defmt"]
+loop-benchmark = []
 
 [dependencies]
 raylar-stage-profiling = { path = "../../profiling" }

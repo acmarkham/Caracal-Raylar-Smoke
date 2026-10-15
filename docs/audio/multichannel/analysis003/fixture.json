@@ -1,0 +1,54 @@
+{
+  "fnv1a32": 431565294,
+  "sha256": "1079dbcb07850ea2a57e85b7d25a633208c9b356c66615fe8a9de1b8b1d42354",
+  "frames": 1024,
+  "channels": 6,
+  "sample_rate_hz": 16000,
+  "sine_hz": 500,
+  "amplitudes_counts": [
+    20000,
+    21000,
+    22000,
+    23000,
+    24000,
+    25000
+  ],
+  "noise_range_counts": [
+    -128,
+    127
+  ],
+  "seed": "0x12345678",
+  "shifts": [
+    6,
+    6,
+    6,
+    6,
+    6
+  ],
+  "k": [
+    6,
+    6,
+    6,
+    6,
+    6
+  ],
+  "folded_sums": [
+    83398,
+    87370,
+    91444,
+    95458,
+    99467
+  ],
+  "payload_bytes": [
+    989,
+    1008,
+    1024,
+    1034,
+    1040
+  ],
+  "record_bytes": 5183,
+  "folded_max": 160,
+  "folded_under_64_percent": 29.286412512218963,
+  "folded_under_128_percent": 75.13196480938417,
+  "folded_under_256_percent": 100.0
+}

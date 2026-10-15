@@ -1,5 +1,24 @@
 # CRCL target and desktop validation
 
+## Isolated 1024-frame CRCL loop benchmark
+
+The opt-in `crcl-loop-benchmark` binary uses a deterministic 500 Hz sinusoid plus
+seeded integer noise. It starts no capture, SD, GPS, radio or executor tasks and
+masks interrupts while timing with DWT CYCCNT. It measures production transforms
+and serialization, individual arithmetic kernels, and byte-identical test-only
+Rice packing candidates. No production encoding behavior changes.
+
+```powershell
+rtk proxy powershell -ExecutionPolicy Bypass -File scripts/run_crcl_loop_benchmark.ps1
+```
+
+Each stage has eight warm-ups and 129 measurements; the board remains idle after
+`CRCL LOOP BENCH PASS`. See [Analysis 003](../../docs/audio/multichannel/analysis003.md)
+for measured cycles, pipeline pseudocode, caveats, artifacts and reproduction.
+The package now has two binaries, so select `-Bin service-test-crclencoder` for
+the existing microphone/SD diagnostics below; the benchmark runner selects its
+own binary explicitly.
+
 ## Raw microphone noise diagnostic
 
 The `noise-floor` feature bypasses the codec matrix and SD recording. It uses the
@@ -11,7 +30,7 @@ All six DMA sequences must advance without gaps; target sums, squared sums and
 extrema allow independent verification of the debugger readback.
 
 ```powershell
-rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -MonitorSeconds 30 -Until 'NOISE CAPTURE READY' -CargoArgs @('--features','noise-floor')"
+rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -Bin service-test-crclencoder -MonitorSeconds 30 -Until 'NOISE CAPTURE READY' -CargoArgs @('--features','noise-floor')"
 # Use ADDRESS from NOISE CAPTURE READY; it can change between builds.
 rtk proxy probe-rs read --chip STM32U595VJ --non-interactive b32 ADDRESS 384000 --format binary --output target/noise-floor/raw.i32le
 rtk proxy python scripts/mic_noise_report.py target/noise-floor/raw.i32le --target-log .probe-rs-logs/latest.log --output target/noise-floor/report
@@ -28,19 +47,19 @@ after reading the buffer; the diagnostic leaves acquisition stopped.
 The default firmware captures six real microphones using the production MDF driver, exercises 6/8/10/12 bits with direct, temporal and automatic Rice selection, checks the unchanged MIC1 digest and record CRCs, and tests stopping/restarting capture. The allocator remains uninitialized; workspaces are statically allocated.
 
 ```powershell
-rtk proxy powershell -ExecutionPolicy Bypass -File scripts/firmware.ps1 -Package service-test-crclencoder -MonitorSeconds 20 -Until 'CRCL TARGET PASS'
+rtk proxy powershell -ExecutionPolicy Bypass -File scripts/firmware.ps1 -Package service-test-crclencoder -Bin service-test-crclencoder -MonitorSeconds 20 -Until 'CRCL TARGET PASS'
 ```
 
 Add `sd-recording` to record and finalize one matching minute of mono 32-bit FLAC plus CRCL on the inserted card. This profile uses GPS UTC and stops its acquisition wait after 180 seconds:
 
 ```powershell
-rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -MonitorSeconds 300 -Until 'CRCL SD TARGET PASS' -CargoArgs @('--features','sd-recording')"
+rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -Bin service-test-crclencoder -MonitorSeconds 300 -Until 'CRCL SD TARGET PASS' -CargoArgs @('--features','sd-recording')"
 ```
 
 For a bench without GPS reception, use `laboratory-time`, which includes `sd-recording`. It injects an explicitly logged Laboratory anchor through the Time Service. The anchor and file names vary with firmware build time; this profile does not validate GPS time and is unavailable in Aardwolf:
 
 ```powershell
-rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -MonitorSeconds 240 -Until 'CRCL SD TARGET PASS' -CargoArgs @('--features','laboratory-time')"
+rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -Bin service-test-crclencoder -MonitorSeconds 240 -Until 'CRCL SD TARGET PASS' -CargoArgs @('--features','laboratory-time')"
 ```
 
 Both profiles preserve existing card files, create the pair exclusively, check space for both members, and stop after successful finalization. A repeated filename fails instead of overwriting prior data. The test uses no radio or persistent logging task; Aardwolf concurrency and deployment energy require a separate soak.
@@ -50,7 +69,7 @@ Both profiles preserve existing card files, create the pair exclusively, check s
 `stage-profiling` includes laboratory time and records two complete minute pairs: detailed profiling, then a runtime-disabled control. It uses Aardwolf's 144 MHz core, SMPS supply, 127,998-scalar source ring, 1024-frame/10-bit/direct CRCL, 2048-sample/fixed-order-1 FLAC, and 16 KiB write buffers. GPS remains off. Existing files are preserved.
 
 ```powershell
-rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -MonitorSeconds 600 -Until 'CRCL PROFILE TARGET PASS' -CargoArgs @('--features','stage-profiling')"
+rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -Bin service-test-crclencoder -MonitorSeconds 600 -Until 'CRCL PROFILE TARGET PASS' -CargoArgs @('--features','stage-profiling')"
 ```
 
 The `raylar-stage-profiling` crate uses DWT CYCCNT with 64-bit accumulated counters, so totals survive multiple counter wraps. Synchronous probes never cross yields; async wrappers measure each poll separately and report end-to-end elapsed time separately. Stages include capture validation/publication, source copy, spatial transform, sampled subtraction/quantization/Rice statistics, Rice selection, CRCL packing/CRC, reference SHA-256 compression, FLAC analysis/encoding, storage buffering, filesystem append/finalization, and SDMMC reads/writes. Per-sample arithmetic is sampled at 1/32 with a phase offset per microphone. Counters are static; no heap or sample workspace is added. Normal builds compile the probes away.
@@ -60,7 +79,7 @@ Stage totals are inclusive. Do not add parents to their children, or mistake SD 
 Use `profile-control` for a separate one-minute build with detailed probes compiled out, retaining only top-level recorder/capture counters. Disabling probes at runtime still retains instrumentation branches and can affect compiler optimization.
 
 ```powershell
-rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -MonitorSeconds 360 -Until 'CRCL PROFILE CONTROL PASS' -CargoArgs @('--features','profile-control')"
+rtk proxy powershell -ExecutionPolicy Bypass -Command "& ./scripts/firmware.ps1 -Package service-test-crclencoder -Bin service-test-crclencoder -MonitorSeconds 360 -Until 'CRCL PROFILE CONTROL PASS' -CargoArgs @('--features','profile-control')"
 rtk proxy python scripts/audio_profile_report.py <detailed-session>/target.log --compiled-control-log <control-session>/target.log --output-dir target/audio-profile
 ```
 

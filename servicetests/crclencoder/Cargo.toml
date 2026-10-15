@@ -1,5 +1,6 @@
 [package]
 name = "service-test-crclencoder"
+default-run = "service-test-crclencoder"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -8,6 +9,13 @@ build = "../audiorecorder/build.rs"
 [[bin]]
 name = "service-test-crclencoder"
 path = "main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "crcl-loop-benchmark"
+path = "loop_benchmark.rs"
+required-features = ["loop-benchmark"]
 test = false
 bench = false
 
@@ -40,4 +48,5 @@ laboratory-time = ["sd-recording"]
 stage-profiling = ["laboratory-time", "raylar-stage-profiling/detail"]
 profile-control = ["laboratory-time", "raylar-stage-profiling/dwt"]
 cheap-crcl = []
+loop-benchmark = ["raylar-crcl-encoder-service/loop-benchmark"]
 trustzone-secure = ["embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure"]
