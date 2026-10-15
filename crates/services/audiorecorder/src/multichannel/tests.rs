@@ -201,6 +201,7 @@ fn paired_rotation_and_tail_preserve_every_reference_sample() {
             if cheap {
                 profile.spatial = Config {
                     block_frames: 256,
+                    min_shift: 6,
                     ..Config::cheap()
                 };
             }

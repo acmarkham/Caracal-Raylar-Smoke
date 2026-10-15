@@ -52,6 +52,7 @@ class DecoderTests(unittest.TestCase):
                         for c in range(1, 6):
                             d = offset + 28 + (c - 1) * 12
                             shift = int.from_bytes(data[d + 4:d + 8], "little")
+                            self.assertGreaterEqual(shift, 6)
                             half = (1 << (shift - 1)) if shift else 0
                             for n in range(first, first + frames):
                                 original = ref["pcm"][n] + c * 157

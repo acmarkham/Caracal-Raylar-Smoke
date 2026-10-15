@@ -1,0 +1,8 @@
+0.000043 [INFO ] NOISE settling: 2 seconds; production Sinc5/R50, scale=0x27, reshape /4, HPF10Hz; GPS off; SD idle (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:16)
+6.167017 [INFO ] NOISE channel=1 frames=64000 sum=1566518 squares=1365056183068 min=-63542 max=42108 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:63)
+6.181325 [INFO ] NOISE channel=2 frames=64000 sum=-4335874 squares=1047638347284 min=-49800 max=29608 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:63)
+6.195641 [INFO ] NOISE channel=3 frames=64000 sum=-3478632 squares=958937156496 min=-32868 max=51904 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:63)
+6.209955 [INFO ] NOISE channel=4 frames=64000 sum=269312 squares=935914495744 min=-37250 max=43360 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:63)
+6.224259 [INFO ] NOISE channel=5 frames=64000 sum=72578 squares=906221666028 min=-27772 max=52750 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:63)
+6.238567 [INFO ] NOISE channel=6 frames=64000 sum=588012 squares=1256253898840 min=-56334 max=32072 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:63)
+6.238652 [INFO ] NOISE CAPTURE READY address=0x20012e00 words=384000 frames=64000 channels=6 rate=16000 first_seq=21 last_seq=60 (service_test_crclencoder servicetests/crclencoder/noise_floor.rs:73)

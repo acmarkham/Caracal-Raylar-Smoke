@@ -4,6 +4,8 @@
 **Hardware:** Raylar v1.0, STM32U595, six IM69D129FV01 PDM microphones  
 **Purpose:** justify removing 5–7 least-significant bits (LSBs) from MIC2–MIC6 before temporal prediction and Rice coding. MIC1 remains the lossless reference.
 
+**Implementation follow-up:** Aardwolf now defaults to the cheap CRCL v2 codec with `CRCL_MIN_SHIFT = 6`. The encoder combines that minimum with per-channel peak scaling in one rounding operation. MIC1 and its FLAC settings are unchanged. See [Aardwolf configuration](../../../apps/aardwolf/config.rs) and the [codec policy](../../../crates/services/crclencoder/cheap.md). The measurements below describe the original unquantized capture.
+
 ## 1. Design conclusion
 
 The datasheet calculation and an unquantized six-microphone hardware capture support **5–7 discarded LSBs as a sensible precision range to evaluate**, with **6 LSBs as the starting setting**. These are absolute shifts of the recorder's right-justified PCM values. They are not 5–7 bits retained per sample, nor an extra shift applied after existing block quantization.

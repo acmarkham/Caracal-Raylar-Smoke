@@ -189,91 +189,144 @@ fn capacity_and_input_bounds_are_explicit() {
 
 #[test]
 fn cheap_temporal_roundtrip_scales_channels_independently_and_ignores_reference() {
-    for bits in [6, 8, 10, 12] {
-        for frames in [1, 255, 256, 257, 1024, 4096] {
-            for pattern in 0..4 {
-                let config = Config {
-                    block_frames: 4096,
-                    bits,
-                    ..Config::cheap()
-                };
-                let mut original = vec![0; frames * 6];
-                let mut rng = 7u32;
-                for n in 0..frames {
-                    original[n * 6] = if n % 2 == 0 { i32::MAX } else { i32::MIN };
-                    for c in 1..6 {
-                        rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
-                        let amplitude = [0, 7, 1000, 1 << 23, 31, 50000][c];
-                        original[n * 6 + c] = match pattern {
-                            0 => 0,
-                            1 => {
-                                if n % 2 == 0 {
-                                    amplitude
-                                } else {
-                                    -amplitude
-                                }
-                            }
-                            2 => (rng % (2 * amplitude as u32 + 1)) as i32 - amplitude,
-                            _ => (n as i32 % 100 - 50) * (amplitude / 50),
-                        };
-                    }
-                }
-                let mut pcm = original.clone();
-                let mut out = vec![0; config.workspace_capacity()];
-                let mut t = Transform::new(&mut pcm, config).unwrap();
-                while !t.advance(113).unwrap() {}
-                let descriptors = t.channels;
-                let encoder = Encoder::new(config).unwrap();
-                let len = encoder.data(t, &mut out).unwrap();
-                assert!(len <= config.record_capacity(frames));
-                assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 88);
-                let mut payload = 88;
-                for c in 0..5 {
-                    let d = 28 + c * 12;
-                    assert_eq!(out[d + 1], 2);
-                    let shift = u32_at(&out, d + 4);
-                    let peak = (0..frames)
-                        .map(|n| original[n * 6 + c + 1].unsigned_abs())
-                        .max()
-                        .unwrap();
-                    assert_eq!(shift, u32::from(shift_for_peak(peak, bits)));
-                    let bytes = u32_at(&out, d + 8) as usize;
-                    let mut reader = Reader {
-                        bytes: &out[payload..payload + bytes],
-                        bit: 0,
+    for min_shift in [0, 6] {
+        for bits in [6, 8, 10, 12] {
+            for frames in [1, 255, 256, 257, 1024, 4096] {
+                for pattern in 0..4 {
+                    let config = Config {
+                        block_frames: 4096,
+                        bits,
+                        min_shift,
+                        ..Config::cheap()
                     };
-                    let mut previous = 0;
+                    let mut original = vec![0; frames * 6];
+                    let mut rng = 7u32;
                     for n in 0..frames {
-                        let q = if n == 0 {
-                            reader.signed(bits)
-                        } else {
-                            previous + reader.rice(out[d + 3])
+                        original[n * 6] = if n % 2 == 0 { i32::MAX } else { i32::MIN };
+                        for c in 1..6 {
+                            rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
+                            let amplitude = [0, 7, 1000, 1 << 23, 31, 50000][c];
+                            original[n * 6 + c] = match pattern {
+                                0 => 0,
+                                1 => {
+                                    if n % 2 == 0 {
+                                        amplitude
+                                    } else {
+                                        -amplitude
+                                    }
+                                }
+                                2 => (rng % (2 * amplitude as u32 + 1)) as i32 - amplitude,
+                                _ => (n as i32 % 100 - 50) * (amplitude / 50),
+                            };
+                        }
+                    }
+                    let mut pcm = original.clone();
+                    let mut out = vec![0; config.workspace_capacity()];
+                    let mut t = Transform::new(&mut pcm, config).unwrap();
+                    while !t.advance(113).unwrap() {}
+                    let descriptors = t.channels;
+                    let encoder = Encoder::new(config).unwrap();
+                    let len = encoder.data(t, &mut out).unwrap();
+                    assert!(len <= config.record_capacity(frames));
+                    assert_eq!(u16::from_le_bytes(out[6..8].try_into().unwrap()), 88);
+                    let mut payload = 88;
+                    for c in 0..5 {
+                        let d = 28 + c * 12;
+                        assert_eq!(out[d + 1], 2);
+                        let shift = u32_at(&out, d + 4);
+                        let peak = (0..frames)
+                            .map(|n| original[n * 6 + c + 1].unsigned_abs())
+                            .max()
+                            .unwrap();
+                        assert_eq!(shift, u32::from(shift_for_peak(peak, bits).max(min_shift)));
+                        let bytes = u32_at(&out, d + 8) as usize;
+                        let mut reader = Reader {
+                            bytes: &out[payload..payload + bytes],
+                            bit: 0,
                         };
-                        previous = q;
-                        assert_eq!(q, pcm[n * 6 + c + 1]);
-                        let reconstructed = i64::from(q) << shift;
-                        let error = (reconstructed - i64::from(original[n * 6 + c + 1])).abs();
-                        assert!(error <= if shift == 0 { 0 } else { 1i64 << (shift - 1) });
+                        let mut previous = 0;
+                        for n in 0..frames {
+                            let q = if n == 0 {
+                                reader.signed(bits)
+                            } else {
+                                previous + reader.rice(out[d + 3])
+                            };
+                            previous = q;
+                            assert_eq!(q, pcm[n * 6 + c + 1]);
+                            let reconstructed = i64::from(q) << shift;
+                            let error = (reconstructed - i64::from(original[n * 6 + c + 1])).abs();
+                            assert!(error <= if shift == 0 { 0 } else { 1i64 << (shift - 1) });
+                        }
+                        while reader.bit < bytes * 8 {
+                            assert_eq!(reader.read(1), 0);
+                        }
+                        payload += bytes;
+                        assert_eq!(descriptors[c].k, out[d + 3]);
                     }
-                    while reader.bit < bytes * 8 {
-                        assert_eq!(reader.read(1), 0);
+                    assert_eq!(payload, len);
+                    for n in 0..frames {
+                        assert_eq!(pcm[n * 6], original[n * 6]);
+                        original[n * 6] = 123;
                     }
-                    payload += bytes;
-                    assert_eq!(descriptors[c].k, out[d + 3]);
+                    let mut t = Transform::new(&mut original, config).unwrap();
+                    while !t.advance(257).unwrap() {}
+                    let mut other = vec![0; config.workspace_capacity()];
+                    let other_len = encoder.data(t, &mut other).unwrap();
+                    assert_eq!(&out[..len], &other[..other_len]);
                 }
-                assert_eq!(payload, len);
-                for n in 0..frames {
-                    assert_eq!(pcm[n * 6], original[n * 6]);
-                    original[n * 6] = 123;
-                }
-                let mut t = Transform::new(&mut original, config).unwrap();
-                while !t.advance(257).unwrap() {}
-                let mut other = vec![0; config.workspace_capacity()];
-                let other_len = encoder.data(t, &mut other).unwrap();
-                assert_eq!(&out[..len], &other[..other_len]);
             }
         }
     }
+}
+
+#[test]
+fn cheap_noise_floor_rounds_once_in_pcm_units_and_preserves_mic1() {
+    let config = Config {
+        min_shift: 6,
+        ..Config::cheap()
+    };
+    // 700 requires a peak shift of one at 10 bits. Sequential rounding
+    // (first by one, then by five) would wrongly reconstruct 31 as 64.
+    let input = [
+        -97, -96, -95, -33, -32, -31, -1, 0, 1, 31, 32, 33, 95, 96, 97, 700,
+    ];
+    let expected = [-2, -1, -1, -1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 11];
+    let mut pcm = vec![0; input.len() * 6];
+    for (n, value) in input.into_iter().enumerate() {
+        pcm[n * 6] = i32::MIN + n as i32;
+        pcm[n * 6 + 1..n * 6 + 6].fill(value);
+    }
+    let mut t = Transform::new(&mut pcm, config).unwrap();
+    while !t.advance(7).unwrap() {}
+    for c in t.channels {
+        assert_eq!(c.scale, 6);
+    }
+    for (n, q) in expected.into_iter().enumerate() {
+        assert_eq!(t.pcm[n * 6], i32::MIN + n as i32);
+        assert_eq!(&t.pcm[n * 6 + 1..n * 6 + 6], &[q; 5]);
+    }
+    assert_eq!(
+        Config {
+            min_shift: 6,
+            ..Config::default()
+        }
+        .validate(),
+        Err(Error::InvalidConfig)
+    );
+    assert_eq!(
+        Config {
+            min_shift: 31,
+            ..Config::cheap()
+        }
+        .validate(),
+        Err(Error::InvalidConfig)
+    );
+    assert!(Config {
+        min_shift: 30,
+        ..Config::cheap()
+    }
+    .validate()
+    .is_ok());
 }
 
 #[test]

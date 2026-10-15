@@ -44,7 +44,7 @@ cortex-m-rt = { workspace = true, optional = true }
 static_cell = { workspace = true, optional = true }
 
 [features]
-default = ["firmware", "core-smps", "hexaphonic"]
+default = ["firmware", "core-smps", "cheap-crcl"]
 firmware = [
  "dep:raylar-audio-recorder-service", "dep:raylar-audiosource", "dep:raylar-board-v1p0",
  "dep:raylar-drivers", "dep:raylar-storage-service", "dep:raylar-logging-service",

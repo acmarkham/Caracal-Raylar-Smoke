@@ -19,6 +19,9 @@ pub const FLAC_BLOCK_SAMPLES: usize = 2048;
 pub const AUDIO_CHANNELS: u8 = if cfg!(feature = "hexaphonic") { 6 } else { 1 };
 pub const CRCL_BLOCK_FRAMES: usize = 1024;
 pub const CRCL_BITS: u8 = 10;
+/// Absolute discard in unpacked microphone PCM units; MIC1 is untouched.
+/// See docs/audio/multichannel/analysis001.md for the measured noise margin.
+pub const CRCL_MIN_SHIFT: u8 = 6;
 #[cfg(feature = "firmware")]
 pub const CRCL_CONFIG: raylar_audio_recorder_service::crcl::Config = {
     use raylar_audio_recorder_service::crcl::{Algorithm, Config, Prediction};
@@ -35,6 +38,11 @@ pub const CRCL_CONFIG: raylar_audio_recorder_service::crcl::Config = {
         },
         block_frames: CRCL_BLOCK_FRAMES,
         bits: CRCL_BITS,
+        min_shift: if cfg!(feature = "cheap-crcl") {
+            CRCL_MIN_SHIFT
+        } else {
+            0
+        },
         max_abs_pcm: 1 << 23,
     }
 };

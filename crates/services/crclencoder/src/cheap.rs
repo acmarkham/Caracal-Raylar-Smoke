@@ -61,7 +61,10 @@ impl Transform<'_> {
             if self.offset == frames {
                 self.offset = 0;
                 if !self.quantizing {
-                    self.shift = shift_for_peak(self.peak as u32, self.config.bits);
+                    // Use one absolute shift: never quantize twice or add the
+                    // noise-floor discard to the peak-derived discard.
+                    self.shift = shift_for_peak(self.peak as u32, self.config.bits)
+                        .max(self.config.min_shift);
                     self.quantizing = true;
                 } else {
                     let _profile = Span::new(Stage::RiceSelect);

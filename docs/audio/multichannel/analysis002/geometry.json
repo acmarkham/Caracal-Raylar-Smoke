@@ -1,0 +1,99 @@
+{
+  "hardware_repository": "https://github.com/acmarkham/raylar-HW",
+  "hardware_commit": "2bd6c0756970e79749ab685e70b950371fecf959",
+  "pcb_path": "v1/KicadProj/raylar_v1_00/raylar_v1_00.kicad_pcb",
+  "pcb_sha256": "c4017a92b2ebdf678d2415bfa4613f05bd9131f22925ccbfc16d7bfd26952ae6",
+  "coordinate_units": "mm; KiCad X right, Y down; acoustic through-hole positions",
+  "microphones": [
+    {
+      "reference": "MK1",
+      "footprint_xy_mm": [
+        134.88,
+        54.5592
+      ],
+      "port_xy_mm": [
+        134.88,
+        53.789199999999994
+      ],
+      "rotation_deg": 180.0,
+      "data_net": "MIC_SD0",
+      "lr_net": "3.3V",
+      "clock_net": "MIC_CCLK0"
+    },
+    {
+      "reference": "MK2",
+      "footprint_xy_mm": [
+        152.88,
+        90.1267
+      ],
+      "port_xy_mm": [
+        153.65,
+        90.1267
+      ],
+      "rotation_deg": 90.0,
+      "data_net": "MIC_SD1",
+      "lr_net": "GND",
+      "clock_net": "MIC_CCLK1"
+    },
+    {
+      "reference": "MK3",
+      "footprint_xy_mm": [
+        130.38,
+        130.1942
+      ],
+      "port_xy_mm": [
+        130.38,
+        130.9642
+      ],
+      "rotation_deg": 0.0,
+      "data_net": "MIC_SD1",
+      "lr_net": "3.3V",
+      "clock_net": "MIC_CCLK1"
+    },
+    {
+      "reference": "MK4",
+      "footprint_xy_mm": [
+        84.38,
+        130.1267
+      ],
+      "port_xy_mm": [
+        84.38,
+        130.8967
+      ],
+      "rotation_deg": 0.0,
+      "data_net": "MIC_SD2",
+      "lr_net": "3.3V",
+      "clock_net": "MIC_CCLK1"
+    },
+    {
+      "reference": "MK5",
+      "footprint_xy_mm": [
+        60.898,
+        90.4642
+      ],
+      "port_xy_mm": [
+        60.128,
+        90.4642
+      ],
+      "rotation_deg": -90.0,
+      "data_net": "MIC_SD2",
+      "lr_net": "GND",
+      "clock_net": "MIC_CCLK1"
+    },
+    {
+      "reference": "MK6",
+      "footprint_xy_mm": [
+        88.0425,
+        49.6087
+      ],
+      "port_xy_mm": [
+        88.0425,
+        48.838699999999996
+      ],
+      "rotation_deg": 180.0,
+      "data_net": "MIC_SD3",
+      "lr_net": "3.3V",
+      "clock_net": "MIC_CCLK1"
+    }
+  ]
+}

@@ -3,12 +3,12 @@
     "package":  "service-test-crclencoder",
     "binary":  "service-test-crclencoder",
     "firmware_version":  "0.1.0",
-    "source_git":  "8a02ade9e2db7bdef8f1efcd65ecc950e0cbb528-dirty",
+    "source_git":  "e8199ca316d3658e3d2520e24f00ad173d6f0702-dirty",
     "source_tree_dirty":  true,
-    "build_timestamp_utc":  "2026-10-15T10:21:15Z",
+    "build_timestamp_utc":  "2026-10-15T11:08:42Z",
     "build_profile":  "release",
     "board_revision":  "Raylar v1.0",
     "target":  "thumbv8m.main-none-eabihf",
-    "artifact_sha256":  "4387b3febf4714e755c13ce175e06f9f2cba13f83f301e142cff746acdbe5c30",
+    "artifact_sha256":  "bd3a39ffee8e0d42cdae4f10e1ff3c910d1191ea3f47050a19ce526a8b3d1559",
     "runtime_crc32":  null
 }

@@ -118,9 +118,10 @@ async fn main(spawner: Spawner) -> ! {
         env!("CARGO_PKG_VERSION")
     );
     let audio_config = aardwolf::config::FLAC_CONFIG;
-    let _ = log_info!(audio_log, "recording mode={} channels={} crcl_block_frames={} crcl_bits={} arithmetic=i32_in_place algorithm={:?} prediction={:?} crcl_crc={} pcm_sha256={}",
+    let _ = log_info!(audio_log, "recording mode={} channels={} crcl_block_frames={} crcl_bits={} crcl_min_shift={} arithmetic=i32_in_place algorithm={:?} prediction={:?} crcl_crc={} pcm_sha256={}",
         if cfg!(feature="hexaphonic") { "hexaphonic" } else { "mono" },
         aardwolf::config::AUDIO_CHANNELS, aardwolf::config::CRCL_BLOCK_FRAMES, aardwolf::config::CRCL_BITS,
+        aardwolf::config::CRCL_CONFIG.min_shift,
         aardwolf::config::CRCL_CONFIG.algorithm, aardwolf::config::CRCL_CONFIG.prediction,
         !aardwolf::config::CRCL_CONFIG.is_cheap(), !aardwolf::config::CRCL_CONFIG.is_cheap());
     let _ = log_info!(

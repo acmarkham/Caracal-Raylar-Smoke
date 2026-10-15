@@ -65,6 +65,9 @@ pub struct Config {
     pub block_frames: usize,
     pub bits: u8,
     pub prediction: Prediction,
+    /// V2 minimum absolute PCM right shift for MIC2..MIC6, before prediction.
+    /// Combined with peak scaling in one rounding operation. Must be zero in v1.
+    pub min_shift: u8,
     /// Proven bound after microphone packing/shift. Arbitrary i32 PCM is unsupported.
     pub max_abs_pcm: i32,
 }
@@ -76,6 +79,7 @@ impl Default for Config {
             block_frames: 1024,
             bits: 10,
             prediction: Prediction::DirectRice,
+            min_shift: 0,
             max_abs_pcm: 1 << 23,
         }
     }
@@ -88,6 +92,7 @@ impl Config {
             block_frames: 1024,
             bits: 10,
             prediction: Prediction::TemporalRice,
+            min_shift: 0,
             max_abs_pcm: 1 << 23,
         }
     }
@@ -121,6 +126,8 @@ impl Config {
             || !matches!(self.bits, 6 | 8 | 10 | 12)
             || self.max_abs_pcm <= 0
             || self.max_abs_pcm > i32::MAX / 2
+            || self.min_shift > 30
+            || (!self.is_cheap() && self.min_shift != 0)
             || (self.is_cheap() && self.prediction != Prediction::TemporalRice)
         {
             return Err(Error::InvalidConfig);
