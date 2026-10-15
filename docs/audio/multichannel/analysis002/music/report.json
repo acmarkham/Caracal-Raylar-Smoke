@@ -94,6 +94,7 @@
       "clock_net": "MIC_CCLK1"
     }
   ],
+  "capture_order": "legacy",
   "source_description": "User reports music/chirps towards PCB top at approximately 10 cm; source height and precise location unknown.",
   "geometry_model_limit": "Plane azimuth is indicative in this near-field setup. Spherical fits assume a coplanar source and must not be interpreted as a calibrated source position.",
   "quantization_limit": "Same-PCM host simulation of production rounding/peak shifts; not a decode of a card-extracted CRCL recording.",

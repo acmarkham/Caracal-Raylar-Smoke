@@ -101,6 +101,8 @@ def main():
     source=parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pcb",type=Path)
     source.add_argument("--geometry",type=Path,help="Archived PCB-derived microphone geometry JSON")
+    parser.add_argument("--capture-order",choices=["pcb","legacy"],default="pcb",
+        help="pcb: corrected MK1..MK6 order; legacy: pre-remap streams with MK4/MK5 exchanged")
     parser.add_argument("--target-log",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True)
     args=parser.parse_args()
@@ -119,10 +121,12 @@ def main():
     microphones=geometry(args.pcb) if args.pcb else json.loads(args.geometry.read_text())['microphones']
     xy=np.array([m["port_xy_mm"] for m in microphones])/1000
     center=xy.mean(axis=0)
-    # Match current BSMX selection [BS0_R, BS1_R, BS1_F, BS2_R,
-    # BS2_F, BS3_R] to PCB data/LR nets. Single-mic buses are unambiguous.
+    # Start with the legacy BSMX order; corrected capture exchanges the two
+    # SD2 lanes to match physical MK numbers. Single-mic buses are unambiguous.
     bus_edges=[("MIC_SD0",None),("MIC_SD1","GND"),("MIC_SD1","3.3V"),
                ("MIC_SD2","GND"),("MIC_SD2","3.3V"),("MIC_SD3",None)]
+    if args.capture_order=='pcb':
+        bus_edges[3],bus_edges[4]=bus_edges[4],bus_edges[3]
     mapping=np.array([next(i for i,m in enumerate(microphones)
         if m['data_net']==bus and (edge is None or m['lr_net']==edge))
         for bus,edge in bus_edges])
@@ -158,7 +162,8 @@ def main():
         observations.append(r['gcc_us'])
     delays=np.r_[0,np.linalg.lstsq(incidence,np.array(observations),rcond=None)[0]]
     fit_results={}
-    for name,order in [("labels_as_recorded",np.arange(6)),("pcb_inferred_MK4_MK5_swap",mapping)]:
+    physical_mapping_name='pcb_inferred_MK4_MK5_swap' if args.capture_order=='legacy' else 'pcb_order'
+    for name,order in [("labels_as_recorded",np.arange(6)),(physical_mapping_name,mapping)]:
         positions=xy[order]
         def residuals(source):
             distances=np.linalg.norm(positions-np.array(source),axis=1)
@@ -189,6 +194,7 @@ def main():
         quantized_results.append(dict(first=i+1,second=j+1,gcc_us=q['gcc_us'],difference_us=q['gcc_us']-r['gcc_us']))
     out=args.output; out.mkdir(parents=True,exist_ok=True)
     result=dict(raw_sha256=hashlib.sha256(pcm.astype('<i4').tobytes()).hexdigest(),frames=64000,rate=FS,microphones=microphones,
+        capture_order=args.capture_order,
         source_description="User reports music/chirps towards PCB top at approximately 10 cm; source height and precise location unknown.",
         geometry_model_limit="Plane azimuth is indicative in this near-field setup. Spherical fits assume a coplanar source and must not be interpreted as a calibrated source position.",
         quantization_limit="Same-PCM host simulation of production rounding/peak shifts; not a decode of a card-extracted CRCL recording.",

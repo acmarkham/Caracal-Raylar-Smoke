@@ -3,7 +3,7 @@
 **Date:** 15 October 2026, Europe/London  
 **Hardware:** Raylar v1.0, STM32U595, six IM69D129FV01 microphones  
 **Related work:** [Analysis 001: noise and useful precision](analysis001.md)  
-**Status:** observations from captures made before correcting the MIC4/MIC5 stream mapping. This report does not document a post-correction hardware test.
+**Status:** the MIC4/MIC5 selector correction has been implemented in the driver and all-microphone smoke test. The observations below remain from pre-correction captures; this report does not document a post-correction hardware test.
 
 ## 1. Findings
 
@@ -71,7 +71,7 @@ To align recorded channel numbers with physical MK numbers, the required selecto
 pub(super) const BITSTREAM_SELECTS: [u32; 6] = [0, 2, 3, 5, 4, 6];
 ```
 
-**This report records the diagnosis and required correction; the captures and restored Aardwolf image still use the original order.** Historical recordings made with that order must be interpreted as streams `[MK1, MK2, MK3, MK5, MK4, MK6]`. Changing the firmware order does not retroactively change those files.
+**The captures and Aardwolf image restored at the end of this experiment use the original order. The selector correction has since been implemented in source; this evidence remains pre-fix.** Historical recordings made with the original order must be interpreted as streams `[MK1, MK2, MK3, MK5, MK4, MK6]`. Changing the firmware order does not retroactively change those files.
 
 ## 3. Experiment and capture integrity
 
@@ -219,9 +219,9 @@ These are differences between estimator outputs on **identical input samples bef
 
 This supports Analysis 001's six-bit starting point. Low-SNR sources, other frequencies and downstream beamforming/AoA accuracy remain separate evaluation cases.
 
-## 7. Required correction and next validation
+## 7. Implemented correction and next validation
 
-1. Exchange the BS2_R/BS2_F assignments for streams 4 and 5 so channel numbers match physical MK numbers. Update comments and mapping tests together. MIC1's reference path requires no reordering.
+1. **Implemented:** exchange the BS2_R/BS2_F assignments for streams 4 and 5 so channel numbers match physical MK numbers. The production driver and all-microphone smoke test now use `[0, 2, 3, 5, 4, 6]`. MIC1's reference path requires no reordering.
 2. Repeat the chirp capture after that change and check that the unmodified recorded order is now MK1–MK6. These pre-fix data cannot serve as a post-fix regression result.
 3. Record the speaker's acoustic-source position and height, use several known azimuths, and repeat at a greater distance to improve the plane-wave approximation. Compare frequency-dependent phase as well as correlation peaks.
 4. Exercise the complete path by extracting and independently decoding a paired FLAC/CRCL recording, then repeat the delay analysis. This checks file/sample alignment in addition to the raw capture and quantizer tested here.
@@ -261,5 +261,7 @@ rtk proxy python scripts/audio_analysis002_figures.py
 ```
 
 The [reproduction wrapper](../../../scripts/audio_analysis002_figures.py) checks both canonical PCM SHA-256 values. The [delay-analysis script](../../../scripts/audio_doa_report.py) verifies every channel's sum, sum of squares and extrema against the archived target log before analyzing it. The archived geometry makes a board, network connection and the original files under `target/` unnecessary.
+
+The reproduction wrapper explicitly selects `--capture-order legacy` to preserve the interpretation of these original captures. Fresh captures from the corrected driver use the analysis script's default `--capture-order pcb` instead. Channel-order selection changes the geometry interpretation, not the archived PCM bytes.
 
 For a fresh acquisition, use the raw diagnostic procedure in the [CRCL target-test README](../../../servicetests/crclencoder/README.md#raw-microphone-noise-diagnostic). During this experiment, direct word-sized `probe-rs read b32` text output transferred substantially faster than binary-file output. The word list was converted back into little-endian u32/i32 bytes and checked against the target summaries. Transfer format did not alter the samples.

@@ -7,7 +7,7 @@
 // MIC2-MIC6 are connected to MDF1 CCK1:
 // - PC2: MDF1_CCK1, common clock 1 output, AF6
 // - PD6: MDF1_SDI1, MIC2 rising edge, MIC3 falling edge, AF6
-// - PE7: MDF1_SDI2, MIC4 rising edge, MIC5 falling edge, AF6
+// - PE7: MDF1_SDI2, MIC4 falling edge (LR=VDD), MIC5 rising edge (LR=GND), AF6
 // - PE4: MDF1_SDI3, MIC6 rising edge, AF6
 //
 // Each microphone has a ping-pong DMA buffer. Each half is controlled by
@@ -45,8 +45,8 @@ const MIC_COUNT: usize = 6;
 const MDF_FILTERS: [usize; MIC_COUNT] = [0, 1, 2, 3, 4, 5];
 const MDF_DMA_REQUESTS: [u8; MIC_COUNT] = [92, 93, 94, 95, 96, 97];
 
-// BS0_R, BS1_R, BS1_F, BS2_R, BS2_F, BS3_R.
-const MDF_BITSTREAM_SELECTS: [u32; MIC_COUNT] = [0, 2, 3, 4, 5, 6];
+// PCB MK1..MK6: BS0_R, BS1_R, BS1_F, BS2_F, BS2_R, BS3_R.
+const MDF_BITSTREAM_SELECTS: [u32; MIC_COUNT] = [0, 2, 3, 5, 4, 6];
 const MDF_CIC_MODE: u32 = 4; // 4 = SINC4, 5 = SINC5 on STM32U5 MDF/ADF.
 const MDF_CIC_SCALE: u32 = 0x27;
 const MDF_CIC_DECIMATION: u32 = 191;

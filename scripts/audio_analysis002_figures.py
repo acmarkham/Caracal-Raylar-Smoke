@@ -40,6 +40,7 @@ def main():
         assert hashlib.sha256(pcm.astype('<i4').tobytes()).hexdigest()==digest
         subprocess.run([sys.executable,str(ROOT/'scripts/audio_doa_report.py'),str(raw),
             '--geometry',str(ASSETS/'geometry.json'),
+            '--capture-order','legacy',
             '--target-log',str(directory/'capture-target.log'),
             '--output',str(directory)],check=True,stdout=subprocess.DEVNULL)
         reports[kind]=json.loads((directory/'report.json').read_text())
