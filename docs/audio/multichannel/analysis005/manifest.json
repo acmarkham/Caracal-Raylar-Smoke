@@ -1,0 +1,22 @@
+{
+  "artifacts": {
+    "aardwolf-build.json": "d4fd4ad482206ca4824be071d63c3e6ff0a24776eae0e9a2a3de2ea2674c2d70",
+    "benchmark-build.json": "3637e6e65b84285745c247ff0a951bb8c1d580d8d39b6ae2be8c0a5d1ba50db9",
+    "cycle-budget.png": "4714816284f8582674f8aa798cd9b54f107774bf7e1e22e6e67bfca3d48cfedf",
+    "cycles.csv": "28ccf891649c746a1b6dad6fc22d2fc49f04f7fdf51c953d8b339ad006cfaef3",
+    "cycles.json": "94ce60b4201b7e4d64d4492afa87e4cf3494736ac7fe868b1ab24e9045fb9af5",
+    "hot-functions.asm": "4abd5e0da907730bf0335c2c56bcffebfd3c14c8f81f41df7070782968f5390f",
+    "target-run1.log": "60193f30dbe511a4209561bc2d1e9b45bca82da2347535708e1153e1b9e27049",
+    "target-run2.log": "0a4e3f12d9ece7abc7e1714a417785906b2cb3a8a9a37da563558899b35cdfca"
+  },
+  "report_sha256": "76f89ee3e69723c376beb9ad70b30d4de8b7270b513ae37fa9cdfefde1f99a80",
+  "reproduction_sources_sha256": {
+    "crates/services/crclencoder/src/cheap.rs": "33cf34a0625f169b6952b3dad6ceba46ac49df32c05d500bf8c9d63eb2b009d7",
+    "crates/services/crclencoder/src/cheap_reference.rs": "b0540137088d608d46f1ed64e0a5e79535fd98eada9b16098890e05a02f9896f",
+    "crates/services/crclencoder/src/cheap_tests.rs": "1399c0b4e4c7afdac44353b1282dd1129de32c7911999eef9d75feb514729f98",
+    "crates/services/crclencoder/src/benchmark.rs": "335dc6ab5dbaeb20097cf939e2a4a5a8bf7858a88a70841473117c33ef2e8ac9",
+    "servicetests/crclencoder/loop_benchmark.rs": "e0591802c99355792df21aa76c3105e01492bb0c4ff4491ec9fa327b037b4184",
+    "scripts/crcl_loop_report.py": "959e1a1b9ac3bc22812da8114141b9dc5169ad713447791f8822ec8779aef8b8",
+    "scripts/crcl_transform_report.py": "c19070c340924cda9ae8da57678dc3579e8afd70a201e3425051feda90aef79f"
+  }
+}

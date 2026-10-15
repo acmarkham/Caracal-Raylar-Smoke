@@ -492,6 +492,25 @@ fn codec(m: &mut Memory) -> u32 {
     bytes as u32
 }
 
+// Frozen pre-chunk transform, with the same production reservoir serializer.
+// These controls run in the same ELF as the new transform for a direct A/B.
+#[inline(never)]
+fn reference_transform(m: &mut Memory) -> u32 {
+    let mut t = Transform::new(&mut m.pcm, black_box(CONFIG)).unwrap();
+    while !t.advance_cheap_reference(black_box(256)).unwrap() {}
+    black_box(&t.pcm);
+    t.channels[0].scale
+}
+#[inline(never)]
+fn reference_codec(m: &mut Memory) -> u32 {
+    let encoder = Encoder::new(black_box(CONFIG)).unwrap();
+    let mut t = Transform::new(&mut m.pcm, black_box(CONFIG)).unwrap();
+    while !t.advance_cheap_reference(black_box(256)).unwrap() {}
+    let bytes = encoder.data(t, &mut m.output).unwrap();
+    black_box(&m.output[..bytes]);
+    bytes as u32
+}
+
 fn split_transform(m: &mut Memory, clock: fn() -> u32) -> [Measurement; 2] {
     let mut peaks = [0u32; REPEATS];
     let mut quants = [0u32; REPEATS];
@@ -620,6 +639,26 @@ pub fn run(
     for row in split_transform(m, clock) {
         report(row);
     }
+    let row = measure(
+        m,
+        clock,
+        "reference_transform_budget256",
+        1,
+        raw,
+        reference_transform,
+    );
+    assert_eq!(m.pcm, m.quant);
+    report(row);
+    let row = measure(
+        m,
+        clock,
+        "reference_codec_budget256",
+        1,
+        raw,
+        reference_codec,
+    );
+    assert_eq!(&m.output[..m.record_bytes], &m.expected[..m.record_bytes]);
+    report(row);
 }
 
 #[cfg(test)]

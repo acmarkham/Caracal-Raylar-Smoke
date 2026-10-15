@@ -4,6 +4,14 @@ This selectable variant is for measuring CPU cost, compression and downstream qu
 
 Each MIC2..MIC6 block scans only that channel's own PCM peak to select a right shift. It overwrites samples with quantized values in their existing `i32` slots; no sample, spatial-difference or temporal-residual arrays are allocated. MIC1 is never read by this transform and remains unchanged for the lossless reference. Native `i32` arithmetic uses the validated microphone range, leaving headroom for rounding; no PCM arithmetic is promoted to `i64`.
 
+The resumable transform processes bounded slices of one channel and phase at a
+time, keeping peak or quantization/statistics state local until the chunk ends.
+The caller's budget still counts scalar sample visits across both passes. Range
+failures preserve the exact valid-prefix cursor and peak, and zero budgets do no
+work. No additional sample workspace is required. See
+[Analysis 005](../../../docs/audio/multichannel/analysis005.md) for state/output
+equivalence checks and same-image hardware cycle comparisons.
+
 For each channel/block, derive the shift from the absolute peak using CLZ, adjusting once if the rounded positive peak would exceed the symmetric signed precision. Quantization is `q = (pcm + half) >> shift`, where `half = 0` for shift zero or `1 << (shift - 1)` otherwise. Ties round toward positive infinity. Reconstruction is `q << shift`; error is at most half a step, or zero for shift zero. Quantize before temporal differencing so error does not accumulate through a block.
 
 The effective shift is `max(peak_shift, config.min_shift)`. A six-bit minimum gives a 64-count quantization step in the recorder's unpacked PCM units; it is not an additional six-bit shift after peak quantization. Apply only one rounding operation. Louder blocks can require a larger shift for the configured retained precision. `min_shift` accepts 0..30 for v2 and must be zero for v1. The effective shift is already stored in each v2 channel descriptor, so the file layout and existing decoder need no changes. This adds scalar configuration only, with no sample buffer or i64 promotion. See the [measured design justification](../../../docs/audio/multichannel/analysis001.md).

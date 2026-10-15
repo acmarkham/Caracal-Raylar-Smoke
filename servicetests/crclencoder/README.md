@@ -17,6 +17,8 @@ Each stage has eight warm-ups and 129 measurements; the board remains idle after
 for measured cycles, pipeline pseudocode, caveats, artifacts and reproduction.
 The production single-codeword/u32-reservoir integration and repeat measurements
 are recorded in [Analysis 004](../../docs/audio/multichannel/analysis004.md).
+The bounded transform-loop optimization and same-image frozen-transform controls
+are recorded in [Analysis 005](../../docs/audio/multichannel/analysis005.md).
 The package now has two binaries, so select `-Bin service-test-crclencoder` for
 the existing microphone/SD diagnostics below; the benchmark runner selects its
 own binary explicitly.

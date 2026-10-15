@@ -1,0 +1,568 @@
+{
+  "core_hz": 144000000,
+  "frames": 1024,
+  "auxiliary_channels": 5,
+  "repeats": 129,
+  "warmups": 8,
+  "build": {
+    "schema_version": 1,
+    "package": "service-test-crclencoder",
+    "binary": "crcl-loop-benchmark",
+    "firmware_version": "0.1.0",
+    "source_git": "10b7d9cf707cd73ffef867d406cc562aafe68c65-dirty",
+    "source_tree_dirty": true,
+    "build_timestamp_utc": "2026-10-15T18:13:11Z",
+    "build_profile": "release",
+    "board_revision": "Raylar v1.0",
+    "target": "thumbv8m.main-none-eabihf",
+    "artifact_sha256": "9c327bfabe4a4f568ec3ad4b151f9e5f0251b58291283032fe1ef8da8aceda5e",
+    "runtime_crc32": null
+  },
+  "baseline_build": {
+    "schema_version": 1,
+    "package": "service-test-crclencoder",
+    "binary": "crcl-loop-benchmark",
+    "firmware_version": "0.1.0",
+    "source_git": "768caffbef5191c92da24f886b5e22ed2c5e6d49-dirty",
+    "source_tree_dirty": true,
+    "build_timestamp_utc": "2026-10-15T16:40:26Z",
+    "build_profile": "release",
+    "board_revision": "Raylar v1.0",
+    "target": "thumbv8m.main-none-eabihf",
+    "artifact_sha256": "71f912865571c614da7081f7eb94b50a4d1a12f2a1e0daca888299e2219cd71c",
+    "runtime_crc32": null
+  },
+  "run1": {
+    "empty": {
+      "batch": 1,
+      "min": 66,
+      "median": 66,
+      "p90": 66,
+      "max": 66,
+      "checksum": 0,
+      "cycles_per_block": 66.0,
+      "ms_per_block": 0.0004583333333333333
+    },
+    "copy_6ch": {
+      "batch": 1,
+      "min": 38585,
+      "median": 38585,
+      "p90": 38585,
+      "max": 38585,
+      "checksum": 37,
+      "cycles_per_block": 38585.0,
+      "ms_per_block": 0.2679513888888889
+    },
+    "optional_hpf_5ch": {
+      "batch": 1,
+      "min": 46192,
+      "median": 46192,
+      "p90": 46192,
+      "max": 46193,
+      "checksum": 21849,
+      "cycles_per_block": 46192.0,
+      "ms_per_block": 0.3207777777777778
+    },
+    "peak_validate_5ch": {
+      "batch": 1,
+      "min": 83746,
+      "median": 83746,
+      "p90": 83746,
+      "max": 83747,
+      "checksum": 25253,
+      "cycles_per_block": 83746.0,
+      "ms_per_block": 0.5815694444444445
+    },
+    "scale_select_5ch": {
+      "batch": 256,
+      "min": 74085,
+      "median": 74085,
+      "p90": 74085,
+      "max": 74086,
+      "checksum": 0,
+      "cycles_per_block": 289.39453125,
+      "ms_per_block": 0.002009684244791667
+    },
+    "truncate_shift_5ch": {
+      "batch": 1,
+      "min": 34805,
+      "median": 34805,
+      "p90": 34805,
+      "max": 34805,
+      "checksum": 126,
+      "cycles_per_block": 34805.0,
+      "ms_per_block": 0.2417013888888889
+    },
+    "round_quantize_5ch": {
+      "batch": 1,
+      "min": 43857,
+      "median": 43857,
+      "p90": 43857,
+      "max": 43858,
+      "checksum": 126,
+      "cycles_per_block": 43857.0,
+      "ms_per_block": 0.30456249999999996
+    },
+    "temporal_delta_5ch": {
+      "batch": 1,
+      "min": 32744,
+      "median": 32744,
+      "p90": 32744,
+      "max": 32744,
+      "checksum": 55,
+      "cycles_per_block": 32744.0,
+      "ms_per_block": 0.2273888888888889
+    },
+    "sum_pre_folded_5ch": {
+      "batch": 1,
+      "min": 21963,
+      "median": 21963,
+      "p90": 21963,
+      "max": 21964,
+      "checksum": 99793,
+      "cycles_per_block": 21963.0,
+      "ms_per_block": 0.15252083333333333
+    },
+    "fold_sum_residual_5ch": {
+      "batch": 1,
+      "min": 39026,
+      "median": 39026,
+      "p90": 39026,
+      "max": 39026,
+      "checksum": 99793,
+      "cycles_per_block": 39026.0,
+      "ms_per_block": 0.2710138888888889
+    },
+    "rice_k_5ch": {
+      "batch": 256,
+      "min": 51573,
+      "median": 51573,
+      "p90": 51573,
+      "max": 51573,
+      "checksum": 0,
+      "cycles_per_block": 201.45703125,
+      "ms_per_block": 0.0013990071614583333
+    },
+    "quantize_delta_sum_fused_5ch": {
+      "batch": 1,
+      "min": 78738,
+      "median": 78738,
+      "p90": 78738,
+      "max": 78739,
+      "checksum": 99793,
+      "cycles_per_block": 78738.0,
+      "ms_per_block": 0.5467916666666667
+    },
+    "rice_bytes_pre_folded_5ch": {
+      "batch": 1,
+      "min": 1166325,
+      "median": 1166325,
+      "p90": 1166325,
+      "max": 1166326,
+      "checksum": 5183,
+      "cycles_per_block": 1166325.0,
+      "ms_per_block": 8.099479166666667
+    },
+    "rice_single_codeword_5ch": {
+      "batch": 1,
+      "min": 799979,
+      "median": 799979,
+      "p90": 799979,
+      "max": 799981,
+      "checksum": 5183,
+      "cycles_per_block": 799979.0,
+      "ms_per_block": 5.555409722222222
+    },
+    "rice_words_codeword_5ch": {
+      "batch": 1,
+      "min": 545183,
+      "median": 545183,
+      "p90": 545183,
+      "max": 545185,
+      "checksum": 5183,
+      "cycles_per_block": 545183.0,
+      "ms_per_block": 3.7859930555555557
+    },
+    "payload_from_quant_5ch": {
+      "batch": 1,
+      "min": 1176555,
+      "median": 1176555,
+      "p90": 1176555,
+      "max": 1176557,
+      "checksum": 5183,
+      "cycles_per_block": 1176555.0,
+      "ms_per_block": 8.170520833333333
+    },
+    "crcl_header_only": {
+      "batch": 1,
+      "min": 297,
+      "median": 297,
+      "p90": 297,
+      "max": 297,
+      "checksum": 88,
+      "cycles_per_block": 297.0,
+      "ms_per_block": 0.0020625
+    },
+    "crcl_header_payload_copy": {
+      "batch": 1,
+      "min": 8470,
+      "median": 8470,
+      "p90": 8470,
+      "max": 8470,
+      "checksum": 5183,
+      "cycles_per_block": 8470.0,
+      "ms_per_block": 0.058819444444444445
+    },
+    "production_transform": {
+      "batch": 1,
+      "min": 282324,
+      "median": 282324,
+      "p90": 282324,
+      "max": 282324,
+      "checksum": 6,
+      "cycles_per_block": 282324.0,
+      "ms_per_block": 1.9605833333333333
+    },
+    "production_transform_budget256": {
+      "batch": 1,
+      "min": 289163,
+      "median": 289163,
+      "p90": 289163,
+      "max": 289163,
+      "checksum": 6,
+      "cycles_per_block": 289163.0,
+      "ms_per_block": 2.008076388888889
+    },
+    "production_serialize": {
+      "batch": 1,
+      "min": 515678,
+      "median": 515678,
+      "p90": 515678,
+      "max": 515679,
+      "checksum": 5183,
+      "cycles_per_block": 515678.0,
+      "ms_per_block": 3.581097222222222
+    },
+    "production_codec_budget256": {
+      "batch": 1,
+      "min": 804988,
+      "median": 804988,
+      "p90": 804988,
+      "max": 804989,
+      "checksum": 5183,
+      "cycles_per_block": 804988.0,
+      "ms_per_block": 5.590194444444444
+    },
+    "production_peak_scale_phases": {
+      "batch": 1,
+      "min": 117840,
+      "median": 117840,
+      "p90": 117840,
+      "max": 117840,
+      "checksum": 0,
+      "cycles_per_block": 117840.0,
+      "ms_per_block": 0.8183333333333334
+    },
+    "production_quant_stats_k_phases": {
+      "batch": 1,
+      "min": 165254,
+      "median": 165254,
+      "p90": 165254,
+      "max": 165254,
+      "checksum": 0,
+      "cycles_per_block": 165254.0,
+      "ms_per_block": 1.1475972222222222
+    },
+    "reference_transform_budget256": {
+      "batch": 1,
+      "min": 777048,
+      "median": 777048,
+      "p90": 777048,
+      "max": 777052,
+      "checksum": 6,
+      "cycles_per_block": 777048.0,
+      "ms_per_block": 5.396166666666666
+    },
+    "reference_codec_budget256": {
+      "batch": 1,
+      "min": 1292496,
+      "median": 1292496,
+      "p90": 1292496,
+      "max": 1292498,
+      "checksum": 5183,
+      "cycles_per_block": 1292496.0,
+      "ms_per_block": 8.975666666666667
+    }
+  },
+  "run2": {
+    "empty": {
+      "batch": 1,
+      "min": 66,
+      "median": 66,
+      "p90": 66,
+      "max": 66,
+      "checksum": 0,
+      "cycles_per_block": 66.0,
+      "ms_per_block": 0.0004583333333333333
+    },
+    "copy_6ch": {
+      "batch": 1,
+      "min": 38585,
+      "median": 38585,
+      "p90": 38585,
+      "max": 38585,
+      "checksum": 37,
+      "cycles_per_block": 38585.0,
+      "ms_per_block": 0.2679513888888889
+    },
+    "optional_hpf_5ch": {
+      "batch": 1,
+      "min": 46192,
+      "median": 46192,
+      "p90": 46192,
+      "max": 46194,
+      "checksum": 21849,
+      "cycles_per_block": 46192.0,
+      "ms_per_block": 0.3207777777777778
+    },
+    "peak_validate_5ch": {
+      "batch": 1,
+      "min": 83746,
+      "median": 83746,
+      "p90": 83746,
+      "max": 83747,
+      "checksum": 25253,
+      "cycles_per_block": 83746.0,
+      "ms_per_block": 0.5815694444444445
+    },
+    "scale_select_5ch": {
+      "batch": 256,
+      "min": 74085,
+      "median": 74085,
+      "p90": 74085,
+      "max": 74087,
+      "checksum": 0,
+      "cycles_per_block": 289.39453125,
+      "ms_per_block": 0.002009684244791667
+    },
+    "truncate_shift_5ch": {
+      "batch": 1,
+      "min": 34805,
+      "median": 34805,
+      "p90": 34805,
+      "max": 34805,
+      "checksum": 126,
+      "cycles_per_block": 34805.0,
+      "ms_per_block": 0.2417013888888889
+    },
+    "round_quantize_5ch": {
+      "batch": 1,
+      "min": 43857,
+      "median": 43857,
+      "p90": 43857,
+      "max": 43859,
+      "checksum": 126,
+      "cycles_per_block": 43857.0,
+      "ms_per_block": 0.30456249999999996
+    },
+    "temporal_delta_5ch": {
+      "batch": 1,
+      "min": 32744,
+      "median": 32744,
+      "p90": 32744,
+      "max": 32744,
+      "checksum": 55,
+      "cycles_per_block": 32744.0,
+      "ms_per_block": 0.2273888888888889
+    },
+    "sum_pre_folded_5ch": {
+      "batch": 1,
+      "min": 21963,
+      "median": 21963,
+      "p90": 21963,
+      "max": 21964,
+      "checksum": 99793,
+      "cycles_per_block": 21963.0,
+      "ms_per_block": 0.15252083333333333
+    },
+    "fold_sum_residual_5ch": {
+      "batch": 1,
+      "min": 39026,
+      "median": 39026,
+      "p90": 39026,
+      "max": 39026,
+      "checksum": 99793,
+      "cycles_per_block": 39026.0,
+      "ms_per_block": 0.2710138888888889
+    },
+    "rice_k_5ch": {
+      "batch": 256,
+      "min": 51573,
+      "median": 51573,
+      "p90": 51573,
+      "max": 51573,
+      "checksum": 0,
+      "cycles_per_block": 201.45703125,
+      "ms_per_block": 0.0013990071614583333
+    },
+    "quantize_delta_sum_fused_5ch": {
+      "batch": 1,
+      "min": 78738,
+      "median": 78738,
+      "p90": 78738,
+      "max": 78738,
+      "checksum": 99793,
+      "cycles_per_block": 78738.0,
+      "ms_per_block": 0.5467916666666667
+    },
+    "rice_bytes_pre_folded_5ch": {
+      "batch": 1,
+      "min": 1166325,
+      "median": 1166325,
+      "p90": 1166325,
+      "max": 1166327,
+      "checksum": 5183,
+      "cycles_per_block": 1166325.0,
+      "ms_per_block": 8.099479166666667
+    },
+    "rice_single_codeword_5ch": {
+      "batch": 1,
+      "min": 799979,
+      "median": 799979,
+      "p90": 799979,
+      "max": 799980,
+      "checksum": 5183,
+      "cycles_per_block": 799979.0,
+      "ms_per_block": 5.555409722222222
+    },
+    "rice_words_codeword_5ch": {
+      "batch": 1,
+      "min": 545183,
+      "median": 545183,
+      "p90": 545183,
+      "max": 545185,
+      "checksum": 5183,
+      "cycles_per_block": 545183.0,
+      "ms_per_block": 3.7859930555555557
+    },
+    "payload_from_quant_5ch": {
+      "batch": 1,
+      "min": 1176555,
+      "median": 1176555,
+      "p90": 1176555,
+      "max": 1176557,
+      "checksum": 5183,
+      "cycles_per_block": 1176555.0,
+      "ms_per_block": 8.170520833333333
+    },
+    "crcl_header_only": {
+      "batch": 1,
+      "min": 297,
+      "median": 297,
+      "p90": 297,
+      "max": 297,
+      "checksum": 88,
+      "cycles_per_block": 297.0,
+      "ms_per_block": 0.0020625
+    },
+    "crcl_header_payload_copy": {
+      "batch": 1,
+      "min": 8470,
+      "median": 8470,
+      "p90": 8470,
+      "max": 8470,
+      "checksum": 5183,
+      "cycles_per_block": 8470.0,
+      "ms_per_block": 0.058819444444444445
+    },
+    "production_transform": {
+      "batch": 1,
+      "min": 282324,
+      "median": 282324,
+      "p90": 282324,
+      "max": 282324,
+      "checksum": 6,
+      "cycles_per_block": 282324.0,
+      "ms_per_block": 1.9605833333333333
+    },
+    "production_transform_budget256": {
+      "batch": 1,
+      "min": 289163,
+      "median": 289163,
+      "p90": 289163,
+      "max": 289163,
+      "checksum": 6,
+      "cycles_per_block": 289163.0,
+      "ms_per_block": 2.008076388888889
+    },
+    "production_serialize": {
+      "batch": 1,
+      "min": 515678,
+      "median": 515678,
+      "p90": 515678,
+      "max": 515680,
+      "checksum": 5183,
+      "cycles_per_block": 515678.0,
+      "ms_per_block": 3.581097222222222
+    },
+    "production_codec_budget256": {
+      "batch": 1,
+      "min": 804988,
+      "median": 804988,
+      "p90": 804988,
+      "max": 804988,
+      "checksum": 5183,
+      "cycles_per_block": 804988.0,
+      "ms_per_block": 5.590194444444444
+    },
+    "production_peak_scale_phases": {
+      "batch": 1,
+      "min": 117840,
+      "median": 117840,
+      "p90": 117840,
+      "max": 117842,
+      "checksum": 0,
+      "cycles_per_block": 117840.0,
+      "ms_per_block": 0.8183333333333334
+    },
+    "production_quant_stats_k_phases": {
+      "batch": 1,
+      "min": 165254,
+      "median": 165254,
+      "p90": 165254,
+      "max": 165255,
+      "checksum": 0,
+      "cycles_per_block": 165254.0,
+      "ms_per_block": 1.1475972222222222
+    },
+    "reference_transform_budget256": {
+      "batch": 1,
+      "min": 777048,
+      "median": 777048,
+      "p90": 777048,
+      "max": 777050,
+      "checksum": 6,
+      "cycles_per_block": 777048.0,
+      "ms_per_block": 5.396166666666666
+    },
+    "reference_codec_budget256": {
+      "batch": 1,
+      "min": 1292496,
+      "median": 1292496,
+      "p90": 1292496,
+      "max": 1292497,
+      "checksum": 5183,
+      "cycles_per_block": 1292496.0,
+      "ms_per_block": 8.975666666666667
+    }
+  },
+  "max_repeat_median_difference_cycles": 0.0,
+  "same_image_transform_reduction_percent": 62.78698355828727,
+  "same_image_complete_loop_reduction_percent": 37.71833723276513,
+  "historical_transform_reduction_percent": 63.07797010107614,
+  "historical_complete_loop_reduction_percent": 38.018296039810565,
+  "output_record_bytes": 5183,
+  "unit_tests_passed": 15,
+  "valid_state_and_byte_comparison_cases": 867,
+  "error_progress_cases": 120
+}

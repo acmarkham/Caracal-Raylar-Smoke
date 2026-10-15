@@ -38,7 +38,7 @@ LABELS={
  'production_quant_stats_k_phases':'Production quantize/stats/k passes (five spans)',
 }
 
-def read_log(path):
+def read_log(path, extra_stages=()):
     text=path.read_text(encoding='utf8')
     assert 'CRCL LOOP BENCH PASS' in text
     assert 'interrupts=off' in text and 'repeats=129' in text
@@ -50,7 +50,8 @@ def read_log(path):
         r['cycles_per_block']=r['median']/r['batch']
         r['ms_per_block']=r['cycles_per_block']/HZ*1000
         rows[name]=r
-    assert rows.keys()==LABELS.keys(),(rows.keys()^LABELS.keys())
+    expected=LABELS.keys()|set(extra_stages)
+    assert rows.keys()==expected,(rows.keys()^expected)
     return rows
 
 def fixture():
