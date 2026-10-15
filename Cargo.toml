@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/aardwolf",
     "crates/drivers",
+    "crates/profiling",
     "crates/metadrivers/audiosource",
     "crates/board/raylar_v1p0",
     "crates/services/time",

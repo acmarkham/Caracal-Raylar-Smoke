@@ -12,6 +12,7 @@ test = false
 bench = false
 
 [dependencies]
+raylar-stage-profiling = { path = "../../crates/profiling" }
 raylar-audio-recorder-service = { path = "../../crates/services/audiorecorder", features = ["defmt"] }
 raylar-audiosource = { path = "../../crates/metadrivers/audiosource", features = ["defmt"] }
 raylar-crcl-encoder-service = { path = "../../crates/services/crclencoder", features = ["defmt"] }
@@ -33,6 +34,10 @@ cortex-m.workspace = true
 cortex-m-rt.workspace = true
 
 [features]
+noise-floor = []
 sd-recording = []
 laboratory-time = ["sd-recording"]
+stage-profiling = ["laboratory-time", "raylar-stage-profiling/detail"]
+profile-control = ["laboratory-time", "raylar-stage-profiling/dwt"]
+cheap-crcl = []
 trustzone-secure = ["embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure"]

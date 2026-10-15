@@ -288,10 +288,12 @@ where
             continue;
         }
         let copy_len = (WRITE_BUFFER_BYTES - slot.pending_len).min(data.len());
+        let buffer_profile = raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::StorageBuffer);
         slot.pending[slot.pending_len..slot.pending_len + copy_len]
             .copy_from_slice(&data[..copy_len]);
         slot.pending_len += copy_len;
         data = &data[copy_len..];
+        drop(buffer_profile);
         if slot.pending_len == WRITE_BUFFER_BYTES {
             backend
                 .append(handle, &slot.pending[..])

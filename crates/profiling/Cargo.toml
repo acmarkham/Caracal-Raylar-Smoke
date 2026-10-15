@@ -1,0 +1,20 @@
+[package]
+name = "raylar-stage-profiling"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+dwt = ["dep:cortex-m", "dep:embassy-time"]
+detail = ["dwt"]
+
+[dependencies]
+embassy-time = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "arm")'.dependencies]
+cortex-m = { workspace = true, optional = true }
+
+[dev-dependencies]
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+defmt = { workspace = true, features = ["unstable-test"] }

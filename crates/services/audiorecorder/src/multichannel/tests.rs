@@ -139,6 +139,7 @@ fn samples(start: usize, count: usize) -> Vec<i32> {
         .collect()
 }
 fn end(file: &[u8]) -> (u64, u32, [u8; 32]) {
+    let cheap = u16::from_le_bytes(file[8..10].try_into().unwrap()) == 2;
     let mut p = u16::from_le_bytes(file[10..12].try_into().unwrap()) as usize;
     let mut sequence = 0;
     let mut expected = 0;
@@ -154,14 +155,28 @@ fn end(file: &[u8]) -> (u64, u32, [u8; 32]) {
             u64::from_le_bytes(file[p + 16..p + 24].try_into().unwrap()),
             expected
         );
-        assert_eq!(
-            u32::from_le_bytes(file[p + length - 4..p + length].try_into().unwrap()),
-            crc32c(&file[p..p + length - 4])
-        );
+        if !cheap {
+            assert_eq!(
+                u32::from_le_bytes(file[p + length - 4..p + length].try_into().unwrap()),
+                crc32c(&file[p..p + length - 4])
+            );
+        }
         match file[p + 4] {
             1 => expected += u16::from_le_bytes(file[p + 24..p + 26].try_into().unwrap()) as u64,
             3 => {
                 assert_eq!(p + length, file.len());
+                if cheap {
+                    assert_eq!(length, 52);
+                    assert_eq!(
+                        u64::from_le_bytes(file[p + 28..p + 36].try_into().unwrap()),
+                        expected
+                    );
+                    return (
+                        expected,
+                        u32::from_le_bytes(file[p + 48..p + 52].try_into().unwrap()),
+                        [0; 32],
+                    );
+                }
                 return (
                     expected,
                     u32::from_le_bytes(file[p + 52..p + 56].try_into().unwrap()),
@@ -177,81 +192,98 @@ fn end(file: &[u8]) -> (u64, u32, [u8; 32]) {
 
 #[test]
 fn paired_rotation_and_tail_preserve_every_reference_sample() {
-    for flac in [false, true] {
-        let source = AudioSource::<6144, 1>::new(AudioFormat::new(16000, 6, 1000000));
-        let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
-            ([0; 1536], [0; 4096], [0; 1024], [0; 4128]);
-        let mut recorder = HexaphonicRecorder::new(
-            &source,
-            Storage::default(),
-            Metadata { mapped: false },
-            config(16000, 1, flac),
-            HexaphonicBuffers {
-                pcm: &mut pcm,
-                spatial_output: &mut spatial,
-                reference_pcm: &mut ref_pcm,
-                reference_output: &mut ref_out,
-            },
-        )
-        .unwrap();
-        block_on(recorder.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
-        assert!(recorder.storage().files.is_empty());
-        let mut original = Vec::new();
-        let mut position = 0;
-        while position < 16013 {
-            let n = (16013 - position).min(317);
-            let input = samples(position, n);
-            original.extend(input.iter().step_by(6).copied());
-            source
-                .write(&input, position as u64 * 1000000 / 16000)
-                .unwrap();
-            while recorder.reader.stats().available_samples > 0 {
-                block_on(recorder.record_next()).unwrap();
+    for cheap in [false, true] {
+        for flac in [false, true] {
+            let source = AudioSource::<6144, 1>::new(AudioFormat::new(16000, 6, 1000000));
+            let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+                ([0; 1536], [0; 4096], [0; 1024], [0; 4128]);
+            let mut profile = config(16000, 1, flac);
+            if cheap {
+                profile.spatial = Config {
+                    block_frames: 256,
+                    ..Config::cheap()
+                };
             }
-            position += n;
-        }
-        block_on(recorder.stop()).unwrap();
-        assert_eq!(
-            recorder.storage().suffixes,
-            if flac {
-                vec!["flac", "CRCL", "flac", "CRCL"]
-            } else {
-                vec!["wav", "CRCL", "wav", "CRCL"]
+            let mut recorder = HexaphonicRecorder::new(
+                &source,
+                Storage::default(),
+                Metadata { mapped: false },
+                profile,
+                HexaphonicBuffers {
+                    pcm: &mut pcm,
+                    spatial_output: &mut spatial,
+                    reference_pcm: &mut ref_pcm,
+                    reference_output: &mut ref_out,
+                },
+            )
+            .unwrap();
+            block_on(recorder.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+            assert!(recorder.storage().files.is_empty());
+            let mut original = Vec::new();
+            let mut position = 0;
+            while position < 16013 {
+                let n = (16013 - position).min(317);
+                let input = samples(position, n);
+                original.extend(input.iter().step_by(6).copied());
+                source
+                    .write(&input, position as u64 * 1000000 / 16000)
+                    .unwrap();
+                while recorder.reader.stats().available_samples > 0 {
+                    block_on(recorder.record_next()).unwrap();
+                }
+                position += n;
             }
-        );
-        assert_eq!(recorder.storage().closed, [0, 1, 2, 3]);
-        for (segment, count) in [(0, 16000), (1, 13)] {
-            let storage = recorder.storage();
-            let (total, status, digest) = end(&storage.files[segment * 2 + 1]);
-            assert_eq!(total, count as u64);
-            assert_eq!(status, if segment == 0 { 1 } else { 2 });
-            assert_eq!(storage.starts[segment * 2], storage.starts[segment * 2 + 1]);
-            let offset = if segment == 0 { 0 } else { 16000 };
-            let raw: Vec<_> = original[offset..offset + count]
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
-            let mut hash = Sha256::new();
-            hash.update(&raw);
-            assert_eq!(digest, hash.finish());
-            if !flac {
-                assert_eq!(&storage.files[segment * 2][1024..], raw);
-            }
-            if let Some(directory) = std::env::var_os("RAYLAR_CRCL_TEST_OUTPUT") {
-                let dir = std::path::PathBuf::from(directory);
-                std::fs::create_dir_all(&dir).unwrap();
-                let stem = std::format!("paired-{}-{segment}", if flac { "flac" } else { "wav" });
-                std::fs::write(
-                    dir.join(std::format!("{stem}.{}", if flac { "flac" } else { "wav" })),
-                    &storage.files[segment * 2],
-                )
-                .unwrap();
-                std::fs::write(
-                    dir.join(std::format!("{stem}.CRCL")),
-                    &storage.files[segment * 2 + 1],
-                )
-                .unwrap();
-                std::fs::write(dir.join(std::format!("{stem}.s32le")), raw).unwrap();
+            block_on(recorder.stop()).unwrap();
+            assert_eq!(
+                recorder.storage().suffixes,
+                if flac {
+                    vec!["flac", "CRCL", "flac", "CRCL"]
+                } else {
+                    vec!["wav", "CRCL", "wav", "CRCL"]
+                }
+            );
+            assert_eq!(recorder.storage().closed, [0, 1, 2, 3]);
+            for (segment, count) in [(0, 16000), (1, 13)] {
+                let storage = recorder.storage();
+                let (total, status, digest) = end(&storage.files[segment * 2 + 1]);
+                assert_eq!(total, count as u64);
+                assert_eq!(status, if segment == 0 { 1 } else { 2 });
+                assert_eq!(storage.starts[segment * 2], storage.starts[segment * 2 + 1]);
+                let offset = if segment == 0 { 0 } else { 16000 };
+                let raw: Vec<_> = original[offset..offset + count]
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect();
+                let mut hash = Sha256::new();
+                hash.update(&raw);
+                if cheap {
+                    assert_eq!(digest, [0; 32]);
+                } else {
+                    assert_eq!(digest, hash.finish());
+                }
+                if !flac {
+                    assert_eq!(&storage.files[segment * 2][1024..], raw);
+                }
+                if let Some(directory) = std::env::var_os("RAYLAR_CRCL_TEST_OUTPUT") {
+                    let dir = std::path::PathBuf::from(directory);
+                    std::fs::create_dir_all(&dir).unwrap();
+                    let stem = std::format!(
+                        "paired-{}{}-{segment}",
+                        if cheap { "cheap-" } else { "" },
+                        if flac { "flac" } else { "wav" }
+                    );
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.{}", if flac { "flac" } else { "wav" })),
+                        &storage.files[segment * 2],
+                    )
+                    .unwrap();
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.CRCL")),
+                        &storage.files[segment * 2 + 1],
+                    )
+                    .unwrap();
+                    std::fs::write(dir.join(std::format!("{stem}.s32le")), raw).unwrap();
+                }
             }
         }
     }

@@ -1,4 +1,5 @@
 use crate::{bits::fold, Channel, Config, Error, Prediction, Representation};
+use raylar_stage_profiling::{sample, Span, Stage};
 
 /// Exact round(d*(2^(bits-1)-1)/peak), ties away from zero, without wide products.
 /// The caller proves abs(d) <= peak <= i32::MAX and bits is 6/8/10/12.
@@ -87,11 +88,13 @@ pub struct Transform<'a> {
     pub(crate) pcm: &'a mut [i32],
     pub(crate) channels: [Channel; 5],
     pub(crate) config: Config,
-    channel: usize,
-    offset: usize,
-    quantizing: bool,
-    peak: i32,
-    previous: i32,
+    pub(crate) channel: usize,
+    pub(crate) offset: usize,
+    pub(crate) quantizing: bool,
+    pub(crate) peak: i32,
+    pub(crate) previous: i32,
+    pub(crate) shift: u8,
+    pub(crate) sum_folded: u32,
     direct: RiceStats,
     temporal: RiceStats,
 }
@@ -110,15 +113,23 @@ impl<'a> Transform<'a> {
             quantizing: false,
             peak: 0,
             previous: 0,
+            shift: 0,
+            sum_folded: 0,
             direct: RiceStats::default(),
             temporal: RiceStats::default(),
         })
     }
     pub fn advance(&mut self, mut budget: usize) -> Result<bool, Error> {
+        let _profile = Span::new(Stage::SpatialTransform);
+        if self.config.is_cheap() {
+            return self.advance_cheap(budget);
+        }
         let frames = self.pcm.len() / 6;
         while budget != 0 && self.channel < 6 {
             let index = self.offset * 6 + self.channel;
+            let sampled = sample(self.offset + self.channel * 7);
             if !self.quantizing {
+                let _profile = sampled.then(|| Span::new(Stage::SpatialDeltaSample));
                 let reference = self.pcm[self.offset * 6];
                 let value = self.pcm[index];
                 let bound = self.config.max_abs_pcm;
@@ -129,8 +140,22 @@ impl<'a> Transform<'a> {
                 self.pcm[index] = delta;
                 self.peak = self.peak.max(delta.abs());
             } else {
-                let q = quantize_ratio(self.pcm[index], self.config.bits, self.peak)?;
+                let q = {
+                    let _profile = sampled.then(|| {
+                        Span::new(
+                            if self.pcm[index].unsigned_abs()
+                                > i32::MAX as u32 / ((1 << (self.config.bits - 1)) - 1)
+                            {
+                                Stage::QuantizeWideSample
+                            } else {
+                                Stage::QuantizeFastSample
+                            },
+                        )
+                    });
+                    quantize_ratio(self.pcm[index], self.config.bits, self.peak)?
+                };
                 self.pcm[index] = q;
+                let _profile = sampled.then(|| Span::new(Stage::RiceStatsSample));
                 if self.config.prediction != Prediction::TemporalRice {
                     self.direct.add(q);
                 }
@@ -153,6 +178,7 @@ impl<'a> Transform<'a> {
         Ok(self.channel == 6)
     }
     fn finish_channel(&mut self, frames: usize) {
+        let _profile = Span::new(Stage::RiceSelect);
         let mut selected = Channel {
             scale: self.peak as u32,
             representation: Representation::Packed,

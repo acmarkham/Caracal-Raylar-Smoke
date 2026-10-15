@@ -2,10 +2,12 @@
 //! Bounded CRCL v1 spatial codec. MIC1 is immutable; other channels are transformed in-place.
 
 mod bits;
+mod cheap;
 mod format;
 mod quantize;
 mod sha256;
 
+pub use cheap::{estimate_rice_k, shift_for_peak};
 pub use format::{crc32c, segment_identity, Completion, Encoder, Header, TimeAnchor};
 pub use quantize::{quantize_ratio, Transform};
 pub use sha256::Sha256;
@@ -22,6 +24,19 @@ pub const fn workspace_capacity(block: usize, bits: u8) -> usize {
     } else {
         HEADER_CAPACITY
     }
+}
+
+/// With the estimated k, mean quotient is below two. At k=bits each
+/// quotient is at most one; therefore total Rice payload fits bits+2 per value.
+pub const fn cheap_record_capacity(block: usize, bits: u8) -> usize {
+    88 + 5 * (bits as usize + block.saturating_sub(1) * (bits as usize + 2)).div_ceil(8)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Algorithm {
+    SpatialV1,
+    TemporalShiftV2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +61,7 @@ pub enum Prediction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Config {
+    pub algorithm: Algorithm,
     pub block_frames: usize,
     pub bits: u8,
     pub prediction: Prediction,
@@ -56,6 +72,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            algorithm: Algorithm::SpatialV1,
             block_frames: 1024,
             bits: 10,
             prediction: Prediction::DirectRice,
@@ -65,11 +82,46 @@ impl Default for Config {
 }
 
 impl Config {
+    pub const fn cheap() -> Self {
+        Self {
+            algorithm: Algorithm::TemporalShiftV2,
+            block_frames: 1024,
+            bits: 10,
+            prediction: Prediction::TemporalRice,
+            max_abs_pcm: 1 << 23,
+        }
+    }
+    pub const fn is_cheap(self) -> bool {
+        matches!(self.algorithm, Algorithm::TemporalShiftV2)
+    }
+    pub const fn version(self) -> u16 {
+        if self.is_cheap() {
+            2
+        } else {
+            1
+        }
+    }
+    pub const fn record_capacity(self, frames: usize) -> usize {
+        if self.is_cheap() {
+            cheap_record_capacity(frames, self.bits)
+        } else {
+            record_capacity(frames, self.bits)
+        }
+    }
+    pub const fn workspace_capacity(self) -> usize {
+        let capacity = self.record_capacity(self.block_frames);
+        if capacity > HEADER_CAPACITY {
+            capacity
+        } else {
+            HEADER_CAPACITY
+        }
+    }
     pub fn validate(self) -> Result<(), Error> {
         if !matches!(self.block_frames, 256 | 512 | 1024 | 2048 | 4096)
             || !matches!(self.bits, 6 | 8 | 10 | 12)
             || self.max_abs_pcm <= 0
             || self.max_abs_pcm > i32::MAX / 2
+            || (self.is_cheap() && self.prediction != Prediction::TemporalRice)
         {
             return Err(Error::InvalidConfig);
         }

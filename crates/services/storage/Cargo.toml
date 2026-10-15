@@ -13,6 +13,7 @@ default = []
 defmt = ["dep:defmt", "raylar-drivers/defmt", "raylar-time-service/defmt"]
 
 [dependencies]
+raylar-stage-profiling = { path = "../../profiling" }
 defmt = { workspace = true, optional = true }
 heapless = "0.8.0"
 raylar-drivers = { path = "../../drivers" }

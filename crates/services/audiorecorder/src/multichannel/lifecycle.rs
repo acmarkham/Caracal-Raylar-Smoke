@@ -1,5 +1,5 @@
 use super::*;
-use crate::crcl::{segment_identity, Completion, Header, TimeAnchor};
+use crate::crcl::{Completion, Header, TimeAnchor};
 use crate::{container::flac_comment, RecordingMetadata};
 use core::fmt::Write;
 use heapless::String;
@@ -83,7 +83,10 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let start_us =
             u64::try_from(start.as_micros()).map_err(|_| AudioRecorderError::TimeUnavailable)?;
         let boot = metadata.boot_id.ok_or(AudioRecorderError::InvalidConfig)?;
-        let identity = segment_identity(&metadata.device_id, boot, start_us, source_frame)
+        let identity = self
+            .config
+            .spatial
+            .segment_identity(&metadata.device_id, boot, start_us, source_frame)
             .map_err(AudioRecorderError::Spatial)?;
         let capture = self.config.capture;
         let mut capture_text = String::<192>::new();
@@ -201,12 +204,11 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let block = self.config.spatial.block_frames;
         let full = frames / block;
         let tail = frames % block;
-        let side = full as u64
-            * crate::crcl::record_capacity(block, self.config.spatial.bits) as u64
+        let side = full as u64 * self.config.spatial.record_capacity(block) as u64
             + if tail == 0 {
                 0
             } else {
-                crate::crcl::record_capacity(tail, self.config.spatial.bits) as u64
+                self.config.spatial.record_capacity(tail) as u64
             }
             + 4096
             + 548 * self.config.recorder.recording_seconds as u64
@@ -262,11 +264,16 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let close = self.storage.finish_audio(reference).await;
         rewrite.map_err(AudioRecorderError::Storage)?;
         close.map_err(AudioRecorderError::Storage)?;
+        let digest = if self.config.spatial.is_cheap() {
+            [0; 32]
+        } else {
+            self.hash.clone().finish()
+        };
         let len = self
             .spatial
             .end(
                 self.reference_bytes,
-                self.hash.clone().finish(),
+                digest,
                 status,
                 self.buffers.spatial_output,
             )

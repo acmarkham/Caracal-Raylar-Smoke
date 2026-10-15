@@ -42,6 +42,8 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let mut next = None;
         let pcm = &mut self.buffers.pcm;
         let offset = self.pcm_frames * 6;
+        let source_profile =
+            raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::SourceCopy);
         let status = self
             .reader
             .read(requested, |chunk| {
@@ -103,6 +105,7 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
                 consumed
             })
             .map_err(AudioRecorderError::AudioSource)?;
+        drop(source_profile);
         if gap || status.dropped_since_last_read != 0 {
             return Err(AudioRecorderError::Discontinuity {
                 dropped_samples: status.dropped_since_last_read,
@@ -183,7 +186,11 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         self.spatial
             .commit_data(frames)
             .map_err(AudioRecorderError::Spatial)?;
-        let reference_codec_us = self.feed_reference(frames).await?;
+        let reference_codec_us = raylar_stage_profiling::measure(
+            raylar_stage_profiling::Stage::ReferenceFeed,
+            self.feed_reference(frames),
+        )
+        .await?;
         self.frames_accepted += frames;
         self.pcm_frames = 0;
         let second = self.frames_accepted as u64 / u64::from(self.rate);

@@ -62,8 +62,9 @@ impl BlockDevice<512> for Stm32SdBlockDevice<'_, '_> {
         let blocks = unsafe {
             core::slice::from_raw_parts_mut(data.as_mut_ptr().cast::<DataBlock>(), data.len())
         };
-        self.card
-            .read_blocks(block_address, blocks)
+        raylar_stage_profiling::bytes(raylar_stage_profiling::Stage::SdRead, data.len() * 512);
+        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::SdRead,
+            self.card.read_blocks(block_address, blocks))
             .await
             .map_err(Stm32SdError::Sd)
     }
@@ -75,8 +76,9 @@ impl BlockDevice<512> for Stm32SdBlockDevice<'_, '_> {
     ) -> Result<(), Self::Error> {
         let blocks =
             unsafe { core::slice::from_raw_parts(data.as_ptr().cast::<DataBlock>(), data.len()) };
-        self.card
-            .write_blocks(block_address, blocks)
+        raylar_stage_profiling::bytes(raylar_stage_profiling::Stage::SdWrite, data.len() * 512);
+        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::SdWrite,
+            self.card.write_blocks(block_address, blocks))
             .await
             .map_err(Stm32SdError::Sd)
     }

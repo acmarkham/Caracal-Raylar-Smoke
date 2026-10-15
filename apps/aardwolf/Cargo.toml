@@ -44,7 +44,7 @@ cortex-m-rt = { workspace = true, optional = true }
 static_cell = { workspace = true, optional = true }
 
 [features]
-default = ["firmware", "core-smps"]
+default = ["firmware", "core-smps", "hexaphonic"]
 firmware = [
  "dep:raylar-audio-recorder-service", "dep:raylar-audiosource", "dep:raylar-board-v1p0",
  "dep:raylar-drivers", "dep:raylar-storage-service", "dep:raylar-logging-service",
@@ -57,6 +57,7 @@ core-smps = []
 bench-external-power = []
 bench-rx-beep = []
 hexaphonic = []
+cheap-crcl = ["hexaphonic"]
 trustzone-secure = ["firmware", "embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure", "raylar-versioning-service/trustzone-secure"]
 
 [dev-dependencies]

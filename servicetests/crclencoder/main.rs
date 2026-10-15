@@ -5,6 +5,10 @@
 #[path = "../storage/common.rs"]
 #[allow(dead_code)]
 mod common;
+#[cfg(feature = "noise-floor")]
+mod noise_floor;
+#[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+mod profiling;
 #[cfg(feature = "sd-recording")]
 mod recording;
 
@@ -27,7 +31,12 @@ use {defmt_rtt as _, panic_probe as _};
 static HEAP: embedded_alloc::LlffHeap = embedded_alloc::LlffHeap::empty();
 pub static MICROPHONES: MicrophoneResources<3200> = MicrophoneResources::new();
 static PCM: ConstStaticCell<[i32; 6144]> = ConstStaticCell::new([0; 6144]);
-static OUTPUT: ConstStaticCell<[u8; 7776]> = ConstStaticCell::new([0; 7776]);
+const OUTPUT_CAPACITY: usize = if cfg!(feature = "cheap-crcl") {
+    raylar_crcl_encoder_service::cheap_record_capacity(1024, 12)
+} else {
+    7776
+};
+static OUTPUT: ConstStaticCell<[u8; OUTPUT_CAPACITY]> = ConstStaticCell::new([0; OUTPUT_CAPACITY]);
 pub const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: MicrophoneMode::Hexaphonic,
     ..MicrophoneConfig::from_preset(MicrophonePreset::ReferenceSinc5_16KhzHiperf)
@@ -45,6 +54,8 @@ bind_interrupts!(struct MicIrqs {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) -> ! {
     let board = Board::new(embassy_stm32::init(common::mcu_config()));
+    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+    profiling::init();
     let PdmMicArray {
         cck0,
         sd0,
@@ -83,6 +94,8 @@ async fn main(spawner: Spawner) -> ! {
         MIC_CONFIG
     ));
     spawner.spawn(unwrap!(capture_task(driver)));
+    #[cfg(feature = "noise-floor")]
+    noise_floor::run().await;
     let pcm = PCM.take();
     let output = OUTPUT.take();
     let mut receiver = unwrap!(MICROPHONES.frame_receiver());
@@ -94,6 +107,9 @@ async fn main(spawner: Spawner) -> ! {
             Prediction::TemporalRice,
             Prediction::Auto,
         ] {
+            if cfg!(feature = "cheap-crcl") && prediction != Prediction::TemporalRice {
+                continue;
+            }
             let state = loop {
                 let state = unwrap!(with_timeout(Duration::from_secs(3), receiver.changed()).await);
                 assert!(state.error.is_none());
@@ -111,12 +127,18 @@ async fn main(spawner: Spawner) -> ! {
                 for c in 0..6 {
                     pcm[n * 6 + c] = (channels[c][n] as i32) >> 8;
                 }
-                before.update(&pcm[n * 6].to_le_bytes());
+                if !cfg!(feature = "cheap-crcl") {
+                    before.update(&pcm[n * 6].to_le_bytes());
+                }
             }
             let config = Config {
                 bits,
                 prediction,
-                ..Config::default()
+                ..if cfg!(feature = "cheap-crcl") {
+                    Config::cheap()
+                } else {
+                    Config::default()
+                }
             };
             let encoder = unwrap!(Encoder::new(config));
             let started = Instant::now();
@@ -130,13 +152,19 @@ async fn main(spawner: Spawner) -> ! {
             assert!(elapsed < 64000);
             let mut after = Sha256::new();
             for n in 0..1024 {
-                after.update(&pcm[n * 6].to_le_bytes());
+                if cfg!(feature = "cheap-crcl") {
+                    assert_eq!(pcm[n * 6], (channels[0][n] as i32) >> 8);
+                } else {
+                    after.update(&pcm[n * 6].to_le_bytes());
+                }
             }
-            assert_eq!(before.finish(), after.finish());
-            assert_eq!(
-                u32::from_le_bytes(output[len - 4..len].try_into().unwrap()),
-                crc32c(&output[..len - 4])
-            );
+            if !cfg!(feature = "cheap-crcl") {
+                assert_eq!(before.finish(), after.finish());
+                assert_eq!(
+                    u32::from_le_bytes(output[len - 4..len].try_into().unwrap()),
+                    crc32c(&output[..len - 4])
+                );
+            }
             info!(
                 "CRCL live bits={} prediction={:?} bytes={} codec_us={} budget_us=64000 seq={}",
                 bits, prediction, len, elapsed, state.sequence
@@ -155,7 +183,8 @@ async fn main(spawner: Spawner) -> ! {
             break;
         }
     }
-    info!("CRCL TARGET PASS: 12 live codec profiles, unchanged MIC1, bounded i32 in-place work, coherent six-channel capture and restart; worst_codec_us={}",worst_us);
+    info!("CRCL TARGET PASS: live_profiles={} unchanged MIC1, bounded i32 in-place work, coherent six-channel capture and restart; worst_codec_us={}",
+        if cfg!(feature = "cheap-crcl") { 4 } else { 12 }, worst_us);
     #[cfg(feature = "sd-recording")]
     recording::run(spawner, board.sd, board.gps, pcm, output).await;
     MICROPHONES.set_enabled(false);

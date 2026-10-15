@@ -9,4 +9,5 @@ default = []
 defmt = ["dep:defmt"]
 
 [dependencies]
+raylar-stage-profiling = { path = "../../profiling" }
 defmt = { workspace = true, optional = true }

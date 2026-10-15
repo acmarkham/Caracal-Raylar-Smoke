@@ -51,7 +51,9 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
                 let count = capacity.min(frames - start);
                 for n in 0..count {
                     let bytes = self.buffers.pcm[(start + n) * 6].to_le_bytes();
-                    self.hash.update(&bytes);
+                    if !self.config.spatial.is_cheap() {
+                        self.hash.update(&bytes);
+                    }
                     self.buffers.reference_output[n * 4..n * 4 + 4].copy_from_slice(&bytes);
                 }
                 self.storage
@@ -65,7 +67,9 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             let block = self.flac.as_ref().unwrap().config().block_samples;
             for n in 0..frames {
                 let value = self.buffers.pcm[n * 6];
-                self.hash.update(&value.to_le_bytes());
+                if !self.config.spatial.is_cheap() {
+                    self.hash.update(&value.to_le_bytes());
+                }
                 self.buffers.reference_pcm[self.reference_len] = value;
                 self.reference_len += 1;
                 if self.reference_len == block {
@@ -87,12 +91,19 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let mut analysis = flac
             .analyze(&self.buffers.reference_pcm[..self.reference_len])
             .map_err(AudioRecorderError::Codec)?;
-        while !analysis.advance(256) {
+        while !{
+            let _profile =
+                raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::FlacAnalysis);
+            analysis.advance(256)
+        } {
             embassy_futures::yield_now().await;
         }
-        let frame = flac
-            .encode_analyzed(analysis, self.buffers.reference_output)
-            .map_err(AudioRecorderError::Codec)?;
+        let frame = {
+            let _profile =
+                raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::FlacEncode);
+            flac.encode_analyzed(analysis, self.buffers.reference_output)
+                .map_err(AudioRecorderError::Codec)?
+        };
         let codec_us = started.elapsed().as_micros();
         let handle = self
             .reference_handle

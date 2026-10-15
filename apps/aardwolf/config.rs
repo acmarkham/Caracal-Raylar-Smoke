@@ -19,6 +19,25 @@ pub const FLAC_BLOCK_SAMPLES: usize = 2048;
 pub const AUDIO_CHANNELS: u8 = if cfg!(feature = "hexaphonic") { 6 } else { 1 };
 pub const CRCL_BLOCK_FRAMES: usize = 1024;
 pub const CRCL_BITS: u8 = 10;
+#[cfg(feature = "firmware")]
+pub const CRCL_CONFIG: raylar_audio_recorder_service::crcl::Config = {
+    use raylar_audio_recorder_service::crcl::{Algorithm, Config, Prediction};
+    Config {
+        algorithm: if cfg!(feature = "cheap-crcl") {
+            Algorithm::TemporalShiftV2
+        } else {
+            Algorithm::SpatialV1
+        },
+        prediction: if cfg!(feature = "cheap-crcl") {
+            Prediction::TemporalRice
+        } else {
+            Prediction::DirectRice
+        },
+        block_frames: CRCL_BLOCK_FRAMES,
+        bits: CRCL_BITS,
+        max_abs_pcm: 1 << 23,
+    }
+};
 /// Measured low-CPU profile: exact Rice search, one fixed predictor order.
 pub const FLAC_CONFIG: FlacConfig = FlacConfig {
     sample_rate_hz: 16_000,
@@ -31,8 +50,12 @@ pub const AUDIO_FILE_BYTES: u64 = 1024
     + 16_000 * 4 * 61
     + 32 * (16_000u64 * 61).div_ceil(FLAC_BLOCK_SAMPLES as u64)
     + if cfg!(feature = "hexaphonic") {
-        // Conservative 61-second PCM allowance, five packed differences, DATA/TIME/header/END.
-        4096 + 16_000 * 61 * 5 * CRCL_BITS as u64 / 8
+        // Conservative packed-v1 or bounded estimated-Rice-v2 payload plus metadata.
+        4096 + 16_000
+            * 61
+            * 5
+            * (CRCL_BITS as u64 + if cfg!(feature = "cheap-crcl") { 2 } else { 0 })
+            / 8
             + 96 * (16_000u64 * 61).div_ceil(CRCL_BLOCK_FRAMES as u64)
             + 548 * 60
             + 92

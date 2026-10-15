@@ -211,6 +211,8 @@ One node transmits about 1.969 s at 868 MHz and 1.222 s at 2.4 GHz per 30-minute
 
 ## Audio capture and time correlation
 
+For current testing, Aardwolf enables the `hexaphonic` Cargo feature by default and adopts the [Multichannel Audio Recording ADR](../../../services/audio/Service%20Multichannel%20Audio%20Recording.md): MIC1 is the lossless mono FLAC reference, with MIC2..MIC6 stored in an aligned `.CRCL` companion. Build with `--no-default-features --features firmware,core-smps` to select mono explicitly. The following FLAC requirements apply to the reference channel in both modes.
+
 Use the Audio Service and Audio Recorder Service to record mono 16 kHz audio as lossless 32-bit integer FLAC by default, using the agreed high-quality decimation/filter configuration. Segment files on UTC minute boundaries after GPS/PPS-derived time is valid. Retain every completed file without overwrite, using minute-long FLAC files in hour-long folders through the Storage Service. Each file's metadata/log record includes UTC file start time, monotonic system start, time validity/uncertainty, a hash of the Location Service estimate, firmware/device identity, calibration status, calibration correction in ppb, and the last PPS time relative to monotonic system time. Record the hash algorithm and input representation so files from the same location can be compared. During GPS holdover, continue recording on the calibrated minute boundaries and mark the increased time uncertainty.
 
 Use FLAC according to the [Minimal FLAC Encoder

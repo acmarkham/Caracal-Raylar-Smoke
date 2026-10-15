@@ -1,6 +1,6 @@
 use crate::{
     bits::{fold, Bits},
-    record_capacity, Config, Error, Prediction, Representation, Sha256, Transform,
+    Config, Error, Prediction, Representation, Sha256, Transform,
 };
 
 const fn crc_table() -> [u32; 256] {
@@ -19,6 +19,7 @@ const fn crc_table() -> [u32; 256] {
     table
 }
 pub fn crc32c(bytes: &[u8]) -> u32 {
+    let _profile = raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::CrclCrc);
     static TABLE: [u32; 256] = crc_table();
     let mut crc = u32::MAX;
     for &b in bytes {
@@ -46,6 +47,29 @@ pub fn segment_identity(
     let mut id = [0; 16];
     id.copy_from_slice(&hash.finish()[..16]);
     Ok(id)
+}
+
+impl Config {
+    /// V2 uses the explicit UTC/source tuple, without a digest. Device and boot
+    /// identity remain separate mandatory metadata and reference comment fields.
+    pub fn segment_identity(
+        self,
+        device: &str,
+        boot: u32,
+        utc_us: u64,
+        source_frame: u64,
+    ) -> Result<[u8; 16], Error> {
+        if !self.is_cheap() {
+            return segment_identity(device, boot, utc_us, source_frame);
+        }
+        if device.is_empty() || device.len() > 32 {
+            return Err(Error::InvalidMetadata);
+        }
+        let mut id = [0; 16];
+        id[..8].copy_from_slice(&utc_us.to_le_bytes());
+        id[8..].copy_from_slice(&source_frame.to_le_bytes());
+        Ok(id)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -129,7 +153,7 @@ impl Encoder {
             return Err(Error::InvalidMetadata);
         }
         if header.identity
-            != segment_identity(
+            != self.config.segment_identity(
                 header.device,
                 header.boot,
                 header.intended_utc_us,
@@ -140,7 +164,8 @@ impl Encoder {
         }
         output[..92].fill(0);
         output[..8].copy_from_slice(b"CRCL\r\n\x1a\n");
-        put16(output, 8, 1);
+        put16(output, 8, self.config.version());
+        put32(output, 12, u32::from(self.config.is_cheap()));
         output[16..32].copy_from_slice(&header.identity);
         put32(output, 32, header.sample_rate_hz);
         output[36..40].copy_from_slice(&[32, 1, 6, 5]);
@@ -179,25 +204,32 @@ impl Encoder {
             }],
         )?;
         let metadata_bytes = writer.position;
-        let len = 96 + metadata_bytes;
+        let len = 92 + metadata_bytes + if self.config.is_cheap() { 0 } else { 4 };
         put16(output, 10, len as u16);
         put32(output, 68, metadata_bytes as u32);
-        put32(output, len - 4, crc32c(&output[..len - 4]));
+        if !self.config.is_cheap() {
+            put32(output, len - 4, crc32c(&output[..len - 4]));
+        }
         Ok(len)
     }
     /// The caller appends the complete returned record, then calls commit_data.
     pub fn data(&self, transformed: Transform<'_>, output: &mut [u8]) -> Result<usize, Error> {
+        use raylar_stage_profiling::{Span, Stage};
+        let _profile = Span::new(Stage::CrclSerialize);
         if !transformed.ready() || transformed.config != self.config {
             return Err(Error::NotReady);
         }
         let frames = transformed.pcm.len() / 6;
-        if output.len() < record_capacity(frames, self.config.bits) {
+        if output.len() < self.config.record_capacity(frames) {
             return Err(Error::OutputTooSmall);
         }
         self.validate_next(frames)?;
-        output[..92].fill(0);
-        let mut position = 92;
+        let data_header = if self.config.is_cheap() { 88 } else { 92 };
+        output[..data_header].fill(0);
+        let mut position = data_header;
         for (c, info) in transformed.channels.iter().enumerate() {
+            let _pack_profile = Span::new(Stage::CrclPack);
+            raylar_stage_profiling::representation(info.representation as u8);
             let descriptor = 28 + c * 12;
             output[descriptor] = (c + 2) as u8;
             output[descriptor + 1] = info.representation as u8;
@@ -225,10 +257,12 @@ impl Encoder {
                 previous = q;
             }
             let bytes = bits.finish()?;
+            raylar_stage_profiling::bytes(Stage::CrclPack, bytes);
             put32(output, descriptor + 8, bytes as u32);
             position += bytes;
         }
         finish_record(
+            self.config.is_cheap(),
             output,
             1,
             self.sequence,
@@ -242,11 +276,20 @@ impl Encoder {
         if output.len() < 548 {
             return Err(Error::OutputTooSmall);
         }
-        output[..32].fill(0);
-        let mut writer = Tlvs::new(&mut output[32..544]);
+        let header = if self.config.is_cheap() { 28 } else { 32 };
+        output[..header].fill(0);
+        let mut writer = Tlvs::new(&mut output[header..544]);
         time_tlvs(&mut writer, time)?;
-        let end = 32 + writer.position;
-        finish_record(output, 2, self.sequence, self.frames, 0, end)
+        let end = header + writer.position;
+        finish_record(
+            self.config.is_cheap(),
+            output,
+            2,
+            self.sequence,
+            self.frames,
+            0,
+            end,
+        )
     }
     pub fn end(
         &self,
@@ -256,16 +299,28 @@ impl Encoder {
         output: &mut [u8],
     ) -> Result<usize, Error> {
         self.validate_next(0)?;
-        if output.len() < 92 {
+        let header = if self.config.is_cheap() { 28 } else { 32 };
+        let payload_end = if self.config.is_cheap() { 52 } else { 88 };
+        if output.len() < payload_end + if self.config.is_cheap() { 0 } else { 4 } {
             return Err(Error::OutputTooSmall);
         }
-        output[..88].fill(0);
-        put64(output, 32, self.frames);
-        put64(output, 40, reference_bytes);
-        put32(output, 48, self.data_records);
-        put32(output, 52, status as u32);
-        output[56..88].copy_from_slice(&digest);
-        finish_record(output, 3, self.sequence, self.frames, 0, 88)
+        output[..payload_end].fill(0);
+        put64(output, header, self.frames);
+        put64(output, header + 8, reference_bytes);
+        put32(output, header + 16, self.data_records);
+        put32(output, header + 20, status as u32);
+        if !self.config.is_cheap() {
+            output[56..88].copy_from_slice(&digest);
+        }
+        finish_record(
+            self.config.is_cheap(),
+            output,
+            3,
+            self.sequence,
+            self.frames,
+            0,
+            payload_end,
+        )
     }
     pub fn commit_data(&mut self, frames: usize) -> Result<(), Error> {
         if frames == 0 || frames > self.config.block_frames {
@@ -294,6 +349,7 @@ impl Encoder {
 }
 
 fn finish_record(
+    cheap: bool,
     out: &mut [u8],
     kind: u8,
     sequence: u32,
@@ -301,8 +357,12 @@ fn finish_record(
     frames: u16,
     payload_end: usize,
 ) -> Result<usize, Error> {
-    let (header, channels) = if kind == 1 { (92, 5) } else { (32, 0) };
-    let len = payload_end + 4;
+    let (header, channels) = if kind == 1 {
+        (if cheap { 88 } else { 92 }, 5)
+    } else {
+        (if cheap { 28 } else { 32 }, 0)
+    };
+    let len = payload_end + if cheap { 0 } else { 4 };
     if len > out.len() {
         return Err(Error::OutputTooSmall);
     }
@@ -316,8 +376,10 @@ fn finish_record(
     put16(out, 24, frames);
     out[26] = channels;
     out[27] = 0;
-    put32(out, header - 4, crc32c(&out[..header - 4]));
-    put32(out, payload_end, crc32c(&out[..payload_end]));
+    if !cheap {
+        put32(out, header - 4, crc32c(&out[..header - 4]));
+        put32(out, payload_end, crc32c(&out[..payload_end]));
+    }
     Ok(len)
 }
 

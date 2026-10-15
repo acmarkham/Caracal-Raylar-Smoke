@@ -13,7 +13,16 @@ use raylar_storage_service::{StorageLayout, StorageService};
 use raylar_time_service::UtcTimestamp;
 use static_cell::ConstStaticCell;
 
-static AUDIO: AudioSource<96000, 1> = AudioSource::new(AudioFormat::new(16000, 6, 1000000));
+const SOURCE_CAPACITY: usize = if cfg!(any(
+    feature = "stage-profiling",
+    feature = "profile-control"
+)) {
+    127998
+} else {
+    96000
+};
+static AUDIO: AudioSource<SOURCE_CAPACITY, 1> =
+    AudioSource::new(AudioFormat::new(16000, 6, 1000000));
 static REF_PCM: ConstStaticCell<[i32; 2048]> = ConstStaticCell::new([0; 2048]);
 static REF_OUTPUT: ConstStaticCell<[u8; 8224]> = ConstStaticCell::new([0; 8224]);
 static FORWARDING: AtomicBool = AtomicBool::new(false);
@@ -66,7 +75,11 @@ pub async fn run(
             recording_seconds: 60,
             storage_layout: StorageLayout::HourlyFolders,
         },
-        spatial: raylar_crcl_encoder_service::Config::default(),
+        spatial: if cfg!(feature = "cheap-crcl") {
+            raylar_crcl_encoder_service::Config::cheap()
+        } else {
+            raylar_crcl_encoder_service::Config::default()
+        },
         reference: ReferenceFormat::Flac(raylar_audio_recorder_service::FlacConfig {
             prediction: raylar_audio_recorder_service::FlacPrediction::Fixed(1),
             ..raylar_audio_recorder_service::FlacConfig::default()
@@ -112,13 +125,34 @@ pub async fn run(
     let mut write_max = 0;
     let mut backlog_max = 0;
     let mut reported = Instant::now();
+    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+    let mut window = 1;
+    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+    let mut window_frames = 0;
+    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+    let mut window_started = Instant::now();
+    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+    super::profiling::begin(cfg!(feature = "stage-profiling"));
     loop {
+        #[cfg(not(any(feature = "stage-profiling", feature = "profile-control")))]
         let p = unwrap!(
             recorder
                 .record_next_with_source_timeout(Duration::from_secs(2))
                 .await
         );
+        #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+        let p = unwrap!(
+            raylar_stage_profiling::measure(
+                raylar_stage_profiling::Stage::RecorderPoll,
+                recorder.record_next_with_source_timeout(Duration::from_secs(2))
+            )
+            .await
+        );
         count += p.pcm_samples as u64 / 6;
+        #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+        {
+            window_frames += p.pcm_samples as u64 / 6;
+        }
         codec_max = codec_max.max(p.codec_elapsed_us);
         write_max = write_max.max(p.storage_elapsed_us);
         backlog_max = backlog_max.max(p.backlog_samples);
@@ -131,6 +165,22 @@ pub async fn run(
             reported = Instant::now();
         }
         if p.rotated {
+            #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+            {
+                super::profiling::report(
+                    window,
+                    window_frames,
+                    window_started.elapsed().as_micros(),
+                );
+                if window == 1 && cfg!(feature = "stage-profiling") {
+                    window = 2;
+                    window_frames = 0;
+                    window_started = Instant::now();
+                    super::profiling::begin(false);
+                    info!("PROFILE control started: detailed probes disabled; recording the next complete minute");
+                    continue;
+                }
+            }
             break;
         }
     }
@@ -139,6 +189,12 @@ pub async fn run(
     MICROPHONES.set_enabled(false);
     info!("CRCL SD TARGET PASS: finalized matching minute pair utc={} frames={} codec_max_us={} write_max_us={} backlog_max_scalar_samples={}",
         start.seconds,count,codec_max,write_max,backlog_max);
+    #[cfg(feature = "stage-profiling")]
+    info!(
+        "CRCL PROFILE TARGET PASS: profiled and control minute pairs finalized without source loss"
+    );
+    #[cfg(feature = "profile-control")]
+    info!("CRCL PROFILE CONTROL PASS: detailed probes compiled out; matching minute pair finalized without source loss");
 }
 
 #[embassy_executor::task]
@@ -162,6 +218,8 @@ async fn forward_task() -> ! {
         let channels = frame.active_channels();
         assert_eq!(channels.len(), 6);
         let ticks = state.started_at_ticks + (state.sequence - 1) * 100000;
+        let _publish_profile =
+            raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::CapturePublish);
         unwrap!(AUDIO.write_from_fn(1600 * 6, ticks, |i| (channels[i % 6][i / 6] as i32) >> 8));
     }
 }

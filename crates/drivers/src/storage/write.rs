@@ -96,8 +96,8 @@ where
             .as_mut()
             .ok_or(StorageError::InvalidHandle)?;
 
-        slot.file
-            .write(fs, data)
+        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::FilesystemAppend,
+            slot.file.write(fs, data))
             .await
             .map_err(StorageError::from)?;
         slot.committed_len = slot.committed_len.saturating_add(data.len() as u64);
@@ -144,7 +144,8 @@ where
                 slot.file.set_modified_timestamp(timestamp);
             }
         }
-        slot.file.flush(fs).await.map_err(StorageError::from)?;
+        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::FilesystemFinalize,
+            slot.file.flush(fs)).await.map_err(StorageError::from)?;
         slot.last_flushed_len = slot.committed_len;
         slot.dirty = false;
         Ok(())
@@ -169,7 +170,8 @@ where
                 slot.file.set_modified_timestamp(timestamp);
             }
         }
-        slot.file.flush(fs).await.map_err(StorageError::from)?;
+        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::FilesystemFinalize,
+            slot.file.flush(fs)).await.map_err(StorageError::from)?;
         Ok(())
     }
 

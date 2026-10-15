@@ -20,6 +20,7 @@ defmt = [
 ]
 
 [dependencies]
+raylar-stage-profiling = { path = "../../profiling" }
 defmt = { workspace = true, optional = true }
 heapless = "0.8.0"
 raylar-flac-encoder-service = { path = "../flacencoder" }

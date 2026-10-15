@@ -107,8 +107,7 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             || !C.is_multiple_of(6)
             || config.recorder.recording_seconds == 0
             || buffers.pcm.len() < config.spatial.block_frames * 6
-            || buffers.spatial_output.len()
-                < crate::crcl::workspace_capacity(config.spatial.block_frames, config.spatial.bits)
+            || buffers.spatial_output.len() < config.spatial.workspace_capacity()
             || buffers.reference_output.len() < 1024
             || max_frames > u32::MAX as usize / 4
         {

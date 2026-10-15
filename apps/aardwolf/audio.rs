@@ -12,7 +12,7 @@ use embassy_time::{Duration, Instant, Timer};
 use raylar_audio_recorder_service::AudioRecorder;
 #[cfg(feature = "hexaphonic")]
 use raylar_audio_recorder_service::{
-    crcl, CaptureParameters, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder,
+    CaptureParameters, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder,
     ReferenceFormat,
 };
 use raylar_audio_recorder_service::{
@@ -49,9 +49,9 @@ static SPATIAL_PCM: ConstStaticCell<[i32; crate::config::CRCL_BLOCK_FRAMES * 6]>
     ConstStaticCell::new([0; crate::config::CRCL_BLOCK_FRAMES * 6]);
 #[cfg(feature = "hexaphonic")]
 static SPATIAL_OUTPUT: ConstStaticCell<
-    [u8; crcl::workspace_capacity(crate::config::CRCL_BLOCK_FRAMES, crate::config::CRCL_BITS)],
+    [u8; crate::config::CRCL_CONFIG.workspace_capacity()],
 > = ConstStaticCell::new(
-    [0; crcl::workspace_capacity(crate::config::CRCL_BLOCK_FRAMES, crate::config::CRCL_BITS)],
+    [0; crate::config::CRCL_CONFIG.workspace_capacity()],
 );
 const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: if cfg!(feature = "hexaphonic") {
@@ -295,12 +295,7 @@ fn hex_recorder(
                 recording_seconds: 60,
                 storage_layout: StorageLayout::HourlyFolders
             },
-            spatial: crcl::Config {
-                block_frames: crate::config::CRCL_BLOCK_FRAMES,
-                bits: crate::config::CRCL_BITS,
-                prediction: crcl::Prediction::DirectRice,
-                max_abs_pcm: 1 << 23
-            },
+            spatial: crate::config::CRCL_CONFIG,
             reference: ReferenceFormat::Flac(crate::config::FLAC_CONFIG),
             capture: CaptureParameters {
                 pdm_clock_hz: resolved.microphone_clock_hz,

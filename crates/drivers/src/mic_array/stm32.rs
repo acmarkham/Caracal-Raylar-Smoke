@@ -457,6 +457,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
             if let Either::First(_) = select(enabled.changed(), completion.wait()).await {
                 continue;
             }
+            let _capture_profile = raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::CaptureCheck);
             let counts = array_counts();
             let completed_at_ticks = if count == 1 {
                 DMA0_INTERRUPT_TICKS.read()

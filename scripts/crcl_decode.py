@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Independent CRCL v1 decoder and reference verifier (Python standard library).
+"""Independent CRCL v1/v2 decoder and reference verifier (Python standard library).
 
 FLAC references need ffmpeg on PATH. WAV references use the standard wave reader.
-Use --recover to expose an explicitly incomplete, validated prefix after a bad tail.
+Use --recover for an explicitly incomplete prefix; v2 has structural checks only.
 """
 import argparse
 import array
@@ -159,6 +159,8 @@ def reference(path):
 
 
 def decode(data, ref, recover=False):
+    if len(data) >= 12 and data[:8] == b"CRCL\r\n\x1a\n" and number(data, 8, "H") == 2:
+        return decode_cheap(data, ref, recover)
     require(len(data) >= 96 and data[:8] == b"CRCL\r\n\x1a\n", "invalid CRCL header")
     length = number(data, 10, "H")
     require(number(data, 8, "H") == 1 and 96 <= length <= 4096 and length <= len(data), "unsupported version/header length")
@@ -256,12 +258,103 @@ def decode(data, ref, recover=False):
                         completion_status=status, recovery_error=recovery_error, segment_id=identity.hex())
 
 
+def decode_cheap(data, ref, recover=False):
+    """CRCL v2: independent rounded shift quantization followed by temporal Rice.
+
+    Bounds and sequence checks remain; there is no corruption checksum or PCM digest.
+    """
+    require(len(data) >= 92, "truncated CRCL v2 header")
+    length = number(data, 10, "H")
+    require(92 <= length <= 4096 and length <= len(data), "invalid v2 header length")
+    require(number(data, 12, "I") == 1 and data[76:92] == bytes(16), "unsupported v2 flags/reserved fields")
+    require(number(data, 68, "I") == length - 92 and number(data, 72, "I") > 0, "invalid metadata length/timebase")
+    require(data[36:40] == bytes((32, 1, 6, 5)), "unsupported channel profile")
+    block, precision = number(data, 40, "H"), data[42]
+    require(block in (256, 512, 1024, 2048, 4096) and precision in (6, 8, 10, 12), "invalid block/precision")
+    require(number(data, 32, "I") == ref["rate"] and data[43] == ref["format"], "reference profile mismatch")
+    metadata = tlvs(data[92:length])
+    require(metadata[11] == b"\1", "v2 requires temporal prediction")
+    identity = data[52:60] + data[44:52]
+    require(identity == data[16:32], "segment identity mismatch")
+    require(b"segment_id=" + identity.hex().encode() in ref["metadata"], "reference segment identity missing/mismatched")
+    require(b"first_source_frame=" + str(number(data, 44, "Q")).encode() + b";companion_format=CRCL"
+            in ref["metadata"], "reference source offset/companion mismatch")
+    require(b";device_id=" + metadata[3] + b";" in ref["metadata"]
+            and b";boot_id=" + str(number(metadata[4], 0, "I")).encode() + b";" in ref["metadata"],
+            "reference device/boot mismatch")
+    output = array.array("i")
+    offset, frames, sequence, records = length, 0, 0, 0
+    short, ended, recovery_error, status = False, False, None, None
+    limit = (1 << (precision - 1)) - 1
+    try:
+        while offset < len(data):
+            require(offset + 28 <= len(data) and data[offset:offset + 4] == b"CRBK", "truncated/invalid record header")
+            header, size = number(data, offset + 6, "H"), number(data, offset + 8, "I")
+            kind = data[offset + 4]
+            maximum = 88 + 5 * ((precision + (block - 1) * (precision + 2) + 7) // 8) if kind == 1 else 544 if kind == 2 else 52
+            require(kind in (1, 2, 3) and size <= maximum and 28 <= header <= size
+                    and offset + size <= len(data), "invalid/truncated record size")
+            record = data[offset:offset + size]
+            require(record[5] == 0 and record[27] == 0, "invalid record flags")
+            require(number(record, 12, "I") == sequence and number(record, 16, "Q") == frames, "record sequence/sample alignment mismatch")
+            count = number(record, 24, "H")
+            if kind == 1:
+                require(header == 88 and record[26] == 5 and 1 <= count <= block and not short, "invalid DATA dimensions/order")
+                require(frames + count <= len(ref["pcm"]), "reference is shorter than sidecar")
+                channels, payload = [], 88
+                cap = (precision + (count - 1) * (precision + 2) + 7) // 8
+                for c in range(5):
+                    channel_id, mode, reserved, k, shift, payload_size = struct.unpack_from("<BBBBII", record, 28 + c * 12)
+                    require(channel_id == c + 2 and mode == 2 and reserved == 0, "invalid v2 channel descriptor")
+                    require(k <= precision and shift <= 32 - precision, "invalid Rice parameter/shift")
+                    require(payload + payload_size <= size and 0 < payload_size <= cap, "invalid channel payload size")
+                    bits = Bits(record[payload:payload + payload_size])
+                    previous, values = 0, []
+                    for n in range(count):
+                        q = bits.signed(precision) if n == 0 else previous + bits.rice(k, 4 * limit)
+                        require(-limit <= q <= limit, "invalid quantized value")
+                        previous = q
+                        value = q << shift
+                        require(-0x80000000 <= value < 0x80000000, "reconstruction exceeds i32 export range")
+                        values.append(value)
+                    bits.padding()
+                    channels.append(values)
+                    payload += payload_size
+                require(payload == size, "extra DATA payload")
+                for n in range(count):
+                    output.extend([ref["pcm"][frames + n]] + [channel[n] for channel in channels])
+                frames += count
+                records += 1
+                short = count < block
+            else:
+                require(header == 28 and count == 0 and record[26] == 0, "invalid TIME/END dimensions")
+                if kind == 2:
+                    tlvs(record[28:size], checkpoint=True)
+                else:
+                    require(size == 52 and offset + size == len(data), "invalid END or bytes after END")
+                    total, reference_bytes, data_records, status = struct.unpack_from("<QQII", record, 28)
+                    require(total == frames == len(ref["pcm"]) and reference_bytes == ref["file_bytes"]
+                            and data_records == records and status in (1, 2, 4), "END/reference totals mismatch")
+                    ended = True
+            sequence += 1
+            offset += size
+        require(ended, "missing END record")
+    except FormatError as error:
+        if not recover:
+            raise
+        recovery_error = str(error)
+    return output, dict(frames=frames, sample_rate_hz=ref["rate"], channels=6, precision=precision,
+                        version=2, algorithm="independent_temporal_shift", crc_present=False, digest_verified=False,
+                        data_records=records, complete=ended, completion_status=status,
+                        recovery_error=recovery_error, segment_id=identity.hex())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sidecar", type=Path)
     parser.add_argument("--reference", required=True, type=Path)
     parser.add_argument("--output", type=Path, help="reconstructed six-channel 32-bit WAV")
-    parser.add_argument("--recover", action="store_true", help="explicitly expose a validated incomplete prefix")
+    parser.add_argument("--recover", action="store_true", help="expose an incomplete checked prefix; v2 has no checksum/digest")
     args = parser.parse_args()
     try:
         pcm, report = decode(args.sidecar.read_bytes(), reference(args.reference), args.recover)

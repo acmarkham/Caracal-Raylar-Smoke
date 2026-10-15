@@ -12,7 +12,9 @@ Run host checks with:
 rtk cargo test -p raylar-crcl-encoder-service --target x86_64-pc-windows-msvc
 ```
 
-The default runtime dependency graph is empty. The optional `defmt` feature supports firmware diagnostics. A fixed-state SHA-256 binds the paired reference PCM; CRC-32C protects headers and records.
+The default profiling hooks compile away. The optional `defmt` feature supports firmware diagnostics. In v1, a fixed-state SHA-256 binds the paired reference PCM and CRC-32C protects headers and records.
+
+Select `Config::cheap()` (`Algorithm::TemporalShiftV2`) for the experimental independent-channel variant and size the existing output buffer with `config.workspace_capacity()`. It uses in-place `i32` shift quantization with one scale per channel/block, temporal-only residuals, an estimated Rice parameter, and no CRCL CRC or PCM SHA-256. MIC1 remains unchanged. See the [algorithm and v2 layout](cheap.md) and [hardware results](../../../servicetests/crclencoder/cheap-profiling.md).
 
 Use [crcl_decode.py](../../../scripts/crcl_decode.py) to independently validate and reconstruct recordings:
 
