@@ -1,8 +1,7 @@
 use crate::{
-    common, policy,
+    LOCATION, common, policy,
     power::ACTIVITY,
-    storage::{RecorderStorage, SharedStorage, STORAGE_FLAGS},
-    LOCATION,
+    storage::{RecorderStorage, STORAGE_FLAGS, SharedStorage},
 };
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use defmt::{error, unwrap};
@@ -10,13 +9,12 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Instant, Timer};
 #[cfg(not(feature = "hexaphonic"))]
 use raylar_audio_recorder_service::AudioRecorder;
+use raylar_audio_recorder_service::{
+    AudioRecorderConfig, AudioRecorderError, TimeMetadataSource, flac_frame_capacity,
+};
 #[cfg(feature = "hexaphonic")]
 use raylar_audio_recorder_service::{
-    CaptureParameters, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder,
-    ReferenceFormat,
-};
-use raylar_audio_recorder_service::{
-    flac_frame_capacity, AudioRecorderConfig, AudioRecorderError, TimeMetadataSource,
+    CaptureParameters, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder, ReferenceFormat,
 };
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_board_v1p0::{PdmMicArray, PdmMicDma};
@@ -28,7 +26,9 @@ use raylar_drivers::mic_array::{
     MicrophoneConfig, MicrophoneMode, MicrophonePreset, MicrophoneResources,
 };
 use raylar_drivers::storage::StorageError;
-use raylar_logging_service::{info as log_info, LoggerHandle};
+use raylar_logging_service::{
+    LoggerHandle, error as log_error, info as log_info, warn as log_warn,
+};
 use raylar_storage_service::{StorageLayout, StorageServiceError};
 use raylar_time_service::UtcTimestamp;
 use static_cell::ConstStaticCell;
@@ -48,11 +48,8 @@ pub const CAPACITY: usize = if cfg!(feature = "hexaphonic") {
 static SPATIAL_PCM: ConstStaticCell<[i32; crate::config::CRCL_BLOCK_FRAMES * 6]> =
     ConstStaticCell::new([0; crate::config::CRCL_BLOCK_FRAMES * 6]);
 #[cfg(feature = "hexaphonic")]
-static SPATIAL_OUTPUT: ConstStaticCell<
-    [u8; crate::config::CRCL_CONFIG.workspace_capacity()],
-> = ConstStaticCell::new(
-    [0; crate::config::CRCL_CONFIG.workspace_capacity()],
-);
+static SPATIAL_OUTPUT: ConstStaticCell<[u8; crate::config::CRCL_CONFIG.workspace_capacity()]> =
+    ConstStaticCell::new([0; crate::config::CRCL_CONFIG.workspace_capacity()]);
 const MIC_CONFIG: MicrophoneConfig = MicrophoneConfig {
     mode: if cfg!(feature = "hexaphonic") {
         MicrophoneMode::Hexaphonic
@@ -71,8 +68,22 @@ static RECORDING: AtomicBool = AtomicBool::new(false);
 pub fn recording_active() -> bool {
     RECORDING.load(Ordering::Relaxed)
 }
+/// Historical dropped scalar samples, separate from event counts.
 pub static AUDIO_LOSSES: AtomicU32 = AtomicU32::new(0);
 pub static AUDIO_PACKETS: AtomicU32 = AtomicU32::new(0);
+pub static AUDIO_ERRORS: AtomicU32 = AtomicU32::new(0);
+pub static CAPTURE_RESTARTS: AtomicU32 = AtomicU32::new(0);
+pub static CAPTURE_MISSING_FRAMES: AtomicU32 = AtomicU32::new(0);
+pub static AUDIO_FRAMES_ENCODED: AtomicU32 = AtomicU32::new(0);
+pub static AUDIO_WARNING: AtomicBool = AtomicBool::new(false);
+static AUDIO_PROGRESS_MS: AtomicU32 = AtomicU32::new(0);
+pub fn recording_warning() -> bool {
+    AUDIO_WARNING.load(Ordering::Relaxed)
+        || (recording_active()
+            && (Instant::now().as_millis() as u32)
+                .wrapping_sub(AUDIO_PROGRESS_MS.load(Ordering::Relaxed))
+                > 5_000)
+}
 pub fn capture_allowed() -> bool {
     STORAGE_FLAGS.load(Ordering::Relaxed)
         & (raylar_radio_service::heartbeat_v4::STORAGE_FULL
@@ -187,18 +198,31 @@ async fn forward_task(log: Log) -> ! {
     let mut frames = unwrap!(MICROPHONES.frame_receiver());
     let mut previous = 0u64;
     let mut previous_origin = 0u64;
+    let mut previous_fault = 0u32;
     loop {
         let state = frames.changed().await;
+        let fault = MICROPHONES.capture_fault();
+        if fault.count != previous_fault {
+            previous_fault = fault.count;
+            let _ = log_warn!(
+                log,
+                "capture fault count={} reasons={} dma_deltas={:?} status={} completed_ticks={} interval_ticks={} clock_error_ticks={}",
+                fault.count,
+                fault.reasons,
+                fault.dma_deltas,
+                fault.filter_status,
+                fault.completed_at_ticks,
+                fault.interval_ticks,
+                fault.clock_error_ticks
+            );
+        }
         if state.running && state.started_at_ticks != 0 {
-            if previous_origin != 0
-                && previous_origin != state.started_at_ticks
-                && RECORDING.load(Ordering::Relaxed)
-            {
+            if previous_origin != 0 && previous_origin != state.started_at_ticks {
                 AUDIO.report_discontinuity(
                     HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
                 );
-                AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
-                let _ = log_info!(
+                CAPTURE_RESTARTS.fetch_add(1, Ordering::Relaxed);
+                let _ = log_warn!(
                     log,
                     "capture restarted; missing sample count is a lower bound"
                 );
@@ -210,16 +234,17 @@ async fn forward_task(log: Log) -> ! {
             continue;
         }
         if previous != 0 && state.sequence > previous + 1 {
-            if RECORDING.load(Ordering::Relaxed) {
-                AUDIO.report_discontinuity((state.sequence - previous - 1).saturating_mul(
+            AUDIO
+                .report_discontinuity((state.sequence - previous - 1).saturating_mul(
                     HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
                 ));
-            }
-            AUDIO_LOSSES.fetch_add(
-                (state.sequence - previous - 1).min(u32::MAX as u64) as u32,
+            CAPTURE_MISSING_FRAMES.fetch_add(
+                (state.sequence - previous - 1)
+                    .saturating_mul(HALF_SAMPLES as u64)
+                    .min(u32::MAX as u64) as u32,
                 Ordering::Relaxed,
             );
-            let _ = log_info!(
+            let _ = log_warn!(
                 log,
                 "microphone gap previous={} current={}",
                 previous,
@@ -228,24 +253,22 @@ async fn forward_task(log: Log) -> ! {
         }
         previous = state.sequence;
         if state.error.is_some() {
-            if RECORDING.load(Ordering::Relaxed) {
-                AUDIO.report_discontinuity(
-                    HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
-                );
-            }
-            AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
+            AUDIO.report_discontinuity(
+                HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
+            );
+            AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
             continue;
         }
-        if !RECORDING.load(Ordering::Relaxed) {
-            continue;
-        }
+        // Continue publishing while the recorder waits for UTC or recovers.
+        // AudioSource timestamps follow sample count, so gating writes here
+        // would silently remove wall time from every later recording.
         let frame = MICROPHONES.frame(state);
         let channels = frame.active_channels();
         if channels.len() != crate::config::AUDIO_CHANNELS as usize {
             AUDIO.report_discontinuity(
                 HALF_SAMPLES as u64 * u64::from(crate::config::AUDIO_CHANNELS),
             );
-            AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
+            AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
             continue;
         }
         let channel_count = channels.len();
@@ -261,7 +284,7 @@ async fn forward_task(log: Log) -> ! {
             })
             .is_err()
         {
-            AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
+            AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
         } else {
             AUDIO_PACKETS.fetch_add(1, Ordering::Relaxed);
         }
@@ -288,7 +311,7 @@ fn hex_recorder(
     let resolved = unwrap!(raylar_drivers::mic_array::stm32::resolve_config(MIC_CONFIG));
     unwrap!(HexaphonicRecorder::new(
         &AUDIO,
-        RecorderStorage { shared: storage },
+        RecorderStorage::new(storage),
         metadata,
         HexaphonicConfig {
             recorder: AudioRecorderConfig {
@@ -323,12 +346,13 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
     let metadata = TimeMetadataSource::new(&common::TIME_RESOURCES)
         .with_node_id(node)
         .with_boot_id(u32::from(boot))
+        .with_firmware_hash(option_env!("RAYLAR_GIT_HASH").unwrap_or("unknown"))
         .with_location_source(location_e7);
     #[cfg(not(feature = "hexaphonic"))]
     let mut recorder = unwrap!(
         AudioRecorder::<_, _, CAPACITY, 2, FLAC_BYTES, FLAC_SAMPLES>::new_flac_with_buffers(
             &AUDIO,
-            RecorderStorage { shared: storage },
+            RecorderStorage::new(storage),
             metadata,
             AudioRecorderConfig {
                 recording_seconds: 60,
@@ -368,6 +392,7 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
             continue;
         }
         RECORDING.store(true, Ordering::Relaxed);
+        AUDIO_PROGRESS_MS.store(Instant::now().as_millis() as u32, Ordering::Relaxed);
         match recorder.start_at(UtcTimestamp::from_micros(next)).await {
             Ok(()) => {
                 let _ = log_info!(
@@ -397,25 +422,93 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
             }
         }
         let mut metrics_started = Instant::now();
+        let mut last_encoded = Instant::now();
+        let mut healthy_frames = 0usize;
+        let mut call_max_us = 0;
         let mut codec_max_us = 0;
         let mut write_max_us = 0;
         let mut backlog_max_samples = 0;
         loop {
+            let call_started = Instant::now();
             match recorder
                 .record_next_with_source_timeout(Duration::from_secs(2))
                 .await
             {
                 Ok(progress) => {
+                    call_max_us = call_max_us.max(call_started.elapsed().as_micros());
+                    if progress.encoded_frames != 0 {
+                        AUDIO_FRAMES_ENCODED
+                            .fetch_add(progress.encoded_frames as u32, Ordering::Relaxed);
+                        last_encoded = Instant::now();
+                        AUDIO_PROGRESS_MS.store(last_encoded.as_millis() as u32, Ordering::Relaxed);
+                        healthy_frames = healthy_frames.saturating_add(progress.encoded_frames);
+                        if healthy_frames >= 32_000 {
+                            AUDIO_WARNING.store(false, Ordering::Relaxed);
+                        }
+                    } else if last_encoded.elapsed() > Duration::from_secs(5) {
+                        AUDIO_WARNING.store(true, Ordering::Relaxed);
+                        AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
+                        let _ = log_warn!(
+                            log,
+                            "audio stalled no encoded frames for 5s; restarting backlog={} timestamp_error_ticks={}",
+                            progress.backlog_samples,
+                            AUDIO.timestamp_error_ticks()
+                        );
+                        break;
+                    }
+                    if AUDIO.timestamp_error_ticks().unsigned_abs() > 200_000 {
+                        AUDIO_WARNING.store(true, Ordering::Relaxed);
+                        AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
+                        let _ = log_warn!(
+                            log,
+                            "audio timeline error_ticks={}; reanchoring source",
+                            AUDIO.timestamp_error_ticks()
+                        );
+                        AUDIO.report_discontinuity(0);
+                        break;
+                    }
                     codec_max_us = codec_max_us.max(progress.codec_elapsed_us);
                     write_max_us = write_max_us.max(progress.storage_elapsed_us);
                     backlog_max_samples = backlog_max_samples.max(progress.backlog_samples);
                     if metrics_started.elapsed() >= Duration::from_secs(10) {
                         let _ = log_info!(
                             log,
+                            "audio health encoded_frames={} backend_bytes={} closed_files={} dropped_scalars={} errors={} capture_restarts={} missing_capture_frames={} timestamp_error_ticks={} call_max_us={}",
+                            AUDIO_FRAMES_ENCODED.load(Ordering::Relaxed),
+                            crate::storage::AUDIO_BACKEND_BYTES.load(Ordering::Relaxed),
+                            crate::storage::AUDIO_FILES_CLOSED.load(Ordering::Relaxed),
+                            AUDIO_LOSSES.load(Ordering::Relaxed),
+                            AUDIO_ERRORS.load(Ordering::Relaxed),
+                            CAPTURE_RESTARTS.load(Ordering::Relaxed),
+                            CAPTURE_MISSING_FRAMES.load(Ordering::Relaxed),
+                            AUDIO.timestamp_error_ticks(),
+                            call_max_us
+                        );
+                        call_max_us = 0;
+                        let capture = MICROPHONES.state();
+                        let _ = log_info!(
+                            log,
+                            "audio capture sequence={} origin_ticks={} completed_ticks={} nominal_clock_error_ticks={} forwarded_packets={} backlog={}",
+                            capture.sequence,
+                            capture.started_at_ticks,
+                            capture.completed_at_ticks,
+                            capture.clock_error_ticks,
+                            AUDIO_PACKETS.load(Ordering::Relaxed),
+                            progress.backlog_samples
+                        );
+                        #[cfg(feature = "hexaphonic")]
+                        log_lifecycle(log, recorder.take_lifecycle_metrics());
+                        let _ = log_info!(
+                            log,
                             "audio timing codec_max_us={} write_max_us={} frame_budget_us={} backlog_max_samples={} source_capacity_samples={}",
                             codec_max_us,
                             write_max_us,
-                            if cfg!(feature = "hexaphonic") { crate::config::CRCL_BLOCK_FRAMES as u64 } else { FLAC_SAMPLES as u64 } * 1_000_000 / 16_000,
+                            if cfg!(feature = "hexaphonic") {
+                                crate::config::CRCL_BLOCK_FRAMES as u64
+                            } else {
+                                FLAC_SAMPLES as u64
+                            } * 1_000_000
+                                / 16_000,
                             backlog_max_samples,
                             CAPACITY
                         );
@@ -440,12 +533,14 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                     }
                 }
                 Err(error) => {
+                    AUDIO_WARNING.store(true, Ordering::Relaxed);
                     if let AudioRecorderError::Discontinuity { dropped_samples } = error {
+                        AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
                         AUDIO_LOSSES.fetch_add(
-                            dropped_samples.max(1).min(u32::MAX as u64) as u32,
+                            dropped_samples.min(u32::MAX as u64) as u32,
                             Ordering::Relaxed,
                         );
-                        let _ = log_info!(
+                        let _ = log_warn!(
                             log,
                             "audio discontinuity dropped={}; closed FLAC prefix",
                             dropped_samples
@@ -456,12 +551,12 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                     if recovering && matches!(error, AudioRecorderError::SourceTimeout) {
                         let _ = log_info!(log, "audio source wait ended during energy recovery");
                     } else {
-                        let _ = log_info!(log, "audio write failed error={:?}", error);
+                        let _ = log_error!(log, "audio write failed error={:?}", error);
                     }
                     if !storage_is_full(&error)
                         && !(recovering && matches!(error, AudioRecorderError::SourceTimeout))
                     {
-                        AUDIO_LOSSES.fetch_add(1, Ordering::Relaxed);
+                        AUDIO_ERRORS.fetch_add(1, Ordering::Relaxed);
                         STORAGE_FLAGS.fetch_or(
                             raylar_radio_service::heartbeat_v4::AUDIO_FAULT,
                             Ordering::Relaxed,
@@ -482,6 +577,8 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
                 Ordering::Relaxed,
             );
         }
+        #[cfg(feature = "hexaphonic")]
+        log_lifecycle(log, recorder.take_lifecycle_metrics());
         if !ACTIVITY.try_get().unwrap_or_default().active() || !capture_allowed() {
             MICROPHONES.set_enabled(false);
         }
@@ -489,6 +586,23 @@ async fn recorder_task(storage: &'static SharedStorage, node: u32, boot: u16, lo
             log,
             "audio stopped losses={}",
             AUDIO_LOSSES.load(Ordering::Relaxed)
+        );
+    }
+}
+
+#[cfg(feature = "hexaphonic")]
+fn log_lifecycle(log: Log, timing: raylar_audio_recorder_service::LifecycleMetrics) {
+    if timing.open_max_us != 0 || timing.finish_max_us != 0 {
+        let _ = log_info!(
+            log,
+            "audio lifecycle open_max_us={} finish_max_us={} final_ref_max_us={} backlog_before={} backlog_after={} first_sample_ticks={} first_source_frame={}",
+            timing.open_max_us,
+            timing.finish_max_us,
+            timing.final_reference_max_us,
+            timing.backlog_before_max_samples,
+            timing.backlog_after_max_samples,
+            timing.first_sample_ticks,
+            timing.first_source_frame
         );
     }
 }

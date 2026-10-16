@@ -11,10 +11,10 @@ extern crate std;
 
 use core::cell::RefCell;
 
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(target_arch = "arm")]
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::watch::{Receiver as WatchReceiver, Watch};
 
 pub const DEFAULT_READERS: usize = 4;
@@ -137,6 +137,7 @@ struct State<const CAPACITY: usize, const READERS: usize> {
     write_position: u64,
     first_position: Option<u64>,
     first_timestamp_ticks: Option<u64>,
+    timestamp_error_ticks: i64,
     readers: [ReaderState; READERS],
 }
 
@@ -156,6 +157,7 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
                 write_position: 0,
                 first_position: None,
                 first_timestamp_ticks: None,
+                timestamp_error_ticks: 0,
                 readers: [ReaderState::EMPTY; READERS],
             })),
             changed: Watch::new_with(0),
@@ -223,6 +225,14 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
                 state.first_position = Some(incoming_position);
                 state.first_timestamp_ticks = Some(timestamp_ticks);
             }
+            let expected = self
+                .timestamp_at(&state, incoming_position)
+                .unwrap_or(timestamp_ticks);
+            state.timestamp_error_ticks = if timestamp_ticks >= expected {
+                (timestamp_ticks - expected).min(i64::MAX as u64) as i64
+            } else {
+                -((expected - timestamp_ticks).min(i64::MAX as u64) as i64)
+            };
 
             state.write_position = state.write_position.saturating_add(original_len as u64);
             let retained = original_len.min(CAPACITY);
@@ -301,7 +311,9 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
             let position = state.write_position;
             for reader in &mut state.readers {
                 if reader.active {
-                    let dropped = (position - reader.cursor).saturating_add(missing_samples).max(1);
+                    let dropped = (position - reader.cursor)
+                        .saturating_add(missing_samples)
+                        .max(1);
                     reader.cursor = position;
                     reader.dropped_samples = reader.dropped_samples.saturating_add(dropped);
                     reader.pending_dropped = reader.pending_dropped.saturating_add(dropped);
@@ -311,9 +323,17 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
             }
             state.first_position = None;
             state.first_timestamp_ticks = None;
+            state.timestamp_error_ticks = 0;
             position
         });
         self.changed.sender().send(position);
+    }
+
+    /// Latest producer packet timestamp minus the sample-count timeline.
+    /// Useful for detecting omitted publication intervals without changing
+    /// the continuous timeline for normal producer timestamp jitter.
+    pub fn timestamp_error_ticks(&self) -> i64 {
+        self.state.lock(|cell| cell.borrow().timestamp_error_ticks)
     }
 
     fn timestamp_at(&self, state: &State<CAPACITY, READERS>, position: u64) -> Option<u64> {
@@ -540,13 +560,21 @@ mod tests {
         first.read(3, |_| 3).unwrap();
         source.report_discontinuity(2);
         source.write(&[4, 5], 9000).unwrap();
-        let status = first.read(2, |chunk| {
-            assert_eq!(chunk.dropped_since_last_read, 2);
-            assert_eq!(chunk.timestamp_ticks, Some(9000));
-            assert_eq!(chunk.first, &[4, 5]);
-            chunk.len()
-        }).unwrap();
+        let status = first
+            .read(2, |chunk| {
+                assert_eq!(chunk.dropped_since_last_read, 2);
+                assert_eq!(chunk.timestamp_ticks, Some(9000));
+                assert_eq!(chunk.first, &[4, 5]);
+                chunk.len()
+            })
+            .unwrap();
         assert_eq!(status.dropped_since_last_read, 2);
-        assert_eq!(second.read(2, |chunk| chunk.len()).unwrap().dropped_since_last_read, 5);
+        assert_eq!(
+            second
+                .read(2, |chunk| chunk.len())
+                .unwrap()
+                .dropped_since_last_read,
+            5
+        );
     }
 }

@@ -1,15 +1,15 @@
 use super::*;
 
 impl<
-        'a,
-        S,
-        M,
-        const AUDIO_CAPACITY: usize,
-        const READERS: usize,
-        const ENCODE_BYTES: usize,
-        const PCM_SAMPLES: usize,
-        W,
-    > AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES, W>
+    'a,
+    S,
+    M,
+    const AUDIO_CAPACITY: usize,
+    const READERS: usize,
+    const ENCODE_BYTES: usize,
+    const PCM_SAMPLES: usize,
+    W,
+> AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES, W>
 where
     S: RecordingStorage,
     M: MetadataSource,
@@ -92,9 +92,11 @@ where
             self.open_flac_stream().await?;
         }
         let mut timing = (0, 0);
+        let mut encoded_frames = 0;
         if self.pcm_len == block
             || self.samples_in_recording + self.pcm_len == self.samples_per_recording
         {
+            encoded_frames = self.pcm_len;
             timing = self.append_flac_frame().await?;
         }
         let rotated = self.samples_in_recording == self.samples_per_recording;
@@ -104,6 +106,7 @@ where
         }
         Ok(RecorderProgress {
             pcm_samples: status.consumed_samples,
+            encoded_frames,
             dropped_samples: 0,
             rotated,
             codec_elapsed_us: timing.0,

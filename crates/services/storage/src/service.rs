@@ -36,6 +36,9 @@ pub struct StorageService<
     slots: [Option<StreamSlot<WRITE_BUFFER_BYTES>>; MAX_STREAMS],
     generations: [u8; MAX_STREAMS],
     stream_sequence: u32,
+    // This service owns directory creation and never removes directories.
+    // Avoid repeating that traversal for both members of every audio pair.
+    last_created_folder: Option<heapless::String<{ crate::types::PATH_CAPACITY }>>,
 }
 
 impl<B, C, const BLOCK_SIZE: usize, const MAX_STREAMS: usize, const WRITE_BUFFER_BYTES: usize>
@@ -59,10 +62,12 @@ where
             slots: core::array::from_fn(|_| None),
             generations: [0; MAX_STREAMS],
             stream_sequence: 0,
+            last_created_folder: None,
         })
     }
 
     pub async fn mount(&mut self) -> Result<(), StorageServiceError<B::Error>> {
+        self.last_created_folder = None;
         self.backend
             .mount()
             .await
@@ -117,22 +122,35 @@ where
             .ok_or(StorageServiceError::TooManyStreams)?;
         let generation = self.generations[index].wrapping_add(1);
         let sequence = self.stream_sequence.wrapping_add(1);
-        let path = stream_path_with_suffix(kind, layout, timestamp.map(|time| time.seconds), sequence, audio_suffix)?;
+        let path = stream_path_with_suffix(
+            kind,
+            layout,
+            timestamp.map(|time| time.seconds),
+            sequence,
+            audio_suffix,
+        )?;
         let file_timestamp = timestamp.and_then(to_storage_timestamp);
         if let Some(folder) = folder_path::<B::Error>(path.as_str())? {
-            self.backend
-                .create_directory_at(folder.as_str(), file_timestamp)
-                .await
-                .map_err(StorageServiceError::Backend)?;
+            if self.last_created_folder.as_ref() != Some(&folder) {
+                self.backend
+                    .create_directory_at(folder.as_str(), file_timestamp)
+                    .await
+                    .map_err(StorageServiceError::Backend)?;
+                self.last_created_folder = Some(folder);
+            }
         }
         let file = if exclusive {
-            self.backend.create_new_at(path.as_str(), file_timestamp).await
-                .map_err(StorageServiceError::Backend)?.ok_or(StorageServiceError::InvalidConfig)?
-        } else { self
-            .backend
-            .open_for_append_at(path.as_str(), file_timestamp)
-            .await
-            .map_err(StorageServiceError::Backend)? };
+            self.backend
+                .create_new_at(path.as_str(), file_timestamp)
+                .await
+                .map_err(StorageServiceError::Backend)?
+                .ok_or(StorageServiceError::InvalidConfig)?
+        } else {
+            self.backend
+                .open_for_append_at(path.as_str(), file_timestamp)
+                .await
+                .map_err(StorageServiceError::Backend)?
+        };
 
         self.generations[index] = generation;
         self.stream_sequence = sequence;
@@ -142,28 +160,61 @@ where
         Ok(StreamHandle::new(index, generation))
     }
 
-    pub async fn begin_new_audio_at(&mut self, layout: StorageLayout, started_utc: UtcTimestamp) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.begin_new_audio_with_suffix_at(layout, started_utc, "wav").await
+    pub async fn begin_new_audio_at(
+        &mut self,
+        layout: StorageLayout,
+        started_utc: UtcTimestamp,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.begin_new_audio_with_suffix_at(layout, started_utc, "wav")
+            .await
     }
 
     /// The producer supplies only naming data; storage never interprets the bytes.
-    pub async fn begin_new_audio_with_suffix_at(&mut self, layout: StorageLayout, started_utc: UtcTimestamp, suffix: &str) -> Result<StreamHandle, StorageServiceError<B::Error>> {
-        self.begin_stream_with_timestamp(StreamKind::Audio, layout, Some(started_utc), true, suffix).await
+    pub async fn begin_new_audio_with_suffix_at(
+        &mut self,
+        layout: StorageLayout,
+        started_utc: UtcTimestamp,
+        suffix: &str,
+    ) -> Result<StreamHandle, StorageServiceError<B::Error>> {
+        self.begin_stream_with_timestamp(StreamKind::Audio, layout, Some(started_utc), true, suffix)
+            .await
     }
 
     pub fn pending_bytes(&self) -> u64 {
-        self.slots.iter().flatten().map(|slot| slot.pending_len as u64).sum()
+        self.slots
+            .iter()
+            .flatten()
+            .map(|slot| slot.pending_len as u64)
+            .sum()
     }
 
-    pub async fn space_info(&mut self) -> Result<Option<(u64, u64, u32)>, StorageServiceError<B::Error>> {
-        self.backend.space_info().await.map_err(StorageServiceError::Backend)
+    pub async fn space_info(
+        &mut self,
+    ) -> Result<Option<(u64, u64, u32)>, StorageServiceError<B::Error>> {
+        self.backend
+            .space_info()
+            .await
+            .map_err(StorageServiceError::Backend)
     }
 
-    pub async fn rewrite(&mut self, stream: StreamHandle, offset: u64, bytes: &[u8]) -> Result<(), StorageServiceError<B::Error>> {
+    pub async fn rewrite(
+        &mut self,
+        stream: StreamHandle,
+        offset: u64,
+        bytes: &[u8],
+    ) -> Result<(), StorageServiceError<B::Error>> {
         self.flush(stream).await?;
         let index = self.validate(stream)?;
-        let handle = self.slots[index].as_ref().and_then(|s| s.file).ok_or(StorageServiceError::InvalidStream)?;
-        if !self.backend.rewrite(handle, offset, bytes).await.map_err(StorageServiceError::Backend)? {
+        let handle = self.slots[index]
+            .as_ref()
+            .and_then(|s| s.file)
+            .ok_or(StorageServiceError::InvalidStream)?;
+        if !self
+            .backend
+            .rewrite(handle, offset, bytes)
+            .await
+            .map_err(StorageServiceError::Backend)?
+        {
             return Err(StorageServiceError::InvalidConfig);
         }
         Ok(())
@@ -288,7 +339,8 @@ where
             continue;
         }
         let copy_len = (WRITE_BUFFER_BYTES - slot.pending_len).min(data.len());
-        let buffer_profile = raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::StorageBuffer);
+        let buffer_profile =
+            raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::StorageBuffer);
         slot.pending[slot.pending_len..slot.pending_len + copy_len]
             .copy_from_slice(&data[..copy_len]);
         slot.pending_len += copy_len;

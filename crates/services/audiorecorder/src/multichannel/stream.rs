@@ -1,6 +1,6 @@
 use super::*;
 use crate::crcl::{Completion, Transform};
-use embassy_time::{with_timeout, Instant};
+use embassy_time::{Instant, with_timeout};
 
 impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
     HexaphonicRecorder<'_, S, M, C, R>
@@ -133,9 +133,11 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         self.pcm_frames += copied;
         let mut codec_us = 0;
         let mut storage_us = 0;
+        let mut encoded_frames = 0;
         if self.pcm_frames == self.config.spatial.block_frames
             || self.frames_accepted + self.pcm_frames == self.frames_target
         {
+            encoded_frames = self.pcm_frames;
             let started = Instant::now();
             let timing = self.flush_block().await?;
             codec_us = timing.0;
@@ -153,6 +155,7 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         }
         Ok(RecorderProgress {
             pcm_samples: copied * 6,
+            encoded_frames,
             dropped_samples: 0,
             rotated,
             codec_elapsed_us: codec_us,

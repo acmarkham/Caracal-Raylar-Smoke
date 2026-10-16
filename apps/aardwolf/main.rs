@@ -118,12 +118,23 @@ async fn main(spawner: Spawner) -> ! {
         env!("CARGO_PKG_VERSION")
     );
     let audio_config = aardwolf::config::FLAC_CONFIG;
-    let _ = log_info!(audio_log, "recording mode={} channels={} crcl_block_frames={} crcl_bits={} crcl_min_shift={} arithmetic=i32_in_place algorithm={:?} prediction={:?} crcl_crc={} pcm_sha256={}",
-        if cfg!(feature="hexaphonic") { "hexaphonic" } else { "mono" },
-        aardwolf::config::AUDIO_CHANNELS, aardwolf::config::CRCL_BLOCK_FRAMES, aardwolf::config::CRCL_BITS,
+    let _ = log_info!(
+        audio_log,
+        "recording mode={} channels={} crcl_block_frames={} crcl_bits={} crcl_min_shift={} arithmetic=i32_in_place algorithm={:?} prediction={:?} crcl_crc={} pcm_sha256={}",
+        if cfg!(feature = "hexaphonic") {
+            "hexaphonic"
+        } else {
+            "mono"
+        },
+        aardwolf::config::AUDIO_CHANNELS,
+        aardwolf::config::CRCL_BLOCK_FRAMES,
+        aardwolf::config::CRCL_BITS,
         aardwolf::config::CRCL_CONFIG.min_shift,
-        aardwolf::config::CRCL_CONFIG.algorithm, aardwolf::config::CRCL_CONFIG.prediction,
-        !aardwolf::config::CRCL_CONFIG.is_cheap(), !aardwolf::config::CRCL_CONFIG.is_cheap());
+        aardwolf::config::CRCL_CONFIG.algorithm,
+        aardwolf::config::CRCL_CONFIG.prediction,
+        !aardwolf::config::CRCL_CONFIG.is_cheap(),
+        !aardwolf::config::CRCL_CONFIG.is_cheap()
+    );
     let _ = log_info!(
         audio_log,
         "audio config format=flac rate_hz={} channels=1 depth_bits={} block_samples={} prediction={:?} rice_search=exact_bit_counts rice_methods=4,5 partitions=1 fallback=constant,verbatim frame_budget_us={}",
@@ -216,6 +227,26 @@ async fn main(spawner: Spawner) -> ! {
             Timer::after_secs(60).await;
         }
     }
+    // Populate exFAT's cached free-cluster count before starting microphone
+    // capture. The first full bitmap scan must not consume the PCM ring budget.
+    match service.space_info().await {
+        Ok(Some((total, free, cluster))) => {
+            let _ = log_info!(
+                system_log,
+                "storage ready total_bytes={} free_bytes={} cluster_bytes={} write_buffer_bytes=16384",
+                total,
+                free,
+                cluster
+            );
+        }
+        result => {
+            mark_storage_failure();
+            error!("storage space initialization failed {:?}", result);
+            loop {
+                Timer::after_secs(60).await;
+            }
+        }
+    }
     let mut versioning = IdentityVersioningService::new(&VERSIONING, IdentityConfig::default());
     versioning.set_sd_card_identity(
         service
@@ -258,6 +289,9 @@ async fn main(spawner: Spawner) -> ! {
     STORAGE_READY.store(true, core::sync::atomic::Ordering::Relaxed);
     let logging = LoggingService::<_, 384, 32, 512>::new(&LOGGING, sink);
     spawner.spawn(unwrap!(logging_task(logging)));
+    spawner.spawn(unwrap!(storage::diagnostics_task(
+        LOGGING.register("Storage")
+    )));
     spawner.spawn(unwrap!(diagnostics::sensors_task(
         sensor_bus,
         LOGGING.register("Sensor")
@@ -341,7 +375,7 @@ async fn led_task(leds: Leds<'static>) -> ! {
         let gps = common::GPS_RESOURCES.stats();
         let rx = radio::VALID_RX.load(core::sync::atomic::Ordering::Relaxed);
         let tx = radio::COMPLETED_TX.load(core::sync::atomic::Ordering::Relaxed);
-        let audio = audio::AUDIO_PACKETS.load(core::sync::atomic::Ordering::Relaxed);
+        let audio = audio::AUDIO_FRAMES_ENCODED.load(core::sync::atomic::Ordering::Relaxed);
         let time = common::TIME_RESOURCES.time_state();
         if policy::gps_green_on(
             gps.powered && gps.operating_state.is_tracking(),
@@ -389,7 +423,7 @@ fn severe_error() -> bool {
     STORAGE_SEVERE.load(core::sync::atomic::Ordering::Relaxed)
         || (STORAGE_READY.load(core::sync::atomic::Ordering::Relaxed)
             && STORAGE_FLAGS.load(core::sync::atomic::Ordering::Relaxed) != 0)
-        || audio::AUDIO_LOSSES.load(core::sync::atomic::Ordering::Relaxed) != 0
+        || audio::recording_warning()
 }
 
 #[embassy_executor::task]

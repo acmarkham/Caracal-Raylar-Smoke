@@ -1,4 +1,4 @@
-use super::{MICROPHONES, MIC_CONFIG};
+use super::{MIC_CONFIG, MICROPHONES};
 use core::sync::atomic::{AtomicBool, Ordering};
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
@@ -15,7 +15,8 @@ use static_cell::ConstStaticCell;
 
 const SOURCE_CAPACITY: usize = if cfg!(any(
     feature = "stage-profiling",
-    feature = "profile-control"
+    feature = "profile-control",
+    feature = "recovery-test"
 )) {
     127998
 } else {
@@ -52,6 +53,11 @@ pub async fn run(
         &super::common::TIME_RESOURCES
     ));
     unwrap!(storage.mount().await);
+    #[cfg(feature = "recovery-test")]
+    let storage = SlowOpen {
+        inner: storage,
+        delay: true,
+    };
     #[cfg(feature = "laboratory-time")]
     super::common::start_fake_time(spawner, gps, laboratory_seconds()).await;
     #[cfg(not(feature = "laboratory-time"))]
@@ -65,18 +71,34 @@ pub async fn run(
         Timer::after_secs(1).await;
     }
     let now = unwrap!(super::common::TIME_RESOURCES.current_utc());
-    let start = unwrap!(UtcTimestamp::new((now.seconds / 60 + 1) * 60, 0));
-    let metadata = unwrap!(TimeMetadataSource::new(&super::common::TIME_RESOURCES)
-        .with_boot_id(1)
-        .with_device_id("CRCL-target-test"));
+    let start = unwrap!(UtcTimestamp::new(
+        if cfg!(feature = "recovery-test") {
+            now.seconds + 2
+        } else {
+            (now.seconds / 60 + 1) * 60
+        },
+        0
+    ));
+    let metadata = unwrap!(
+        TimeMetadataSource::new(&super::common::TIME_RESOURCES)
+            .with_boot_id(1)
+            .with_device_id("CRCL-target-test")
+    );
     let resolved = unwrap!(raylar_drivers::mic_array::stm32::resolve_config(MIC_CONFIG));
     let config = HexaphonicConfig {
         recorder: AudioRecorderConfig {
-            recording_seconds: 60,
+            recording_seconds: if cfg!(feature = "recovery-test") {
+                5
+            } else {
+                60
+            },
             storage_layout: StorageLayout::HourlyFolders,
         },
         spatial: if cfg!(feature = "cheap-crcl") {
-            raylar_crcl_encoder_service::Config::cheap()
+            raylar_crcl_encoder_service::Config {
+                min_shift: 6,
+                ..raylar_crcl_encoder_service::Config::cheap()
+            }
         } else {
             raylar_crcl_encoder_service::Config::default()
         },
@@ -111,90 +133,232 @@ pub async fn run(
     spawner.spawn(unwrap!(forward_task()));
     MICROPHONES.set_enabled(true);
     FORWARDING.store(true, Ordering::Relaxed);
-    let ticks = unwrap!(super::common::TIME_RESOURCES
-        .time_state()
-        .utc_to_system_holdover(start));
+    let ticks = unwrap!(
+        super::common::TIME_RESOURCES
+            .time_state()
+            .utc_to_system_holdover(start)
+    );
     Timer::at(ticks).await;
     unwrap!(recorder.start_at(start).await);
-    info!(
-        "CRCL SD recording started utc={} reference=flac sidecar=CRCL channels=6",
-        start.seconds
-    );
-    let mut count = 0u64;
-    let mut codec_max = 0;
-    let mut write_max = 0;
-    let mut backlog_max = 0;
-    let mut reported = Instant::now();
-    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
-    let mut window = 1;
-    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
-    let mut window_frames = 0;
-    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
-    let mut window_started = Instant::now();
-    #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
-    super::profiling::begin(cfg!(feature = "stage-profiling"));
-    loop {
-        #[cfg(not(any(feature = "stage-profiling", feature = "profile-control")))]
-        let p = unwrap!(
-            recorder
-                .record_next_with_source_timeout(Duration::from_secs(2))
-                .await
+    #[cfg(feature = "recovery-test")]
+    {
+        run_recovery(&mut recorder).await;
+        FORWARDING.store(false, Ordering::Relaxed);
+        MICROPHONES.set_enabled(false);
+        return;
+    }
+    #[cfg(not(feature = "recovery-test"))]
+    {
+        info!(
+            "CRCL SD recording started utc={} reference=flac sidecar=CRCL channels=6",
+            start.seconds
         );
+        let mut count = 0u64;
+        let mut codec_max = 0;
+        let mut write_max = 0;
+        let mut backlog_max = 0;
+        let mut reported = Instant::now();
         #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
-        let p = unwrap!(
-            raylar_stage_profiling::measure(
-                raylar_stage_profiling::Stage::RecorderPoll,
-                recorder.record_next_with_source_timeout(Duration::from_secs(2))
-            )
-            .await
-        );
-        count += p.pcm_samples as u64 / 6;
+        let mut window = 1;
         #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
-        {
-            window_frames += p.pcm_samples as u64 / 6;
-        }
-        codec_max = codec_max.max(p.codec_elapsed_us);
-        write_max = write_max.max(p.storage_elapsed_us);
-        backlog_max = backlog_max.max(p.backlog_samples);
-        assert_eq!(p.dropped_samples, 0);
-        if reported.elapsed() >= Duration::from_secs(10) {
-            info!(
-                "CRCL SD progress frames={} codec_max_us={} write_max_us={} backlog={}",
-                count, codec_max, write_max, backlog_max
+        let mut window_frames = 0;
+        #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+        let mut window_started = Instant::now();
+        #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+        super::profiling::begin(cfg!(feature = "stage-profiling"));
+        loop {
+            #[cfg(not(any(feature = "stage-profiling", feature = "profile-control")))]
+            let p = unwrap!(
+                recorder
+                    .record_next_with_source_timeout(Duration::from_secs(2))
+                    .await
             );
-            reported = Instant::now();
-        }
-        if p.rotated {
+            #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+            let p = unwrap!(
+                raylar_stage_profiling::measure(
+                    raylar_stage_profiling::Stage::RecorderPoll,
+                    recorder.record_next_with_source_timeout(Duration::from_secs(2))
+                )
+                .await
+            );
+            count += p.pcm_samples as u64 / 6;
             #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
             {
-                super::profiling::report(
-                    window,
-                    window_frames,
-                    window_started.elapsed().as_micros(),
+                window_frames += p.pcm_samples as u64 / 6;
+            }
+            codec_max = codec_max.max(p.codec_elapsed_us);
+            write_max = write_max.max(p.storage_elapsed_us);
+            backlog_max = backlog_max.max(p.backlog_samples);
+            assert_eq!(p.dropped_samples, 0);
+            if reported.elapsed() >= Duration::from_secs(10) {
+                info!(
+                    "CRCL SD progress frames={} codec_max_us={} write_max_us={} backlog={}",
+                    count, codec_max, write_max, backlog_max
                 );
-                if window == 1 && cfg!(feature = "stage-profiling") {
-                    window = 2;
-                    window_frames = 0;
-                    window_started = Instant::now();
-                    super::profiling::begin(false);
-                    info!("PROFILE control started: detailed probes disabled; recording the next complete minute");
-                    continue;
+                reported = Instant::now();
+            }
+            if p.rotated {
+                #[cfg(any(feature = "stage-profiling", feature = "profile-control"))]
+                {
+                    super::profiling::report(
+                        window,
+                        window_frames,
+                        window_started.elapsed().as_micros(),
+                    );
+                    if window == 1 && cfg!(feature = "stage-profiling") {
+                        window = 2;
+                        window_frames = 0;
+                        window_started = Instant::now();
+                        super::profiling::begin(false);
+                        info!(
+                            "PROFILE control started: detailed probes disabled; recording the next complete minute"
+                        );
+                        continue;
+                    }
+                }
+                break;
+            }
+        }
+        unwrap!(recorder.stop().await);
+        FORWARDING.store(false, Ordering::Relaxed);
+        MICROPHONES.set_enabled(false);
+        info!(
+            "CRCL SD TARGET PASS: finalized matching minute pair utc={} frames={} codec_max_us={} write_max_us={} backlog_max_scalar_samples={}",
+            start.seconds, count, codec_max, write_max, backlog_max
+        );
+        #[cfg(feature = "stage-profiling")]
+        info!(
+            "CRCL PROFILE TARGET PASS: profiled and control minute pairs finalized without source loss"
+        );
+        #[cfg(feature = "profile-control")]
+        info!(
+            "CRCL PROFILE CONTROL PASS: detailed probes compiled out; matching minute pair finalized without source loss"
+        );
+    }
+}
+
+#[cfg(feature = "recovery-test")]
+struct SlowOpen<S> {
+    inner: S,
+    delay: bool,
+}
+#[cfg(feature = "recovery-test")]
+impl<S: raylar_audio_recorder_service::RecordingStorage>
+    raylar_audio_recorder_service::RecordingStorage for SlowOpen<S>
+{
+    type Error = S::Error;
+    type Handle = S::Handle;
+    async fn admit_audio_bytes(&mut self, n: u64) -> Result<(), Self::Error> {
+        self.inner.admit_audio_bytes(n).await
+    }
+    async fn begin_audio_stream(
+        &mut self,
+        layout: StorageLayout,
+        utc: UtcTimestamp,
+        suffix: &str,
+    ) -> Result<Self::Handle, Self::Error> {
+        let handle = self.inner.begin_audio_stream(layout, utc, suffix).await?;
+        if self.delay {
+            self.delay = false;
+            info!("RECOVERY injecting 2s open stall, exceeding the 1.333s source retention");
+            Timer::after_secs(2).await;
+        }
+        Ok(handle)
+    }
+    async fn append_audio(&mut self, h: Self::Handle, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.inner.append_audio(h, bytes).await
+    }
+    async fn rewrite_audio(
+        &mut self,
+        h: Self::Handle,
+        at: u64,
+        bytes: &[u8],
+    ) -> Result<(), Self::Error> {
+        self.inner.rewrite_audio(h, at, bytes).await
+    }
+    async fn finish_audio(&mut self, h: Self::Handle) -> Result<(), Self::Error> {
+        self.inner.finish_audio(h).await
+    }
+}
+
+#[cfg(feature = "recovery-test")]
+async fn run_recovery<S, M>(recorder: &mut HexaphonicRecorder<'_, S, M, SOURCE_CAPACITY, 1>)
+where
+    S: raylar_audio_recorder_service::RecordingStorage,
+    S::Error: defmt::Format,
+    M: raylar_audio_recorder_service::MetadataSource,
+{
+    use raylar_audio_recorder_service::AudioRecorderError;
+    for phase in 0..3 {
+        if phase != 0 {
+            info!(
+                "RECOVERY phase={} pausing recorder 8s while capture keeps publishing",
+                phase
+            );
+            Timer::after_secs(8).await;
+            let now = unwrap!(super::common::TIME_RESOURCES.current_utc());
+            let start = unwrap!(UtcTimestamp::new(now.seconds + 1, 0));
+            let at = unwrap!(
+                super::common::TIME_RESOURCES
+                    .time_state()
+                    .utc_to_system_holdover(start)
+            );
+            Timer::at(at).await;
+            unwrap!(recorder.start_at(start).await);
+        }
+        let began = Instant::now();
+        let mut frames = 0usize;
+        loop {
+            match recorder
+                .record_next_with_source_timeout(Duration::from_secs(2))
+                .await
+            {
+                Err(AudioRecorderError::Discontinuity { dropped_samples }) if phase == 0 => {
+                    assert!(dropped_samples > 0);
+                    info!(
+                        "RECOVERY expected injected overrun dropped_scalars={}",
+                        dropped_samples
+                    );
+                    break;
+                }
+                Ok(p) => {
+                    frames += p.encoded_frames;
+                    assert!(began.elapsed() < Duration::from_secs(8));
+                    if p.rotated {
+                        assert!(phase != 0);
+                        assert!((78_400..=80_001).contains(&frames));
+                        assert!(AUDIO.timestamp_error_ticks().unsigned_abs() < 1000);
+                        info!(
+                            "RECOVERY phase={} frames={} elapsed_us={} timestamp_error_ticks={}",
+                            phase,
+                            frames,
+                            began.elapsed().as_micros(),
+                            AUDIO.timestamp_error_ticks()
+                        );
+                        break;
+                    }
+                }
+                other => {
+                    let _ = unwrap!(other);
                 }
             }
-            break;
         }
+        unwrap!(recorder.stop().await);
+        let t = recorder.take_lifecycle_metrics();
+        info!(
+            "RECOVERY lifecycle open_us={} finish_us={} final_ref_us={} first_sample_ticks={} first_source_frame={} backlog_before={} backlog_after={}",
+            t.open_max_us,
+            t.finish_max_us,
+            t.final_reference_max_us,
+            t.first_sample_ticks,
+            t.first_source_frame,
+            t.backlog_before_max_samples,
+            t.backlog_after_max_samples
+        );
     }
-    unwrap!(recorder.stop().await);
-    FORWARDING.store(false, Ordering::Relaxed);
-    MICROPHONES.set_enabled(false);
-    info!("CRCL SD TARGET PASS: finalized matching minute pair utc={} frames={} codec_max_us={} write_max_us={} backlog_max_scalar_samples={}",
-        start.seconds,count,codec_max,write_max,backlog_max);
-    #[cfg(feature = "stage-profiling")]
     info!(
-        "CRCL PROFILE TARGET PASS: profiled and control minute pairs finalized without source loss"
+        "CRCL RECOVERY TARGET PASS: injected overrun, two recorder pauses, aligned UTC recovery, paired five-second recordings"
     );
-    #[cfg(feature = "profile-control")]
-    info!("CRCL PROFILE CONTROL PASS: detailed probes compiled out; matching minute pair finalized without source loss");
 }
 
 #[embassy_executor::task]

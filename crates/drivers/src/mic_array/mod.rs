@@ -411,6 +411,8 @@ pub struct CaptureState {
     pub started_at_ticks: u64,
     /// Embassy system-time ticks observed when the final DMA channel completed.
     pub completed_at_ticks: u64,
+    /// Completion phase relative to nominal sample rate, for diagnostics only.
+    pub clock_error_ticks: i64,
     pub channel_count: u8,
     /// Number of DMA interrupts observed for the active channel.
     pub dma_interrupt_count: u32,
@@ -419,11 +421,37 @@ pub struct CaptureState {
     pub error: Option<Error>,
 }
 
+/// Latched independently of frame publication: a rapid restart cannot hide
+/// the fault from consumers of the latest-frame watch.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct CaptureFault {
+    pub count: u32,
+    /// bit 0: completion interval, bit 1: DMA counts, bit 2: MDF overrun.
+    pub reasons: u8,
+    pub dma_deltas: [u32; 6],
+    pub filter_status: u32,
+    pub completed_at_ticks: u64,
+    pub interval_ticks: u64,
+    pub clock_error_ticks: i64,
+}
+
+/// Check successive completions, rather than accumulated phase against the
+/// nominal clock. Independent oscillator drift must not cause a false restart
+/// after hours, while a collapsed/missed DMA period must still be rejected.
+#[cfg(any(test, feature = "stm32"))]
+fn completion_on_time(previous: u64, current: u64, half_ticks: u64) -> bool {
+    current
+        .checked_sub(previous)
+        .is_some_and(|elapsed| elapsed.abs_diff(half_ticks) <= (half_ticks / 4).max(1))
+}
+
 /// Static DMA buffers and publication state shared by driver and consumers.
 pub struct MicrophoneResources<const BUFFER: usize, const WATCHERS: usize = DEFAULT_WATCHERS> {
     buffers: UnsafeCell<[[u32; BUFFER]; MAX_MICROPHONES]>,
     state: Watch<CriticalSectionRawMutex, CaptureState, WATCHERS>,
     enabled: Watch<CriticalSectionRawMutex, bool, 1>,
+    fault: Watch<CriticalSectionRawMutex, CaptureFault, 1>,
 }
 
 // DMA and consumers intentionally share this storage. Volatile reads and the
@@ -444,12 +472,22 @@ impl<const BUFFER: usize, const WATCHERS: usize> MicrophoneResources<BUFFER, WAT
                 half: 0,
                 started_at_ticks: 0,
                 completed_at_ticks: 0,
+                clock_error_ticks: 0,
                 channel_count: 0,
                 dma_interrupt_count: 0,
                 filter_status: 0,
                 error: None,
             }),
             enabled: Watch::new_with(true),
+            fault: Watch::new_with(CaptureFault {
+                count: 0,
+                reasons: 0,
+                dma_deltas: [0; 6],
+                filter_status: 0,
+                completed_at_ticks: 0,
+                interval_ticks: 0,
+                clock_error_ticks: 0,
+            }),
         }
     }
 
@@ -459,6 +497,16 @@ impl<const BUFFER: usize, const WATCHERS: usize> MicrophoneResources<BUFFER, WAT
 
     pub fn state(&self) -> CaptureState {
         self.state.try_get().unwrap_or_default()
+    }
+
+    pub fn capture_fault(&self) -> CaptureFault {
+        self.fault.try_get().unwrap_or_default()
+    }
+
+    #[cfg(feature = "stm32")]
+    fn report_fault(&self, mut fault: CaptureFault) {
+        fault.count = self.capture_fault().count.wrapping_add(1);
+        self.fault.sender().send(fault);
     }
 
     pub fn set_enabled(&self, enabled: bool) {
@@ -499,6 +547,21 @@ impl<const BUFFER: usize> MicrophoneFrame<'_, BUFFER> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completion_guard_tolerates_long_term_clock_drift_but_rejects_collapsed_dma() {
+        let start = 2_000_000u64;
+        let mut previous = start;
+        // 24 h at +10 ppm: almost a second of cumulative phase, with no lost DMA.
+        for n in 1..=864_000u64 {
+            let current = start + n * 100_001;
+            assert!(completion_on_time(previous, current, 100_000));
+            previous = current;
+        }
+        assert!(!completion_on_time(previous, previous + 200_000, 100_000));
+        assert!(!completion_on_time(previous, previous - 1, 100_000));
+        assert!(!completion_on_time(previous, previous + 10_000, 100_000));
+    }
 
     #[test]
     fn defaults_match_the_adr() {

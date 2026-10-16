@@ -352,8 +352,11 @@ try {
     # They are persisted once the bounded monitoring session finishes.
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
+    # Programming a large image can take longer than a short monitoring
+    # window. Start that window with target output, never mid-download.
+    $monitorStarted = $false
     $deadline = if ($MonitorSeconds -gt 0) {
-        [DateTime]::UtcNow.AddSeconds($MonitorSeconds)
+        [DateTime]::UtcNow.AddSeconds([Math]::Max($MonitorSeconds, 180))
     }
     else {
         [DateTime]::MaxValue
@@ -366,6 +369,12 @@ try {
         $targetChunk = Read-NewText -Path $targetLog -Offset ([ref]$targetOffset)
         if ($targetChunk) {
             $targetHadOutput = $true
+            if (-not $monitorStarted) {
+                $monitorStarted = $true
+                if ($MonitorSeconds -gt 0) {
+                    $deadline = [DateTime]::UtcNow.AddSeconds($MonitorSeconds)
+                }
+            }
             if (-not $QuietTargetOutput) {
                 Write-Host -NoNewline $targetChunk
             }
@@ -426,7 +435,7 @@ try {
     if (Test-Path -LiteralPath $targetLog) {
         Copy-Item -LiteralPath $targetLog -Destination $latestTargetLog -Force
         if ($null -ne $buildRecord) {
-            $targetText = Get-Content -LiteralPath $targetLog -Raw
+            $targetText = [string](Get-Content -LiteralPath $targetLog -Raw)
             $runtimeCrcMatch = [regex]::Match(
                 $targetText,
                 'runtime_crc32=Known\((?<crc>(?:0x)?[0-9A-Fa-f]+)\)'
@@ -460,6 +469,11 @@ try {
     if ($Until -and -not $matchedUntil) {
         [Console]::Error.WriteLine("Firmware output did not match -Until '$Until'. See $sessionDirectory")
         exit 4
+    }
+
+    if ($stoppedByScript -and -not $targetHadOutput -and -not $DryRun) {
+        [Console]::Error.WriteLine("No target output within the startup timeout; firmware startup is unverified. See $sessionDirectory")
+        exit 5
     }
 
     if ($matchedUntil) {

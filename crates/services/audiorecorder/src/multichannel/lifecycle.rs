@@ -1,6 +1,6 @@
 use super::*;
 use crate::crcl::{Completion, Header, TimeAnchor};
-use crate::{container::flac_comment, RecordingMetadata};
+use crate::{RecordingMetadata, container::flac_comment};
 use core::fmt::Write;
 use heapless::String;
 
@@ -39,6 +39,13 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         source_frame: u64,
         ticks: u64,
     ) -> Result<(), AudioRecorderError<S::Error>> {
+        let started = embassy_time::Instant::now();
+        self.lifecycle.backlog_before_max_samples = self
+            .lifecycle
+            .backlog_before_max_samples
+            .max(self.reader.stats().available_samples);
+        self.lifecycle.first_sample_ticks = ticks;
+        self.lifecycle.first_source_frame = source_frame;
         let start = self.started_utc.ok_or(AudioRecorderError::NotStarted)?;
         let end = UtcTimestamp::new(
             start
@@ -198,6 +205,14 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             .append_audio(spatial, &self.buffers.spatial_output[..spatial_len])
             .await
             .map_err(AudioRecorderError::Storage)?;
+        self.lifecycle.open_max_us = self
+            .lifecycle
+            .open_max_us
+            .max(started.elapsed().as_micros());
+        self.lifecycle.backlog_after_max_samples = self
+            .lifecycle
+            .backlog_after_max_samples
+            .max(self.reader.stats().available_samples);
         Ok(())
     }
     fn byte_budget(&self, frames: usize) -> Result<u64, AudioRecorderError<S::Error>> {
@@ -231,10 +246,20 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         if self.reference_handle.is_none() {
             return Ok(());
         }
+        let started = embassy_time::Instant::now();
+        self.lifecycle.backlog_before_max_samples = self
+            .lifecycle
+            .backlog_before_max_samples
+            .max(self.reader.stats().available_samples);
         if self.pcm_frames != 0 {
             self.flush_block().await?;
         }
+        let reference_started = embassy_time::Instant::now();
         self.flush_reference().await?;
+        self.lifecycle.final_reference_max_us = self
+            .lifecycle
+            .final_reference_max_us
+            .max(reference_started.elapsed().as_micros());
         if self.reference_frames != self.spatial.frames() as usize
             || self.frames_accepted != self.reference_frames
         {
@@ -287,6 +312,15 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         self.storage
             .finish_audio(side)
             .await
-            .map_err(AudioRecorderError::Storage)
+            .map_err(AudioRecorderError::Storage)?;
+        self.lifecycle.finish_max_us = self
+            .lifecycle
+            .finish_max_us
+            .max(started.elapsed().as_micros());
+        self.lifecycle.backlog_after_max_samples = self
+            .lifecycle
+            .backlog_after_max_samples
+            .max(self.reader.stats().available_samples);
+        Ok(())
     }
 }

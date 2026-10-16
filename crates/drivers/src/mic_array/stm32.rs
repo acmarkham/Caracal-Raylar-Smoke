@@ -2,25 +2,25 @@
 
 use core::future::Future;
 use core::marker::PhantomPinned;
-use core::pin::{pin, Pin};
+use core::pin::{Pin, pin};
 use core::ptr;
-use core::sync::atomic::{fence, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering, fence};
 
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
+use embassy_stm32::Peri;
 use embassy_stm32::dma::linked_list::{RunMode, Table};
 use embassy_stm32::dma::{Channel, Dir, ReadableRingBuffer, TransferOptions};
 use embassy_stm32::gpio::{AfType, AnyPin, Flex, OutputType, Pull, Speed};
 use embassy_stm32::pac::{self, rcc::vals::Mdfsel};
 use embassy_stm32::peripherals::{PB8, PC2, PD3, PD6, PE4, PE7};
-use embassy_stm32::Peri;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Instant, Timer, TICK_HZ};
+use embassy_time::{Duration, Instant, TICK_HZ, Timer};
 
 use super::stm32_config::*;
 use super::{
-    cic_output_bits, BitDepth, CaptureState, Decimation, Error, MdfKernelClock, MicrophoneConfig,
-    MicrophoneMode, MicrophoneResources, ReshapeFilter, SamplePacking, SincFilter,
+    BitDepth, CaptureState, Decimation, Error, MdfKernelClock, MicrophoneConfig, MicrophoneMode,
+    MicrophoneResources, ReshapeFilter, SamplePacking, SincFilter, cic_output_bits,
 };
 
 struct InterruptTimestamp {
@@ -420,6 +420,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
         };
         let mut running = false;
         let mut started_at_ticks = 0;
+        let mut previous_completion_ticks = 0;
         let mut sequence = 0u64;
         let mut previous = [0; 6];
         loop {
@@ -444,6 +445,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                 let _ = completion.try_take();
                 previous = array_counts();
                 started_at_ticks = Instant::now().as_ticks();
+                previous_completion_ticks = started_at_ticks;
                 sequence = 0;
                 enable_filters(self.config.requested.mode);
                 publisher.send(CaptureState {
@@ -457,7 +459,8 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
             if let Either::First(_) = select(enabled.changed(), completion.wait()).await {
                 continue;
             }
-            let _capture_profile = raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::CaptureCheck);
+            let _capture_profile =
+                raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::CaptureCheck);
             let counts = array_counts();
             let completed_at_ticks = if count == 1 {
                 DMA0_INTERRUPT_TICKS.read()
@@ -465,6 +468,8 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                 DMA5_INTERRUPT_TICKS.read()
             };
             let mut valid = true;
+            let mut reasons = 0u8;
+            let mut dma_deltas = [0; 6];
             let mut status = 0;
             let half_ticks =
                 (BUFFER as u64 / 2 * TICK_HZ) / u64::from(self.config.actual_sample_rate_hz);
@@ -472,18 +477,35 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                 started_at_ticks.saturating_add((sequence + 1).saturating_mul(half_ticks));
             // Sticky DMA flags cannot count arbitrarily many events while an
             // IRQ is masked. The capture clock also detects a collapsed loss.
-            valid &= completed_at_ticks.abs_diff(expected_ticks) <= (half_ticks / 4).max(1);
+            let clock_error_ticks = if completed_at_ticks >= expected_ticks {
+                (completed_at_ticks - expected_ticks).min(i64::MAX as u64) as i64
+            } else {
+                -((expected_ticks - completed_at_ticks).min(i64::MAX as u64) as i64)
+            };
+            if !super::completion_on_time(previous_completion_ticks, completed_at_ticks, half_ticks)
+            {
+                reasons |= 1;
+                valid = false;
+            }
             for index in 0..count {
-                valid &= counts[index].wrapping_sub(previous[index]) == 1;
+                dma_deltas[index] = counts[index].wrapping_sub(previous[index]);
+                if dma_deltas[index] != 1 {
+                    reasons |= 2;
+                    valid = false;
+                }
                 let current = filter_status(index);
                 status |= current;
                 // CKAB flags belong to the serial interfaces; only 0..3 are
                 // connected in the six-filter mapping. Keep them diagnostic.
                 // Actual data admission requires all six independent DMA advances.
-                valid &= current & (DOVRF | RFOVRF) == 0;
+                if current & (DOVRF | RFOVRF) != 0 {
+                    reasons |= 4;
+                    valid = false;
+                }
             }
             previous = counts;
             if valid {
+                previous_completion_ticks = completed_at_ticks;
                 sequence += 1;
                 fence(Ordering::Acquire);
                 publisher.send(CaptureState {
@@ -492,12 +514,22 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                     half: ((sequence - 1) & 1) as u8,
                     started_at_ticks,
                     completed_at_ticks,
+                    clock_error_ticks,
                     channel_count: count as u8,
                     dma_interrupt_count: counts[count - 1],
                     filter_status: status,
                     error: None,
                 });
             } else {
+                self.resources.report_fault(super::CaptureFault {
+                    count: 0,
+                    reasons,
+                    dma_deltas,
+                    filter_status: status,
+                    completed_at_ticks,
+                    interval_ticks: completed_at_ticks.saturating_sub(previous_completion_ticks),
+                    clock_error_ticks,
+                });
                 #[cfg(feature = "defmt")]
                 defmt::warn!(
                     "array capture discontinuity counts={:?} status={=u32:#010x}",
@@ -509,6 +541,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize> Stm32MicrophoneDriver<'d, B
                     sequence,
                     started_at_ticks,
                     completed_at_ticks,
+                    clock_error_ticks,
                     channel_count: count as u8,
                     dma_interrupt_count: counts[count - 1],
                     filter_status: status,
@@ -641,6 +674,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
                         dma_interrupt_count,
                         filter_status,
                         error: None,
+                        clock_error_ticks: 0,
                     });
                 }
                 missed => {
@@ -687,6 +721,7 @@ impl<'d, const BUFFER: usize, const WATCHERS: usize>
                         dma_interrupt_count,
                         filter_status,
                         error: Some(Error::Dma),
+                        clock_error_ticks: 0,
                     });
                 }
             }

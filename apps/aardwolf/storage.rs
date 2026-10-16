@@ -9,6 +9,23 @@ use raylar_storage_service::{
 use raylar_time_service::UtcTimestamp;
 
 use crate::common;
+mod metrics;
+use embassy_time::Instant;
+use metrics::Op;
+pub use metrics::{AUDIO_BACKEND_BYTES, AUDIO_FILES_CLOSED, diagnostics_task};
+
+// Keep lock wait separate from backend execution, including failed calls.
+macro_rules! timed_storage {
+    ($shared:expr, $op:expr, $service:ident, $body:block) => {{
+        let waiting = Instant::now();
+        let mut $service = $shared.inner.lock().await;
+        let wait_us = waiting.elapsed().as_micros();
+        let executing = Instant::now();
+        let result = async { $body }.await;
+        metrics::record($op, wait_us, executing.elapsed().as_micros());
+        result
+    }};
+}
 #[cfg(not(feature = "hexaphonic"))]
 use crate::policy;
 
@@ -108,18 +125,54 @@ impl SharedStorage {
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        flag_error(self.inner.lock().await.write(stream, bytes).await)
+        flag_error(timed_storage!(self, Op::LogWrite, service, {
+            service.write(stream, bytes).await
+        }))
+    }
+    async fn write_audio(
+        &self,
+        stream: StreamHandle,
+        bytes: &[u8],
+    ) -> Result<(), StorageServiceError<BackendError>> {
+        flag_error(timed_storage!(self, Op::Write, service, {
+            let before = service.pending_bytes();
+            let result = service.write(stream, bytes).await;
+            if result.is_ok() {
+                let appended = before + bytes.len() as u64 - service.pending_bytes();
+                AUDIO_BACKEND_BYTES.fetch_add(appended as u32, Ordering::Relaxed);
+            }
+            result
+        }))
     }
     pub async fn finish(
         &self,
         stream: StreamHandle,
+        reference: bool,
     ) -> Result<
         (),
         StorageServiceError<
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        flag_error(self.inner.lock().await.finish(stream).await)
+        flag_error(timed_storage!(
+            self,
+            if reference {
+                Op::CloseReference
+            } else {
+                Op::CloseCompanion
+            },
+            service,
+            {
+                let before = service.pending_bytes();
+                let result = service.finish(stream).await;
+                if result.is_ok() {
+                    AUDIO_BACKEND_BYTES
+                        .fetch_add((before - service.pending_bytes()) as u32, Ordering::Relaxed);
+                    AUDIO_FILES_CLOSED.fetch_add(1, Ordering::Relaxed);
+                }
+                result
+            }
+        ))
     }
     pub async fn rewrite(
         &self,
@@ -132,7 +185,15 @@ impl SharedStorage {
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        flag_error(self.inner.lock().await.rewrite(stream, offset, bytes).await)
+        flag_error(timed_storage!(self, Op::Rewrite, service, {
+            let before = service.pending_bytes();
+            let result = service.rewrite(stream, offset, bytes).await;
+            if result.is_ok() {
+                AUDIO_BACKEND_BYTES
+                    .fetch_add((before - service.pending_bytes()) as u32, Ordering::Relaxed);
+            }
+            result
+        }))
     }
     pub async fn flush(
         &self,
@@ -143,7 +204,9 @@ impl SharedStorage {
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        flag_error(self.inner.lock().await.flush(stream).await)
+        flag_error(timed_storage!(self, Op::LogFlush, service, {
+            service.flush(stream).await
+        }))
     }
     pub async fn checkpoint(
         &self,
@@ -154,13 +217,24 @@ impl SharedStorage {
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        flag_error(self.inner.lock().await.checkpoint(stream).await)
+        flag_error(timed_storage!(self, Op::LogCheckpoint, service, {
+            service.checkpoint(stream).await
+        }))
     }
 }
 
 #[derive(Clone, Copy)]
 pub struct RecorderStorage {
     pub shared: &'static SharedStorage,
+    reference: Option<StreamHandle>,
+}
+impl RecorderStorage {
+    pub fn new(shared: &'static SharedStorage) -> Self {
+        Self {
+            shared,
+            reference: None,
+        }
+    }
 }
 impl RecordingStorage for RecorderStorage {
     type Error = StorageServiceError<
@@ -168,21 +242,22 @@ impl RecordingStorage for RecorderStorage {
     >;
     type Handle = StreamHandle;
     async fn admit_audio_bytes(&mut self, bytes: u64) -> Result<(), Self::Error> {
-        let mut service = self.shared.inner.lock().await;
-        let (_, free, cluster) =
-            flag_error(service.space_info().await)?.ok_or(StorageServiceError::InvalidConfig)?;
-        let required = crate::config::LOG_RESERVE_BYTES
-            .saturating_add(bytes)
-            .saturating_add(u64::from(cluster.max(1)) * 2)
-            .saturating_add(service.pending_bytes());
-        if free < required {
-            STORAGE_FLAGS.fetch_or(
-                raylar_radio_service::heartbeat_v4::STORAGE_FULL,
-                Ordering::Relaxed,
-            );
-            return Err(StorageServiceError::OutOfSpace);
-        }
-        Ok(())
+        timed_storage!(self.shared, Op::Admit, service, {
+            let (_, free, cluster) = flag_error(service.space_info().await)?
+                .ok_or(StorageServiceError::InvalidConfig)?;
+            let required = crate::config::LOG_RESERVE_BYTES
+                .saturating_add(bytes)
+                .saturating_add(u64::from(cluster.max(1)) * 2)
+                .saturating_add(service.pending_bytes());
+            if free < required {
+                STORAGE_FLAGS.fetch_or(
+                    raylar_radio_service::heartbeat_v4::STORAGE_FULL,
+                    Ordering::Relaxed,
+                );
+                return Err(StorageServiceError::OutOfSpace);
+            }
+            Ok(())
+        })
     }
     async fn begin_audio_stream(
         &mut self,
@@ -194,18 +269,30 @@ impl RecordingStorage for RecorderStorage {
         // Keep mono admission in begin_audio; hexaphonic calls generic creation here.
         #[cfg(feature = "hexaphonic")]
         {
-            flag_error(
-                self.shared
-                    .inner
-                    .lock()
-                    .await
-                    .begin_new_audio_with_suffix_at(layout, utc, suffix)
-                    .await,
-            )
+            let handle = flag_error(timed_storage!(
+                self.shared,
+                if suffix == "CRCL" {
+                    Op::OpenCompanion
+                } else {
+                    Op::OpenReference
+                },
+                service,
+                {
+                    service
+                        .begin_new_audio_with_suffix_at(layout, utc, suffix)
+                        .await
+                }
+            ))?;
+            if suffix != "CRCL" {
+                self.reference = Some(handle);
+            }
+            Ok(handle)
         }
         #[cfg(not(feature = "hexaphonic"))]
         {
-            self.shared.begin_audio(layout, utc, suffix).await
+            let handle = self.shared.begin_audio(layout, utc, suffix).await?;
+            self.reference = Some(handle);
+            Ok(handle)
         }
     }
     async fn append_audio(
@@ -213,10 +300,14 @@ impl RecordingStorage for RecorderStorage {
         stream: StreamHandle,
         bytes: &[u8],
     ) -> Result<(), Self::Error> {
-        self.shared.write(stream, bytes).await
+        self.shared.write_audio(stream, bytes).await
     }
     async fn finish_audio(&mut self, stream: StreamHandle) -> Result<(), Self::Error> {
-        self.shared.finish(stream).await
+        let reference = self.reference == Some(stream);
+        if reference {
+            self.reference = None;
+        }
+        self.shared.finish(stream, reference).await
     }
     async fn rewrite_audio(
         &mut self,

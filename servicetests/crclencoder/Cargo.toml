@@ -45,6 +45,7 @@ cortex-m-rt.workspace = true
 noise-floor = []
 sd-recording = []
 laboratory-time = ["sd-recording"]
+recovery-test = ["laboratory-time", "cheap-crcl"]
 stage-profiling = ["laboratory-time", "raylar-stage-profiling/detail"]
 profile-control = ["laboratory-time", "raylar-stage-profiling/dwt"]
 cheap-crcl = []

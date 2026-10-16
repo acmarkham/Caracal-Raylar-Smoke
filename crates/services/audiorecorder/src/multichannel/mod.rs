@@ -48,6 +48,19 @@ pub struct HexaphonicBuffers<'a> {
     pub reference_output: &'a mut [u8],
 }
 
+/// Lifecycle wall times include executor and storage mutex waits. Reset only
+/// when taken by diagnostics, so rotation/reset does not hide slow operations.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LifecycleMetrics {
+    pub open_max_us: u64,
+    pub finish_max_us: u64,
+    pub final_reference_max_us: u64,
+    pub backlog_before_max_samples: usize,
+    pub backlog_after_max_samples: usize,
+    pub first_sample_ticks: u64,
+    pub first_source_frame: u64,
+}
+
 pub struct HexaphonicRecorder<
     'a,
     S: RecordingStorage,
@@ -80,6 +93,7 @@ pub struct HexaphonicRecorder<
     capture_origin: u64,
     first_ticks: u64,
     last_checkpoint_second: u64,
+    lifecycle: LifecycleMetrics,
 }
 
 impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
@@ -157,6 +171,7 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             capture_origin: 0,
             first_ticks: 0,
             last_checkpoint_second: 0,
+            lifecycle: LifecycleMetrics::default(),
         })
     }
     pub fn storage(&self) -> &S {
@@ -164,6 +179,10 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
     }
     pub fn storage_mut(&mut self) -> &mut S {
         &mut self.storage
+    }
+
+    pub fn take_lifecycle_metrics(&mut self) -> LifecycleMetrics {
+        core::mem::take(&mut self.lifecycle)
     }
     pub async fn start_at(
         &mut self,

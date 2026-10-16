@@ -1,6 +1,6 @@
 use super::*;
-use crate::crcl::crc32c;
 use crate::RecordingMetadata;
+use crate::crcl::crc32c;
 use raylar_audiosource::AudioFormat;
 use raylar_storage_service::StorageLayout;
 use std::{
@@ -40,6 +40,7 @@ struct Storage {
     operations: usize,
     fail_at: Option<usize>,
     admitted: Vec<u64>,
+    open_hook: Option<std::boxed::Box<dyn FnMut()>>,
 }
 impl Storage {
     fn operation(&mut self) -> Result<(), ()> {
@@ -66,6 +67,9 @@ impl RecordingStorage for Storage {
         suffix: &str,
     ) -> Result<usize, ()> {
         self.operation()?;
+        if let Some(hook) = &mut self.open_hook {
+            hook();
+        }
         self.files.push(Vec::new());
         self.starts.push(utc);
         self.suffixes.push(suffix.into());
@@ -431,4 +435,118 @@ fn initial_alignment_can_skip_multiple_packets_without_consuming_reference_frame
         .collect();
     assert_eq!(&recorder.storage().files[0][1024..], expected);
     assert_eq!(end(&recorder.storage().files[1]).0, 128);
+}
+
+#[test]
+fn repeated_minute_restart_preserves_utc_when_capture_continues_during_wait() {
+    let source = AudioSource::<6144, 1>::new(AudioFormat::new(16000, 6, 1000000));
+    let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+        ([0; 1536], [0; 4096], [0; 1024], [0; 4128]);
+    let mut r = HexaphonicRecorder::new(
+        &source,
+        Storage::default(),
+        Metadata { mapped: true },
+        config(16000, 60, false),
+        HexaphonicBuffers {
+            pcm: &mut pcm,
+            spatial_output: &mut spatial,
+            reference_pcm: &mut ref_pcm,
+            reference_output: &mut ref_out,
+        },
+    )
+    .unwrap();
+    let mut published = 0;
+    for minute in 0..4 {
+        let target = minute * 60 * 16000;
+        // The application must publish even while no recorder is consuming.
+        // Overruns during this intentional pause are cleared by start_at.
+        while published < target {
+            let n = (target - published).min(256);
+            source
+                .write(
+                    &samples(published % 16000, n),
+                    published as u64 * 1000000 / 16000,
+                )
+                .unwrap();
+            published += n;
+        }
+        block_on(r.start_at(UtcTimestamp::new(1700000040 + minute as i64 * 60, 0).unwrap()))
+            .unwrap();
+        let input = samples(published % 16000, 256);
+        source.write(&input, minute as u64 * 60_000_000).unwrap();
+        published += 256;
+        let progress = block_on(r.record_next()).unwrap();
+        assert_eq!(progress.encoded_frames, 256);
+        assert_eq!(r.first_ticks, minute as u64 * 60_000_000);
+        assert_eq!(source.timestamp_error_ticks(), 0);
+        block_on(r.stop()).unwrap();
+        let reference = &r.storage().files[minute * 2];
+        let raw: Vec<_> = input
+            .iter()
+            .step_by(6)
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        assert_eq!(&reference[1024..], raw);
+        assert_eq!(end(&r.storage().files[minute * 2 + 1]).0, 256);
+    }
+}
+
+#[test]
+fn slow_open_overrun_closes_prefix_and_capture_restart_recovers_without_stale_time() {
+    let source = Arc::new(AudioSource::<6144, 1>::new(AudioFormat::new(
+        16000, 6, 1000000,
+    )));
+    let producer = source.clone();
+    let mut injected = false;
+    let storage = Storage {
+        open_hook: Some(std::boxed::Box::new(move || {
+            if !injected {
+                injected = true;
+                // Stand in for DMA packets arriving during a slow filesystem open.
+                for i in 0..4 {
+                    let n = 256 + i * 1600;
+                    producer
+                        .write(&samples(n, 1600), n as u64 * 1000000 / 16000)
+                        .unwrap();
+                }
+            }
+        })),
+        ..Storage::default()
+    };
+    let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+        ([0; 1536], [0; 4096], [0; 1024], [0; 4128]);
+    let mut r = HexaphonicRecorder::new(
+        &source,
+        storage,
+        Metadata { mapped: true },
+        config(16000, 60, false),
+        HexaphonicBuffers {
+            pcm: &mut pcm,
+            spatial_output: &mut spatial,
+            reference_pcm: &mut ref_pcm,
+            reference_output: &mut ref_out,
+        },
+    )
+    .unwrap();
+    block_on(r.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+    source.write(&samples(0, 256), 0).unwrap();
+    assert_eq!(block_on(r.record_next()).unwrap().encoded_frames, 256);
+    assert!(
+        matches!(block_on(r.record_next()), Err(AudioRecorderError::Discontinuity { dropped_samples }) if dropped_samples > 0)
+    );
+    assert_eq!(end(&r.storage().files[1]).0, 256);
+    assert_eq!(end(&r.storage().files[1]).1, 4);
+    block_on(r.stop()).unwrap();
+
+    // A hardware restart during a recorder pause must establish a fresh epoch.
+    source.report_discontinuity(9600);
+    source.write(&samples(0, 256), 179_984_000).unwrap();
+    block_on(r.start_at(UtcTimestamp::new(1700000220, 0).unwrap())).unwrap();
+    source.write(&samples(256, 256), 180_000_000).unwrap();
+    assert_eq!(block_on(r.record_next()).unwrap().encoded_frames, 256);
+    assert_eq!(r.first_ticks, 180_000_000);
+    assert_eq!(source.timestamp_error_ticks(), 0);
+    block_on(r.stop()).unwrap();
+    assert_eq!(end(&r.storage().files[3]).0, 256);
+    assert_eq!(end(&r.storage().files[3]).1, 2);
 }

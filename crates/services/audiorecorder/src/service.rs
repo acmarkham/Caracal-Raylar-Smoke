@@ -1,16 +1,16 @@
 mod flac;
 
-use embassy_time::{with_timeout, Duration};
+use embassy_time::{Duration, with_timeout};
 use raylar_audiosource::{AudioSource, Error as AudioSourceError, Reader, ReaderStart};
 use raylar_storage_service::StorageLayout;
 use raylar_time_service::UtcTimestamp;
 
-use crate::container::{flac_comment, Container};
+use crate::container::{Container, flac_comment};
 use crate::wav::WavError;
 use crate::{BorrowedBuffers, OwnedBuffers, RecorderBuffers};
 use crate::{MetadataSource, RecordingStorage, WavContainer};
 use raylar_flac_encoder_service::{
-    frame_capacity, Config as FlacConfig, Encoder, Error as FlacError,
+    Config as FlacConfig, Encoder, Error as FlacError, frame_capacity,
 };
 
 /// Amortises SD/filesystem call latency while reserving only 256 ms of mono
@@ -52,6 +52,9 @@ pub enum AudioRecorderError<E> {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct RecorderProgress {
     pub pcm_samples: usize,
+    /// Frames encoded into both paired streams during this call. May be zero
+    /// while aligning or collecting a partial block; not a durability promise.
+    pub encoded_frames: usize,
     pub dropped_samples: u64,
     pub rotated: bool,
     /// Wall time spent analyzing and encoding the frame, including executor yields.
@@ -96,14 +99,14 @@ pub struct AudioRecorder<
 }
 
 impl<
-        'a,
-        S,
-        M,
-        const AUDIO_CAPACITY: usize,
-        const READERS: usize,
-        const ENCODE_BYTES: usize,
-        const PCM_SAMPLES: usize,
-    > AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES>
+    'a,
+    S,
+    M,
+    const AUDIO_CAPACITY: usize,
+    const READERS: usize,
+    const ENCODE_BYTES: usize,
+    const PCM_SAMPLES: usize,
+> AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES>
 where
     S: RecordingStorage,
     M: MetadataSource,
@@ -169,15 +172,15 @@ where
 }
 
 impl<
-        'a,
-        S,
-        M,
-        const AUDIO_CAPACITY: usize,
-        const READERS: usize,
-        const ENCODE_BYTES: usize,
-        const PCM_SAMPLES: usize,
-        W,
-    > AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES, W>
+    'a,
+    S,
+    M,
+    const AUDIO_CAPACITY: usize,
+    const READERS: usize,
+    const ENCODE_BYTES: usize,
+    const PCM_SAMPLES: usize,
+    W,
+> AudioRecorder<'a, S, M, AUDIO_CAPACITY, READERS, ENCODE_BYTES, PCM_SAMPLES, W>
 where
     S: RecordingStorage,
     M: MetadataSource,
