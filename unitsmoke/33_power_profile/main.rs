@@ -487,6 +487,8 @@ async fn storage_driver(sd: SdCard<'static>) -> Result<BoardStorage, ()> {
     let card = StorageDevice::new_sd_card(sdmmc, &mut cmd_block, SD_TARGET_FREQ)
         .await
         .map_err(|_| ())?;
+    // Embassy 0.6 disables PWRSAV. Enable idle clock gating after card initialization.
+    embassy_stm32::pac::SDMMC1.clkcr().modify(|w| w.set_pwrsav(true));
     let mut device = Stm32SdBlockDevice::new(card);
     let identity = device.device_identity();
     let volume = detect_exfat_volume(&mut device).await.map_err(|_| ())?;

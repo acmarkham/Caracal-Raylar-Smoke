@@ -582,6 +582,9 @@ async fn storage_driver_inner(
         }
     };
 
+    // Embassy 0.6 disables PWRSAV. Enable idle clock gating after card initialization.
+    embassy_stm32::pac::SDMMC1.clkcr().modify(|w| w.set_pwrsav(true));
+
     info!("SD init phase 5: wrapping card as a 512-byte block device");
     let mut device = Stm32SdBlockDevice::new(card);
     let device_identity = device.device_identity();

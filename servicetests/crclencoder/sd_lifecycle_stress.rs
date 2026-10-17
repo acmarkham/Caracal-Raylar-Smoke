@@ -293,6 +293,8 @@ async fn main(_spawner: Spawner) {
     let card = unwrap!(
         StorageDevice::new_sd_card(sdmmc, &mut cmd_block, embassy_stm32::time::mhz(24)).await
     );
+    // Embassy 0.6 disables PWRSAV. Enable idle clock gating after card initialization.
+    embassy_stm32::pac::SDMMC1.clkcr().modify(|w| w.set_pwrsav(true));
     let mut device = Stm32SdBlockDevice::new(card);
     let identity = device.device_identity();
     info!(
