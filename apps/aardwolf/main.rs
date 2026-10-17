@@ -182,16 +182,18 @@ async fn main(spawner: Spawner) -> ! {
     }
     info!("Aardwolf boot node={} boot={}", node.0, boot);
     info!(
-        "Aardwolf radio_enabled={} sd_diagnostics={}",
+        "Aardwolf radio_enabled={} sd_diagnostics={} radio_diagnostics={}",
         config::RADIO_ENABLED,
-        cfg!(feature = "sd-diagnostics")
+        cfg!(feature = "sd-diagnostics"),
+        cfg!(feature = "radio-diagnostics")
     );
     let _ = log_info!(
         system_log,
-        "comparison radio_enabled={} radio_reset_held={} sd_diagnostics={} sd_diagnostic_queue=16",
+        "comparison radio_enabled={} radio_reset_held={} sd_diagnostics={} radio_diagnostics={} sd_diagnostic_queue=16 radio_diagnostic_queue=32",
         config::RADIO_ENABLED,
         !config::RADIO_ENABLED,
-        cfg!(feature = "sd-diagnostics")
+        cfg!(feature = "sd-diagnostics"),
+        cfg!(feature = "radio-diagnostics")
     );
 
     common::start_time_stopped_with_phase_qualified_duty_cycle(

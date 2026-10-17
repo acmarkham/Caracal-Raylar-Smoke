@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
+diagnostics = ["raylar-drivers/radio-diagnostics"]
 defmt = [
     "dep:defmt",
     "embassy-sync/defmt",

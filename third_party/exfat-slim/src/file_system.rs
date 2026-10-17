@@ -614,7 +614,7 @@ where
                     self.fat
                         .set(&mut self.dev, touched, run.first_cluster, NO_CLUSTER_ID)
                         .await?;
-                    self.zero_cluster(run.first_cluster, touched).await?;
+                    self.zero_cluster(run.first_cluster).await?;
 
                     let file_details = self
                         .create_file_dir_entry_at(
@@ -659,8 +659,10 @@ where
         data_length: u64,
         timestamp: Option<Timestamp>,
     ) -> ExFatResult<FileDetails, D, SIZE> {
-        let (utf16_name, name_hash) = encode_utf16_and_hash(name, &self.upcase_table)
-            .ok_or(ExFatError::InvalidFileName { reason: "filename exceeds 255 UTF-16 units" })?;
+        let (utf16_name, name_hash) =
+            encode_utf16_and_hash(name, &self.upcase_table).ok_or(ExFatError::InvalidFileName {
+                reason: "filename exceeds 255 UTF-16 units",
+            })?;
         let dir_entry_set_len = calc_dir_entry_set_len(&utf16_name);
         let location = self
             .find_empty_dir_entry_set(directory, dir_entry_set_len)
@@ -671,7 +673,11 @@ where
 
         // write file directory entry set
         let file = FileDirEntry::new(secondary_count, file_attributes, timestamp);
-        dir_entries.push(file.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
+        dir_entries
+            .push(file.serialize())
+            .map_err(|_| ExFatError::InvalidFileName {
+                reason: "directory entry overflow",
+            })?;
 
         // write stream extension directory entry
         let stream_ext = StreamExtensionDirEntry {
@@ -682,7 +688,11 @@ where
             first_cluster,
             data_length,
         };
-        dir_entries.push(stream_ext.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
+        dir_entries
+            .push(stream_ext.serialize())
+            .map_err(|_| ExFatError::InvalidFileName {
+                reason: "directory entry overflow",
+            })?;
 
         // write file name directory entries chunked by 15 characters
         let (chunks, remainder) = utf16_name.as_chunks::<15>();
@@ -691,7 +701,11 @@ where
                 general_secondary_flags: GeneralSecondaryFlags::empty(),
                 file_name: *chunk,
             };
-            dir_entries.push(file_name.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
+            dir_entries
+                .push(file_name.serialize())
+                .map_err(|_| ExFatError::InvalidFileName {
+                    reason: "directory entry overflow",
+                })?;
         }
         if !remainder.is_empty() {
             // any file name ness than 15 characters gets zeros after the name
@@ -700,7 +714,11 @@ where
                 file_name: [0u16; 15],
             };
             file_name.file_name[..remainder.len()].copy_from_slice(remainder);
-            dir_entries.push(file_name.serialize()).map_err(|_| ExFatError::InvalidFileName { reason: "directory entry overflow" })?;
+            dir_entries
+                .push(file_name.serialize())
+                .map_err(|_| ExFatError::InvalidFileName {
+                    reason: "directory entry overflow",
+                })?;
         }
 
         // calculate and update the set_checksum field
@@ -713,7 +731,11 @@ where
         touched.flush(self).await?;
 
         let mut bounded_name = heapless::String::<1024>::new();
-        bounded_name.push_str(name).map_err(|_| ExFatError::InvalidFileName { reason: "decoded filename exceeds capacity" })?;
+        bounded_name
+            .push_str(name)
+            .map_err(|_| ExFatError::InvalidFileName {
+                reason: "decoded filename exceeds capacity",
+            })?;
         let file_details = FileDetails {
             attributes: file_attributes,
             data_length,
@@ -730,9 +752,16 @@ where
     #[bisync]
     pub async fn space_info(&mut self) -> ExFatResult<(u64, u64, u32), D, SIZE> {
         self.mount().await?;
-        let free = self.allocator.free_cluster_count(&mut self.dev, self.fs.cluster_count).await?;
+        let free = self
+            .allocator
+            .free_cluster_count(&mut self.dev, self.fs.cluster_count)
+            .await?;
         let cluster = self.fs.cluster_length;
-        Ok((u64::from(self.fs.cluster_count) * u64::from(cluster), u64::from(free) * u64::from(cluster), cluster))
+        Ok((
+            u64::from(self.fs.cluster_count) * u64::from(cluster),
+            u64::from(free) * u64::from(cluster),
+            cluster,
+        ))
     }
 
     pub fn unmount(self) -> D {
@@ -920,7 +949,7 @@ where
         self.fat
             .set(&mut self.dev, &mut touched, run.first_cluster, END_OF_CHAIN)
             .await?;
-        self.zero_cluster(run.first_cluster, &mut touched).await?;
+        self.zero_cluster(run.first_cluster).await?;
 
         if let Some(details) = directory.file_details.as_mut() {
             details.flags.set(GeneralSecondaryFlags::NoFatChain, false);
@@ -948,19 +977,13 @@ where
     }
 
     #[bisync]
-    async fn zero_cluster(
-        &mut self,
-        cluster_id: u32,
-        touched: &mut impl Touched,
-    ) -> ExFatResult<(), D, SIZE> {
+    async fn zero_cluster(&mut self, cluster_id: u32) -> ExFatResult<(), D, SIZE> {
         let first_sector = self.fs.get_heap_sector_id::<D, SIZE>(cluster_id)?;
-        for offset in 0..self.fs.sectors_per_cluster {
-            let sector_id = first_sector + offset;
-            let slot = self.data_blocks.read_mut(sector_id, &mut self.dev).await?;
-            slot.as_mut_slice().fill(0);
-            touched.insert(TouchedSector::new(TouchedKind::Dir, sector_id));
-        }
-        Ok(())
+        // Persist zeros before publishing directory entries. Direct batched
+        // writes invalidate overlapping cache slots and need no dirty entries.
+        self.data_blocks
+            .zero_blocks(&mut self.dev, first_sector, self.fs.sectors_per_cluster)
+            .await
     }
 
     #[bisync]
@@ -978,7 +1001,11 @@ where
                     "directory entry set ended before its secondary count",
                 ));
             };
-            dir_entries.push(*entry).map_err(|_| ExFatError::InvalidFileName { reason: "too many directory entries" })?;
+            dir_entries
+                .push(*entry)
+                .map_err(|_| ExFatError::InvalidFileName {
+                    reason: "too many directory entries",
+                })?;
         }
 
         let mut stream_ext: StreamExtensionDirEntry = (&dir_entries[1]).into();

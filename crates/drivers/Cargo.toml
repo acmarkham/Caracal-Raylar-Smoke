@@ -14,6 +14,7 @@ defmt = ["dep:defmt", "embassy-sync/defmt", "exfat-slim/defmt"]
 stm32 = ["dep:embassy-stm32", "dep:cortex-m"]
 trustzone-secure = ["stm32", "embassy-stm32/trustzone-secure"]
 storage-diagnostics = []
+radio-diagnostics = []
 
 [dependencies]
 raylar-stage-profiling = { path = "../profiling" }

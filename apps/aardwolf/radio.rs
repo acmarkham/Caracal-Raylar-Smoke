@@ -1,4 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+#[cfg(feature = "radio-diagnostics")]
+#[path = "radio_timing.rs"]
+mod timing;
 use defmt::{error, info, unwrap, warn};
 use embassy_executor::Spawner;
 use embassy_stm32::{
@@ -46,6 +49,8 @@ type BoardRadioService = RadioService<'static, BoardRadio, JOB_DEPTH, EVENT_DEPT
 type Log = LoggerHandle<'static, 384, 32>;
 
 pub fn start(spawner: Spawner, mut rf: EbyteRf<'static>, node: NodeId, boot: u16, log: Log) {
+    #[cfg(feature = "radio-diagnostics")]
+    spawner.spawn(unwrap!(timing::task(log)));
     // Preserve system telemetry for the A/B run, without any RF driver work.
     spawner.spawn(unwrap!(diagnostics_task(log)));
     if !config::RADIO_ENABLED {

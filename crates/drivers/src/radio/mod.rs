@@ -4,6 +4,7 @@
 //! after the DIO9 edge wakes this task, before any SPI transaction.
 
 mod config;
+pub mod diagnostics;
 mod ebyte_e80;
 mod error;
 mod irq;

@@ -360,17 +360,20 @@ where
     }
 
     async fn write_command(&mut self, opcode: u16, args: &[u8]) -> Result<(), BackendError> {
-        let command = opcode.to_be_bytes();
-        let mut status = [0u8; 2];
-        self.spi
-            .transaction(&mut [
-                Operation::Transfer(&mut status, &command),
-                Operation::Write(args),
-            ])
-            .await
-            .map_err(|_| BackendError::Transport(TransportError::Spi))?;
-        self.wait_busy().await?;
-        check_command_status(status[0])
+        super::diagnostics::stage(super::diagnostics::Kind::Command, opcode, async {
+            let command = opcode.to_be_bytes();
+            let mut status = [0u8; 2];
+            self.spi
+                .transaction(&mut [
+                    Operation::Transfer(&mut status, &command),
+                    Operation::Write(args),
+                ])
+                .await
+                .map_err(|_| BackendError::Transport(TransportError::Spi))?;
+            self.wait_busy().await?;
+            check_command_status(status[0])
+        })
+        .await
     }
 
     async fn read_command(&mut self, opcode: u16, response: &mut [u8]) -> Result<(), BackendError> {
@@ -379,16 +382,20 @@ where
     }
 
     async fn read_response(&mut self, response: &mut [u8]) -> Result<(), BackendError> {
-        let mut status = [0u8; 1];
-        self.spi
-            .transaction(&mut [
-                Operation::Transfer(&mut status, &[0]),
-                Operation::Read(response),
-            ])
-            .await
-            .map_err(|_| BackendError::Transport(TransportError::Spi))?;
-        self.wait_busy().await?;
-        check_command_status(status[0])
+        // 0xffff denotes a response phase with no command opcode on the wire.
+        super::diagnostics::stage(super::diagnostics::Kind::Command, 0xffff, async {
+            let mut status = [0u8; 1];
+            self.spi
+                .transaction(&mut [
+                    Operation::Transfer(&mut status, &[0]),
+                    Operation::Read(response),
+                ])
+                .await
+                .map_err(|_| BackendError::Transport(TransportError::Spi))?;
+            self.wait_busy().await?;
+            check_command_status(status[0])
+        })
+        .await
     }
 
     async fn transfer_command(
@@ -396,17 +403,19 @@ where
         opcode: u16,
         response: &mut [u8],
     ) -> Result<(), BackendError> {
-        let command = opcode.to_be_bytes();
-        self.spi
-            .transaction(&mut [Operation::Transfer(response, &command)])
-            .await
-            .map_err(|_| BackendError::Transport(TransportError::Spi))?;
-        self.wait_busy().await
+        super::diagnostics::stage(super::diagnostics::Kind::Command, opcode, async {
+            let command = opcode.to_be_bytes();
+            self.spi
+                .transaction(&mut [Operation::Transfer(response, &command)])
+                .await
+                .map_err(|_| BackendError::Transport(TransportError::Spi))?;
+            self.wait_busy().await
+        })
+        .await
     }
 
     async fn wait_busy(&mut self) -> Result<(), BackendError> {
-        self.busy
-            .wait_for_low()
+        super::diagnostics::stage(super::diagnostics::Kind::Busy, 0, self.busy.wait_for_low())
             .await
             .map_err(|_| BackendError::Transport(TransportError::Busy))
     }

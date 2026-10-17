@@ -158,7 +158,8 @@ where
     }
 
     /// Write a physically contiguous run without splitting it into one device
-    /// transaction per sector. Any cached copies are kept coherent first.
+    /// transaction per sector. Invalidate overlapping cached copies before I/O
+    /// so cancellation or a partial failed write cannot replay stale dirty data.
     #[bisync]
     pub async fn write_blocks(
         &mut self,
@@ -166,13 +167,11 @@ where
         first_sector_id: u32,
         blocks: &[Aligned<D::Align, [u8; SIZE]>],
     ) -> ExFatResult<(), D, SIZE> {
-        for (offset, block) in blocks.iter().enumerate() {
+        for offset in 0..blocks.len() {
             let sector_id = first_sector_id + offset as u32;
             if let Some(index) = self.cache_hit(sector_id) {
-                // We are not interested in the old bytes of this slot and do
-                // not want a later eviction to overwrite the new data.
                 let slot = &mut self.cache[index];
-                slot.blocks[0].copy_from_slice(block.as_slice());
+                slot.is_valid = false;
                 slot.is_dirty = false;
             }
         }
@@ -183,11 +182,33 @@ where
         Ok(())
     }
 
+    /// Initialize directory storage without reading bytes being replaced.
+    /// Uses 8 KiB at 512-byte sectors, never a cluster-sized buffer.
+    #[bisync]
+    pub async fn zero_blocks(
+        &mut self,
+        io: &mut D,
+        first_sector_id: u32,
+        count: u32,
+    ) -> ExFatResult<(), D, SIZE> {
+        const BATCH_BLOCKS: usize = 16;
+        let zeros: [Aligned<D::Align, [u8; SIZE]>; BATCH_BLOCKS] =
+            array::from_fn(|_| Aligned([0u8; SIZE]));
+        let mut offset = 0;
+        while offset < count {
+            let batch = (count - offset).min(BATCH_BLOCKS as u32);
+            self.write_blocks(io, first_sector_id + offset, &zeros[..batch as usize])
+                .await?;
+            offset += batch;
+        }
+        Ok(())
+    }
+
     fn cache_hit(&mut self, sector_id: u32) -> Option<usize> {
         let (left, right) = self.cache.split_at_mut(self.hand);
 
         for slot in right.iter_mut().chain(left) {
-            if slot.sector_id == sector_id {
+            if slot.is_valid && slot.sector_id == sector_id {
                 slot.is_used = true;
                 return Some(self.hand);
             } else {
@@ -256,6 +277,8 @@ mod tests {
     struct DummyBlockDevice {
         blocks: Vec<[u8; BLOCK_SIZE]>,
         write_lengths: Vec<usize>,
+        read_addresses: Vec<u32>,
+        fail_write: bool,
     }
 
     #[only_sync]
@@ -268,7 +291,11 @@ mod tests {
             block_address: u32,
             data: &mut [Aligned<Self::Align, [u8; BLOCK_SIZE]>],
         ) -> Result<(), Self::Error> {
-            data[0].copy_from_slice(&self.blocks[block_address as usize - SECTOR_OFFSET]);
+            self.read_addresses.push(block_address);
+            for (offset, block) in data.iter_mut().enumerate() {
+                block
+                    .copy_from_slice(&self.blocks[block_address as usize - SECTOR_OFFSET + offset]);
+            }
             Ok(())
         }
 
@@ -278,6 +305,11 @@ mod tests {
             data: &[Aligned<Self::Align, [u8; BLOCK_SIZE]>],
         ) -> Result<(), Self::Error> {
             let start = block_address as usize - SECTOR_OFFSET;
+            if self.fail_write {
+                // Emulate a device that changes part of the range, then fails.
+                self.blocks[start].copy_from_slice(data[0].as_slice());
+                return Err(());
+            }
             for (offset, block) in data.iter().enumerate() {
                 self.blocks[start + offset].copy_from_slice(block.as_slice());
             }
@@ -301,6 +333,8 @@ mod tests {
                 [0; BLOCK_SIZE],
             ],
             write_lengths: Vec::new(),
+            read_addresses: Vec::new(),
+            fail_write: false,
         };
         let mut cache = SlotCache::<DummyBlockDevice, BLOCK_SIZE, 4>::new();
 
@@ -329,6 +363,8 @@ mod tests {
                 [0; BLOCK_SIZE],
             ],
             write_lengths: Vec::new(),
+            read_addresses: Vec::new(),
+            fail_write: false,
         };
         let mut cache = SlotCache::<DummyBlockDevice, BLOCK_SIZE, 4>::new();
 
@@ -352,6 +388,8 @@ mod tests {
         let mut io = DummyBlockDevice {
             blocks: vec![[0; BLOCK_SIZE]; 128],
             write_lengths: Vec::new(),
+            read_addresses: Vec::new(),
+            fail_write: false,
         };
         let mut cache = SlotCache::<DummyBlockDevice, BLOCK_SIZE, 2>::new();
         let blocks: [Aligned<aligned::A4, [u8; BLOCK_SIZE]>; 128] =
@@ -362,6 +400,87 @@ mod tests {
         assert_eq!(io.write_lengths, [128]);
         for (index, block) in io.blocks.iter().enumerate() {
             assert_eq!(*block, [index as u8; BLOCK_SIZE]);
+        }
+    }
+
+    #[only_sync]
+    #[test]
+    fn zeroing_batches_without_reads_and_preserves_range_boundaries() {
+        for count in [0u32, 1, 17, 256] {
+            let mut io = DummyBlockDevice {
+                blocks: vec![[0xa5; BLOCK_SIZE]; 258],
+                write_lengths: Vec::new(),
+                read_addresses: Vec::new(),
+                fail_write: false,
+            };
+            let mut cache = SlotCache::<DummyBlockDevice, BLOCK_SIZE, 4>::new();
+            cache.zero_blocks(&mut io, 101, count).unwrap();
+            assert!(io.read_addresses.is_empty());
+            assert_eq!(io.write_lengths.len(), (count as usize).div_ceil(16));
+            assert_eq!(io.write_lengths.iter().sum::<usize>(), count as usize);
+            assert!(io.write_lengths.iter().all(|&n| n <= 16));
+            for (index, block) in io.blocks.iter().enumerate() {
+                assert_eq!(
+                    *block,
+                    if index >= 1 && index <= count as usize {
+                        [0; BLOCK_SIZE]
+                    } else {
+                        [0xa5; BLOCK_SIZE]
+                    }
+                );
+            }
+        }
+    }
+
+    #[only_sync]
+    #[test]
+    fn zeroing_invalidates_dirty_overlaps_and_propagates_failure() {
+        for fail in [false, true] {
+            let mut io = DummyBlockDevice {
+                blocks: vec![[0xa5; BLOCK_SIZE]; 32],
+                write_lengths: Vec::new(),
+                read_addresses: Vec::new(),
+                fail_write: false,
+            };
+            let mut cache = SlotCache::<DummyBlockDevice, BLOCK_SIZE, 4>::new();
+            cache
+                .read_mut(100, &mut io)
+                .unwrap()
+                .as_mut_slice()
+                .fill(0xcc);
+            cache
+                .read_mut(101, &mut io)
+                .unwrap()
+                .as_mut_slice()
+                .fill(0xdd);
+            cache
+                .read_mut(102, &mut io)
+                .unwrap()
+                .as_mut_slice()
+                .fill(0xbb);
+            io.read_addresses.clear();
+            io.fail_write = fail;
+            assert_eq!(cache.zero_blocks(&mut io, 101, 17).is_err(), fail);
+            assert!(io.read_addresses.is_empty());
+            if fail {
+                assert!(io.write_lengths.is_empty());
+            }
+            io.fail_write = false;
+            cache.flush(&mut io).unwrap();
+            assert_eq!(io.blocks[0], [0xcc; BLOCK_SIZE]);
+            assert_eq!(
+                cache.read(101, &mut io).unwrap().as_slice(),
+                &[0; BLOCK_SIZE]
+            );
+            assert_eq!(
+                cache.read(102, &mut io).unwrap().as_slice(),
+                if fail {
+                    &[0xa5; BLOCK_SIZE]
+                } else {
+                    &[0; BLOCK_SIZE]
+                }
+            );
+            assert_eq!(io.blocks[18], [0xa5; BLOCK_SIZE]);
         }
     }
 }

@@ -8,6 +8,7 @@ use embassy_time::{Duration, Instant, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
 use embedded_hal_async::{digital::Wait, spi::SpiDevice};
 use heapless::Vec;
+use raylar_drivers::radio::diagnostics::{self as timing, Op as TimingOp};
 use raylar_drivers::radio::{
     Error as DriverError, GfskPacketStatus, RadioDriver, RxMetrics, TxReport,
 };
@@ -19,6 +20,20 @@ use crate::{
     RadioServiceError, RadioServiceStats, Reservation, ScheduleError, Scheduler,
 };
 
+async fn timed<T>(
+    op: TimingOp,
+    reason: &'static str,
+    job: u32,
+    future: impl core::future::Future<Output = Result<T, RadioDeviceError>>,
+) -> Result<T, RadioDeviceError> {
+    timing::operation(op, reason, job, future, |error| match error {
+        RadioDeviceError::Timeout => "timeout",
+        RadioDeviceError::PacketRejected => "packet_rejected",
+        RadioDeviceError::DeadlineMissed => "deadline_missed",
+        RadioDeviceError::Driver => "driver",
+    })
+    .await
+}
 pub const MAX_FRAME_LEN: usize = u8::MAX as usize;
 pub const DEFAULT_JOB_DEPTH: usize = 8;
 pub const DEFAULT_EVENT_DEPTH: usize = 8;
@@ -311,6 +326,7 @@ impl<const JOBS: usize, const EVENTS: usize, const WATCHERS: usize>
     /// into retained sleep. Re-enable wakes it before accepting fresh jobs.
     pub fn set_enabled(&self, enabled: bool) {
         if self.enabled.try_get() != Some(enabled) {
+            timing::request(enabled);
             self.enabled.sender().send(enabled);
         }
     }
@@ -432,8 +448,12 @@ pub trait RadioDevice {
         buffer: &mut [u8],
     ) -> Result<(usize, DriverPacketMetadata), RadioDeviceError>;
     async fn recover(&mut self) -> Result<(), RadioDeviceError>;
-    async fn sleep(&mut self) -> Result<(), RadioDeviceError> { Ok(()) }
-    async fn wake(&mut self) -> Result<(), RadioDeviceError> { Ok(()) }
+    async fn sleep(&mut self) -> Result<(), RadioDeviceError> {
+        Ok(())
+    }
+    async fn wake(&mut self) -> Result<(), RadioDeviceError> {
+        Ok(())
+    }
 }
 
 impl<SPI, BUSY, RESET, IRQ> RadioDevice for RadioDriver<SPI, BUSY, RESET, IRQ>
@@ -513,6 +533,7 @@ where
 }
 
 fn map_driver_error(error: DriverError) -> RadioDeviceError {
+    timing::driver_error(error);
     match error {
         DriverError::RxTimeout { .. } | DriverError::TxTimeout { .. } => RadioDeviceError::Timeout,
         DriverError::CrcRejected { .. }
@@ -560,14 +581,17 @@ where
     pub async fn run(mut self) -> ! {
         let resources = self.resources;
         let mut enabled = resources.enabled.receiver().expect("sole radio owner");
-        self.initialize_until_ready().await;
+        self.initialize_until_ready("startup").await;
         loop {
             if !resources.enabled.try_get().unwrap_or(true) {
                 self.cancel_all();
-                if self.driver.sleep().await.is_err() {
+                if timed(TimingOp::Sleep, "disabled", 0, self.driver.sleep())
+                    .await
+                    .is_err()
+                {
                     self.state.mode = RadioMode::Recovering;
                     self.publish();
-                    self.initialize_until_ready().await;
+                    self.initialize_until_ready("sleep_failed").await;
                     continue;
                 }
                 self.state.mode = RadioMode::Sleeping;
@@ -575,8 +599,11 @@ where
                 while !resources.enabled.try_get().unwrap_or(true) {
                     enabled.changed().await;
                 }
-                if self.driver.wake().await.is_err() {
-                    self.initialize_until_ready().await;
+                if timed(TimingOp::Wake, "enabled", 0, self.driver.wake())
+                    .await
+                    .is_err()
+                {
+                    self.initialize_until_ready("wake_failed").await;
                 }
                 self.state.mode = RadioMode::Idle;
                 self.publish();
@@ -599,39 +626,42 @@ where
     }
 
     async fn work_once(&mut self) {
-            while let Ok(job) = self.resources.requests.try_receive() {
-                self.accept(job);
-            }
-            if self.pending.is_empty() {
-                let job = self.resources.requests.receive().await;
-                self.accept(job);
-                return;
-            }
+        while let Ok(job) = self.resources.requests.try_receive() {
+            self.accept(job);
+        }
+        if self.pending.is_empty() {
+            let job = self.resources.requests.receive().await;
+            self.accept(job);
+            return;
+        }
 
-            let next = self.next_job_index();
-            let job_id = self.pending[next].id();
-            let prepare_at = self
-                .scheduler
-                .preparation_time(job_id)
-                .unwrap_or_else(Instant::now);
-            if Instant::now() < prepare_at {
-                match select(self.resources.requests.receive(), Timer::at(prepare_at)).await {
-                    Either::First(job) => self.accept(job),
-                    Either::Second(_) => {}
-                }
-                return;
+        let next = self.next_job_index();
+        let job_id = self.pending[next].id();
+        let prepare_at = self
+            .scheduler
+            .preparation_time(job_id)
+            .unwrap_or_else(Instant::now);
+        if Instant::now() < prepare_at {
+            match select(self.resources.requests.receive(), Timer::at(prepare_at)).await {
+                Either::First(job) => self.accept(job),
+                Either::Second(_) => {}
             }
+            return;
+        }
 
-            let job = self.pending.remove(next);
-            self.scheduler.release(job.id());
-            self.execute(job).await;
+        let job = self.pending.remove(next);
+        self.scheduler.release(job.id());
+        self.execute(job).await;
     }
 
-    async fn initialize_until_ready(&mut self) {
+    async fn initialize_until_ready(&mut self, reason: &'static str) {
         loop {
             self.state.mode = RadioMode::Initializing;
             self.publish();
-            if self.driver.initialize().await.is_ok() {
+            if timed(TimingOp::Initialize, reason, 0, self.driver.initialize())
+                .await
+                .is_ok()
+            {
                 self.state.mode = RadioMode::Idle;
                 self.publish();
                 return;
@@ -752,7 +782,9 @@ where
             RadioJob::Receive { job, .. } => &job.profile,
             RadioJob::Cancel { .. } => unreachable!("cancel requests are never executed"),
         };
-        if let Err(error) = self.driver.prepare(profile).await {
+        if let Err(error) =
+            timed(TimingOp::Prepare, "job", id.0, self.driver.prepare(profile)).await
+        {
             self.handle_driver_error(id, error).await;
             return;
         }
@@ -761,10 +793,14 @@ where
             RadioJob::Transmit { job, .. } => {
                 self.state.mode = RadioMode::Transmitting;
                 self.publish();
-                match self
-                    .driver
-                    .transmit(job.earliest, &job.profile, job.payload.as_slice())
-                    .await
+                match timed(
+                    TimingOp::Transmit,
+                    "job",
+                    id.0,
+                    self.driver
+                        .transmit(job.earliest, &job.profile, job.payload.as_slice()),
+                )
+                .await
                 {
                     Ok(timing) => {
                         RadioServiceStats::increment(&mut self.state.stats.frames_tx);
@@ -789,7 +825,14 @@ where
                 self.state.mode = RadioMode::Receiving;
                 self.publish();
                 let mut bytes = [0u8; MAX_FRAME_LEN];
-                match self.driver.receive(job.start, job.end, &mut bytes).await {
+                match timed(
+                    TimingOp::Receive,
+                    "job",
+                    id.0,
+                    self.driver.receive(job.start, job.end, &mut bytes),
+                )
+                .await
+                {
                     Ok((length, metadata)) => match FrameBuffer::from_slice(&bytes[..length]) {
                         Ok(frame) => match frame.frame_type() {
                             Ok(frame_type) => {
@@ -839,6 +882,12 @@ where
     }
 
     async fn handle_driver_error(&mut self, id: JobId, error: RadioDeviceError) {
+        let reason = match error {
+            RadioDeviceError::DeadlineMissed => "deadline_missed",
+            RadioDeviceError::Timeout => "timeout",
+            RadioDeviceError::PacketRejected => "packet_rejected",
+            RadioDeviceError::Driver => "driver",
+        };
         let service_error = match error {
             RadioDeviceError::DeadlineMissed => {
                 RadioServiceStats::increment(&mut self.state.stats.schedule_misses);
@@ -857,9 +906,12 @@ where
         });
         self.state.mode = RadioMode::Recovering;
         self.publish();
-        if self.driver.recover().await.is_err() {
+        if timed(TimingOp::Recover, reason, id.0, self.driver.recover())
+            .await
+            .is_err()
+        {
             RadioServiceStats::increment(&mut self.state.stats.radio_errors);
-            self.initialize_until_ready().await;
+            self.initialize_until_ready("recover_failed").await;
         }
         self.state.current_job = None;
         self.state.mode = RadioMode::Idle;
@@ -882,6 +934,19 @@ where
     }
 
     fn publish(&self) {
+        #[cfg(feature = "diagnostics")]
+        timing::state(
+            match self.state.mode {
+                RadioMode::Initializing => "Initializing",
+                RadioMode::Idle => "Idle",
+                RadioMode::Preparing => "Preparing",
+                RadioMode::Transmitting => "Transmitting",
+                RadioMode::Receiving => "Receiving",
+                RadioMode::Recovering => "Recovering",
+                RadioMode::Sleeping => "Sleeping",
+            },
+            self.state.current_job.map(|id| id.0).unwrap_or(0),
+        );
         let mut state = self.state;
         state.stats.neighbour_count = self.resources.neighbour_count.load(Ordering::Relaxed);
         self.resources.state.sender().send(state);

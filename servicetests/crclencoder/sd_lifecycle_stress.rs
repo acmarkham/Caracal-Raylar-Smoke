@@ -66,6 +66,9 @@ const AUDIO_RETENTION_US: u64 = 1_333_312;
 
 #[cfg(feature = "deep-sd-diagnostics")]
 static DEEP_DIRECTORY_WRITES: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+#[cfg(feature = "deep-sd-diagnostics")]
+static DEEP_DIRECTORY_SECTORS: core::sync::atomic::AtomicU32 =
+    core::sync::atomic::AtomicU32::new(0);
 
 #[cfg(feature = "deep-sd-diagnostics")]
 fn verify_deep(scope: raylar_drivers::storage::diagnostics::Scope, observed: Io) {
@@ -88,6 +91,10 @@ fn verify_deep(scope: raylar_drivers::storage::diagnostics::Scope, observed: Io)
     );
     DEEP_DIRECTORY_WRITES.fetch_max(
         snapshot.directory.writes.calls,
+        core::sync::atomic::Ordering::Relaxed,
+    );
+    DEEP_DIRECTORY_SECTORS.fetch_max(
+        snapshot.directory.writes.sectors,
         core::sync::atomic::Ordering::Relaxed,
     );
 }
@@ -294,7 +301,9 @@ async fn main(_spawner: Spawner) {
         StorageDevice::new_sd_card(sdmmc, &mut cmd_block, embassy_stm32::time::mhz(24)).await
     );
     // Embassy 0.6 disables PWRSAV. Enable idle clock gating after card initialization.
-    embassy_stm32::pac::SDMMC1.clkcr().modify(|w| w.set_pwrsav(true));
+    embassy_stm32::pac::SDMMC1
+        .clkcr()
+        .modify(|w| w.set_pwrsav(true));
     let mut device = Stm32SdBlockDevice::new(card);
     let identity = device.device_identity();
     info!(
@@ -312,7 +321,10 @@ async fn main(_spawner: Spawner) {
     );
     let storage = STORAGE.init(unwrap!(Storage::new(driver, Clock)));
     unwrap!(storage.mount().await);
-    info!("SDSPACE {:?}", unwrap!(storage.space_info().await));
+    let space = unwrap!(storage.space_info().await);
+    info!("SDSPACE {:?}", space);
+    #[cfg(feature = "deep-sd-diagnostics")]
+    let cluster_sectors = space.map(|(_, _, bytes)| bytes / 512).unwrap_or(0);
     // A persistent third stream creates production-like interleaved allocation.
     // It lives in the synthetic test folder, leaving the real syslog untouched.
     let log = unwrap!(
@@ -446,12 +458,19 @@ async fn main(_spawner: Spawner) {
     #[cfg(feature = "deep-sd-diagnostics")]
     {
         let directory_writes = DEEP_DIRECTORY_WRITES.load(core::sync::atomic::Ordering::Relaxed);
+        let directory_sectors = DEEP_DIRECTORY_SECTORS.load(core::sync::atomic::Ordering::Relaxed);
         if START_UTC / 3600 != (START_UTC + i64::from(PAIRS - 1) * 60) / 3600 {
-            assert!(directory_writes >= 256);
+            assert!(cluster_sectors != 0 && directory_sectors >= cluster_sectors);
+            if cluster_sectors > 1 {
+                assert!(
+                    directory_writes < directory_sectors,
+                    "directory zeroing must use multi-sector writes"
+                );
+            }
         }
         info!(
-            "SD DEEP DIAGNOSTICS PASS independent read/write counts and sectors agree across opens, rewrites and closes; directory_writes_max={}",
-            directory_writes
+            "SD DEEP DIAGNOSTICS PASS independent read/write counts and sectors agree across opens, rewrites and closes; directory_writes_max={} directory_sectors_max={}",
+            directory_writes, directory_sectors
         );
     }
     info!(

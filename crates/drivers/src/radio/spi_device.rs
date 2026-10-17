@@ -45,26 +45,29 @@ where
         &mut self,
         operations: &mut [Operation<'_, u8>],
     ) -> Result<(), Self::Error> {
-        let _ = self.cs.set_low();
-        let mut result = Ok(());
+        super::diagnostics::stage(super::diagnostics::Kind::Spi, 0, async {
+            let _ = self.cs.set_low();
+            let mut result = Ok(());
 
-        for operation in operations {
-            result = match operation {
-                Operation::Read(words) => self.spi.read(words),
-                Operation::Write(words) => self.spi.write(words),
-                Operation::Transfer(read, write) => self.spi.transfer(read, write),
-                Operation::TransferInPlace(words) => self.spi.transfer_in_place(words),
-                Operation::DelayNs(ns) => {
-                    Timer::after_micros((u64::from(*ns) + 999) / 1_000).await;
-                    Ok(())
+            for operation in operations {
+                result = match operation {
+                    Operation::Read(words) => self.spi.read(words),
+                    Operation::Write(words) => self.spi.write(words),
+                    Operation::Transfer(read, write) => self.spi.transfer(read, write),
+                    Operation::TransferInPlace(words) => self.spi.transfer_in_place(words),
+                    Operation::DelayNs(ns) => {
+                        Timer::after_micros((u64::from(*ns) + 999) / 1_000).await;
+                        Ok(())
+                    }
+                };
+                if result.is_err() {
+                    break;
                 }
-            };
-            if result.is_err() {
-                break;
             }
-        }
 
-        let _ = self.cs.set_high();
-        result
+            let _ = self.cs.set_high();
+            result
+        })
+        .await
     }
 }
