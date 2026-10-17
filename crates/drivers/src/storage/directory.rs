@@ -1,6 +1,6 @@
 use super::{StorageDriver, StorageError, StorageResult, StorageTimestamp};
-use exfat_slim::asynchronous::BlockDevice;
 use exfat_slim::asynchronous::file::OpenOptions;
+use exfat_slim::asynchronous::BlockDevice;
 use heapless::String;
 
 impl<D, const SIZE: usize, const CACHE: usize, const PATH_LEN: usize>
@@ -17,6 +17,8 @@ where
         path: &str,
         timestamp: Option<StorageTimestamp>,
     ) -> StorageResult<(), D::Error> {
+        #[cfg(feature = "storage-diagnostics")]
+        let _diagnostics = super::diagnostics::DirectorySpan::new();
         let path = normalize_path::<PATH_LEN, D::Error>(path)?;
         self.fs
             .create_directory_at(path.as_str(), timestamp)

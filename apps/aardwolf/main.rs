@@ -26,11 +26,11 @@ use raylar_drivers::{
     gps::PhaseQualifiedShutdownConfig,
     identity,
     mic_array::stm32::Dma0TimestampHandler,
-    stm32_core::{CoreConfig, CoreSupply, stm32::Stm32CoreDriver},
-    trng::{TrngConfig, stm32::Stm32Trng},
+    stm32_core::{stm32::Stm32CoreDriver, CoreConfig, CoreSupply},
+    trng::{stm32::Stm32Trng, TrngConfig},
 };
 use raylar_location_service::{LocationConfig, LocationResources, LocationService};
-use raylar_logging_service::{LoggingResources, LoggingService, ProcessOutcome, info as log_info};
+use raylar_logging_service::{info as log_info, LoggingResources, LoggingService, ProcessOutcome};
 use raylar_radio_service::NodeId;
 use raylar_storage_service::StorageService;
 use raylar_versioning_service::{
@@ -40,7 +40,7 @@ use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
 use audio::MICROPHONES;
-use storage::{STORAGE_FLAGS, SharedStorage, SystemLogSink};
+use storage::{SharedStorage, SystemLogSink, STORAGE_FLAGS};
 
 static SHARED_STORAGE: StaticCell<SharedStorage> = StaticCell::new();
 static STORAGE_READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -181,6 +181,18 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
     info!("Aardwolf boot node={} boot={}", node.0, boot);
+    info!(
+        "Aardwolf radio_enabled={} sd_diagnostics={}",
+        config::RADIO_ENABLED,
+        cfg!(feature = "sd-diagnostics")
+    );
+    let _ = log_info!(
+        system_log,
+        "comparison radio_enabled={} radio_reset_held={} sd_diagnostics={} sd_diagnostic_queue=16",
+        config::RADIO_ENABLED,
+        !config::RADIO_ENABLED,
+        cfg!(feature = "sd-diagnostics")
+    );
 
     common::start_time_stopped_with_phase_qualified_duty_cycle(
         spawner,

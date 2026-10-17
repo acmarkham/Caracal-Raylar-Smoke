@@ -44,7 +44,7 @@ cortex-m-rt = { workspace = true, optional = true }
 static_cell = { workspace = true, optional = true }
 
 [features]
-default = ["firmware", "core-smps", "cheap-crcl"]
+default = ["firmware", "core-smps", "cheap-crcl", "sd-diagnostics"]
 firmware = [
  "dep:raylar-audio-recorder-service", "dep:raylar-audiosource", "dep:raylar-board-v1p0",
  "dep:raylar-drivers", "dep:raylar-storage-service", "dep:raylar-logging-service",
@@ -54,6 +54,9 @@ firmware = [
  "raylar-radio-service/defmt", "raylar-time-service/gps", "raylar-time-service/defmt"
 ]
 core-smps = []
+# Temporary A/B configuration: no radio driver/coordinator/recovery by default.
+radio = []
+sd-diagnostics = ["raylar-drivers?/storage-diagnostics"]
 bench-external-power = []
 bench-rx-beep = []
 hexaphonic = []

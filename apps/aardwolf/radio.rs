@@ -45,7 +45,23 @@ type BoardRadio =
 type BoardRadioService = RadioService<'static, BoardRadio, JOB_DEPTH, EVENT_DEPTH, 4>;
 type Log = LoggerHandle<'static, 384, 32>;
 
-pub fn start(spawner: Spawner, rf: EbyteRf<'static>, node: NodeId, boot: u16, log: Log) {
+pub fn start(spawner: Spawner, mut rf: EbyteRf<'static>, node: NodeId, boot: u16, log: Log) {
+    // Preserve system telemetry for the A/B run, without any RF driver work.
+    spawner.spawn(unwrap!(diagnostics_task(log)));
+    if !config::RADIO_ENABLED {
+        rf.cs.set_high();
+        rf.nrst.set_low();
+        static DISABLED_RADIO: static_cell::StaticCell<EbyteRf<'static>> =
+            static_cell::StaticCell::new();
+        DISABLED_RADIO.init(rf);
+        RADIO.set_enabled(false);
+        let _ = log_info!(
+            log,
+            "radio service disabled for SD comparison; module held in reset; no driver, coordinator or recovery tasks"
+        );
+        info!("Radio disabled for SD comparison; reset held low");
+        return;
+    }
     let EbyteRf {
         spi,
         sck,
@@ -111,7 +127,6 @@ async fn coordinator_task(node: NodeId, boot: u16, log: Log) -> ! {
     let mut join_epoch: Option<i64> = None;
     let mut was_active = false;
     let mut sequence = 0u16;
-    let mut last_summary = Instant::now();
     loop {
         let active = ACTIVITY.try_get().unwrap_or_default().active();
         if !active {
@@ -171,27 +186,77 @@ async fn coordinator_task(node: NodeId, boot: u16, log: Log) -> ! {
         while let Ok(event) = events.try_receive() {
             process_event(event, &mut minute, log);
         }
-        if Instant::now().saturating_duration_since(last_summary) >= Duration::from_secs(10) {
-            let state = RADIO.state();
-            let time = common::TIME_RESOURCES.time_state();
-            let power = POWER.state();
-            let gps = common::GPS_RESOURCES.stats();
-            let location = LOCATION.state();
-            let logging = crate::LOGGING.stats();
-            let _ = log_info!(log, "summary active={} soc={:?} battery_mv={} solar_mv={} ext_dc_mv={} source={:?} charging={} time={:?} uncertainty_us={} holdover_s={} radio={:?} tx={} rx={} misses={} errors={} storage_flags={}",
-                active, power.battery_percent, power.battery_mv, power.solar_mv, power.ext_dc_mv, power.source, power.charging, time.utc_status, time.uncertainty_us,
-                time.holdover_duration.as_secs(), state.mode, state.stats.frames_tx, state.stats.frames_rx, state.stats.schedule_misses, state.stats.radio_errors,
-                STORAGE_FLAGS.load(Ordering::Relaxed));
-            let _ = log_info!(log, "summary2 gps_state={:?} gps_rail_powered={} gps_tracking={} calibration_complete={} reacq_attempts={} fixes={} pps={} pps_timeouts={} uart_errors={} location_valid={} lat_e7={} lon_e7={} hdop={:?} audio_losses={} log_drops={} log_truncated={} log_failures={} radio_conflicts={} radio_queue_drops={}",
-                gps.operating_state, gps.powered, gps.operating_state.is_tracking(), gps.initial_calibration_complete,
-                gps.num_reacquisition_attempts, gps.num_fixes, gps.num_pps_events,
-                gps.num_pps_timeouts, gps.num_uart_errors, location.valid, location.latitude.degrees_e7,
-                location.longitude.degrees_e7, location.hdop_centi, crate::audio::AUDIO_LOSSES.load(Ordering::Relaxed),
-                logging.dropped_messages, logging.truncated_messages, logging.write_failures,
-                state.stats.scheduler_conflicts, state.stats.queue_drops);
-            last_summary = Instant::now();
-        }
         Timer::after_millis(25).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn diagnostics_task(log: Log) -> ! {
+    loop {
+        Timer::after_secs(10).await;
+        let active = ACTIVITY.try_get().unwrap_or_default().active();
+        let state = RADIO.state();
+        let mode = if !config::RADIO_ENABLED {
+            "Disabled"
+        } else {
+            match state.mode {
+                RadioMode::Initializing => "Initializing",
+                RadioMode::Idle => "Idle",
+                RadioMode::Preparing => "Preparing",
+                RadioMode::Transmitting => "Transmitting",
+                RadioMode::Receiving => "Receiving",
+                RadioMode::Recovering => "Recovering",
+                RadioMode::Sleeping => "Sleeping",
+            }
+        };
+        let time = common::TIME_RESOURCES.time_state();
+        let power = POWER.state();
+        let gps = common::GPS_RESOURCES.stats();
+        let location = LOCATION.state();
+        let logging = crate::LOGGING.stats();
+        let _ = log_info!(
+            log,
+            "summary active={} soc={:?} battery_mv={} solar_mv={} ext_dc_mv={} source={:?} charging={} time={:?} uncertainty_us={} holdover_s={} radio={} tx={} rx={} misses={} errors={} storage_flags={}",
+            active,
+            power.battery_percent,
+            power.battery_mv,
+            power.solar_mv,
+            power.ext_dc_mv,
+            power.source,
+            power.charging,
+            time.utc_status,
+            time.uncertainty_us,
+            time.holdover_duration.as_secs(),
+            mode,
+            state.stats.frames_tx,
+            state.stats.frames_rx,
+            state.stats.schedule_misses,
+            state.stats.radio_errors,
+            STORAGE_FLAGS.load(Ordering::Relaxed)
+        );
+        let _ = log_info!(
+            log,
+            "summary2 gps_state={:?} gps_rail_powered={} gps_tracking={} calibration_complete={} reacq_attempts={} fixes={} pps={} pps_timeouts={} uart_errors={} location_valid={} lat_e7={} lon_e7={} hdop={:?} audio_losses={} log_drops={} log_truncated={} log_failures={} radio_conflicts={} radio_queue_drops={}",
+            gps.operating_state,
+            gps.powered,
+            gps.operating_state.is_tracking(),
+            gps.initial_calibration_complete,
+            gps.num_reacquisition_attempts,
+            gps.num_fixes,
+            gps.num_pps_events,
+            gps.num_pps_timeouts,
+            gps.num_uart_errors,
+            location.valid,
+            location.latitude.degrees_e7,
+            location.longitude.degrees_e7,
+            location.hdop_centi,
+            crate::audio::AUDIO_LOSSES.load(Ordering::Relaxed),
+            logging.dropped_messages,
+            logging.truncated_messages,
+            logging.write_failures,
+            state.stats.scheduler_conflicts,
+            state.stats.queue_drops
+        );
     }
 }
 
@@ -271,10 +336,25 @@ fn schedule_minute(
         }
     };
     let slot_utc_us = start_us + i64::from(slot) * config::slot_seconds(index) as i64 * 1_000_000;
-    let _ = log_info!(log, "minute epoch={} profile={} frequency_hz={} slot={} slot_s={} tx_id={:?} sequence={} payload_bytes=16 airtime_us={} slot_utc_us={} slot_ticks={} submit_ticks={} lead_us={} utc_status={:?} uncertainty_us={} holdover_s={}",
-        epoch, index + 1, frequency_hz, slot, config::slot_seconds(index), tx_id.map(|id| id.0), sequence,
-        config::airtime_us(index), slot_utc_us, tx_start.as_ticks(), submitted_at.as_ticks(),
-        lead_us(tx_start, submitted_at), time.utc_status, time.uncertainty_us, time.holdover_duration.as_secs());
+    let _ = log_info!(
+        log,
+        "minute epoch={} profile={} frequency_hz={} slot={} slot_s={} tx_id={:?} sequence={} payload_bytes=16 airtime_us={} slot_utc_us={} slot_ticks={} submit_ticks={} lead_us={} utc_status={:?} uncertainty_us={} holdover_s={}",
+        epoch,
+        index + 1,
+        frequency_hz,
+        slot,
+        config::slot_seconds(index),
+        tx_id.map(|id| id.0),
+        sequence,
+        config::airtime_us(index),
+        slot_utc_us,
+        tx_start.as_ticks(),
+        submitted_at.as_ticks(),
+        lead_us(tx_start, submitted_at),
+        time.utc_status,
+        time.uncertainty_us,
+        time.holdover_duration.as_secs()
+    );
     if tx_late {
         let _ = log_info!(
             log,
@@ -387,10 +467,21 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                 };
                 if let Some(submitted_at) = submitted_at {
                     let time = common::TIME_RESOURCES.time_state();
-                    let _ = log_info!(log, "radio admitted id={} kind={} start_ticks={} submit_ticks={} decision_ticks={} submit_to_decision_us={} decision_lead_us={} uncertainty_us={} holdover_s={}",
-                        id.0, kind, start.as_ticks(), submitted_at.as_ticks(), decided_at.as_ticks(),
-                        decided_at.saturating_duration_since(submitted_at).as_micros(), lead_us(start, decided_at),
-                        time.uncertainty_us, time.holdover_duration.as_secs());
+                    let _ = log_info!(
+                        log,
+                        "radio admitted id={} kind={} start_ticks={} submit_ticks={} decision_ticks={} submit_to_decision_us={} decision_lead_us={} uncertainty_us={} holdover_s={}",
+                        id.0,
+                        kind,
+                        start.as_ticks(),
+                        submitted_at.as_ticks(),
+                        decided_at.as_ticks(),
+                        decided_at
+                            .saturating_duration_since(submitted_at)
+                            .as_micros(),
+                        lead_us(start, decided_at),
+                        time.uncertainty_us,
+                        time.holdover_duration.as_secs()
+                    );
                 }
             }
         }
@@ -422,11 +513,33 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                         let predicted = config::slot(h.node, epoch as u64, index).ok();
                         (epoch, index + 1, observed, predicted)
                     });
-                    let _ = log_info!(log, "rx id={} node={} boot={} seq={} epoch_min_slot_pred={:?} soc={:?} flags={} charge={} storage={:?} gps={}",
-                        id.0, h.node.0, h.boot, h.sequence, position, h.soc, h.errors, h.charging, h.storage_percent, h.gps_status);
-                    let _ = log_info!(log, "rxmeta id={} ticks={} utc_us={:?} utc_status={:?} uncertainty_us={} freq_hz={} rssi_x2={} snr_x4={:?} gfsk={:?}",
-                        id.0, metadata.packet_complete_at.as_ticks(), utc_us, time.utc_status, time.uncertainty_us,
-                        metadata.frequency_hz, metadata.rssi_dbm_x2, metadata.snr_db_x4, metadata.gfsk_status);
+                    let _ = log_info!(
+                        log,
+                        "rx id={} node={} boot={} seq={} epoch_min_slot_pred={:?} soc={:?} flags={} charge={} storage={:?} gps={}",
+                        id.0,
+                        h.node.0,
+                        h.boot,
+                        h.sequence,
+                        position,
+                        h.soc,
+                        h.errors,
+                        h.charging,
+                        h.storage_percent,
+                        h.gps_status
+                    );
+                    let _ = log_info!(
+                        log,
+                        "rxmeta id={} ticks={} utc_us={:?} utc_status={:?} uncertainty_us={} freq_hz={} rssi_x2={} snr_x4={:?} gfsk={:?}",
+                        id.0,
+                        metadata.packet_complete_at.as_ticks(),
+                        utc_us,
+                        time.utc_status,
+                        time.uncertainty_us,
+                        metadata.frequency_hz,
+                        metadata.rssi_dbm_x2,
+                        metadata.snr_db_x4,
+                        metadata.gfsk_status
+                    );
                     info!(
                         "radio RX id={} node={} seq={} hz={} rssi_x2={} snr_x4={:?}",
                         id.0,
@@ -526,10 +639,20 @@ fn process_event(event: RadioEvent, minute: &mut Option<Minute>, log: Log) {
                     lead_us(start, decided_at)
                 );
                 let time = common::TIME_RESOURCES.time_state();
-                let _ = log_info!(log, "radio scheduler rejected id={} kind={} error={:?} start_ticks={} submit_ticks={:?} decision_ticks={} decision_lead_us={} event_ticks={} uncertainty_us={} holdover_s={}",
-                    id.0, kind, error, start.as_ticks(), submitted_at.map(|at| at.as_ticks()), decided_at.as_ticks(),
-                    lead_us(start, decided_at), Instant::now().as_ticks(), time.uncertainty_us,
-                    time.holdover_duration.as_secs());
+                let _ = log_info!(
+                    log,
+                    "radio scheduler rejected id={} kind={} error={:?} start_ticks={} submit_ticks={:?} decision_ticks={} decision_lead_us={} event_ticks={} uncertainty_us={} holdover_s={}",
+                    id.0,
+                    kind,
+                    error,
+                    start.as_ticks(),
+                    submitted_at.map(|at| at.as_ticks()),
+                    decided_at.as_ticks(),
+                    lead_us(start, decided_at),
+                    Instant::now().as_ticks(),
+                    time.uncertainty_us,
+                    time.holdover_duration.as_secs()
+                );
             }
         }
         RadioEvent::Failed { id, error } => {

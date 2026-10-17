@@ -12,7 +12,7 @@ use crate::common;
 mod metrics;
 use embassy_time::Instant;
 use metrics::Op;
-pub use metrics::{AUDIO_BACKEND_BYTES, AUDIO_FILES_CLOSED, diagnostics_task};
+pub use metrics::{diagnostics_task, AUDIO_BACKEND_BYTES, AUDIO_FILES_CLOSED};
 
 // Keep lock wait separate from backend execution, including failed calls.
 macro_rules! timed_storage {
@@ -21,8 +21,16 @@ macro_rules! timed_storage {
         let mut $service = $shared.inner.lock().await;
         let wait_us = waiting.elapsed().as_micros();
         let executing = Instant::now();
+        let op = $op;
+        #[cfg(feature = "sd-diagnostics")]
+        let sd = metrics::sd::Operation::begin(op, wait_us);
         let result = async { $body }.await;
-        metrics::record($op, wait_us, executing.elapsed().as_micros());
+        let execution_us = executing.elapsed().as_micros();
+        metrics::record(op, wait_us, execution_us);
+        #[cfg(feature = "sd-diagnostics")]
+        if let Some(sd) = sd {
+            sd.finish(result.is_ok(), execution_us);
+        }
         result
     }};
 }
@@ -99,21 +107,22 @@ impl SharedStorage {
             <common::BoardStorageBackend as raylar_storage_service::StorageBackend<512>>::Error,
         >,
     > {
-        let mut service = self.inner.lock().await;
-        let (_, free, cluster) =
-            flag_error(service.space_info().await)?.ok_or(StorageServiceError::InvalidConfig)?;
-        if !policy::can_start_audio(free, cluster, service.pending_bytes()) {
-            STORAGE_FLAGS.fetch_or(
-                raylar_radio_service::heartbeat_v4::STORAGE_FULL,
-                Ordering::Relaxed,
-            );
-            return Err(StorageServiceError::OutOfSpace);
-        }
-        flag_error(
+        flag_error(timed_storage!(self, Op::OpenReference, service, {
+            let (_, free, cluster) = service
+                .space_info()
+                .await?
+                .ok_or(StorageServiceError::InvalidConfig)?;
+            if !policy::can_start_audio(free, cluster, service.pending_bytes()) {
+                STORAGE_FLAGS.fetch_or(
+                    raylar_radio_service::heartbeat_v4::STORAGE_FULL,
+                    Ordering::Relaxed,
+                );
+                return Err(StorageServiceError::OutOfSpace);
+            }
             service
                 .begin_new_audio_with_suffix_at(layout, utc, suffix)
-                .await,
-        )
+                .await
+        }))
     }
     pub async fn write(
         &self,

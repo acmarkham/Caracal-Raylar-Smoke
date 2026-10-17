@@ -1,14 +1,14 @@
 {
     "schema_version":  1,
     "package":  "service-test-crclencoder",
-    "binary":  "service-test-crclencoder",
+    "binary":  "sd-lifecycle-stress",
     "firmware_version":  "0.1.0",
-    "source_git":  "c61328edf55b918bfec0e03a90ca1fd913a516e5-dirty",
+    "source_git":  "6b9a78e34975a4dfc3d8649ed4744ca63bf7ce6b-dirty",
     "source_tree_dirty":  true,
-    "build_timestamp_utc":  "2026-10-16T08:21:04Z",
+    "build_timestamp_utc":  "2026-10-17T11:52:02Z",
     "build_profile":  "release",
     "board_revision":  "Raylar v1.0",
     "target":  "thumbv8m.main-none-eabihf",
-    "artifact_sha256":  "562443d2fd9976ff2c97d98ad46b96d59112fcc7b02de6447a0b9b28b25d2435",
+    "artifact_sha256":  "0301db9531a4a882c7f8c3d3c6d11370eb3036aeb8427519d31100cd6196fcb9",
     "runtime_crc32":  null
 }

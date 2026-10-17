@@ -1,6 +1,8 @@
 # Aardwolf firmware
 
-This app implements the [Aardwolf ADR](../../SpecAndDesign/ADR/apps/app/_aardwolf/ADR%20Aardwolf%20GPS-Calibrated%20Audio%20Logger.md) for Raylar v1.0. It starts in energy recovery, powers GPS and the microphone only after reported battery SOC exceeds 20%, and pauses audio, GPS, and radio when SOC falls below 10%. Heartbeats resume at the next complete UTC half-hour epoch after recovery.
+This app implements the [Aardwolf ADR](../../SpecAndDesign/ADR/apps/app/_aardwolf/ADR%20Aardwolf%20GPS-Calibrated%20Audio%20Logger.md) for Raylar v1.0. It starts in energy recovery, powers GPS and the microphone only after reported battery SOC exceeds 20%, and pauses audio, GPS, and enabled radio when SOC falls below 10%. With radio enabled, heartbeats resume at the next complete UTC half-hour epoch after recovery.
+
+**Temporary storage comparison configuration:** radio is disabled by default. Its module is held in reset, with no SPI driver, coordinator, receiver/transmitter, or radio recovery/watchdog tasks running. The independent ten-second telemetry task remains and reports `radio=Disabled`. Startup logs identify `radio_enabled=false radio_reset_held=true sd_diagnostics=true`. Explicitly add `--features radio` to re-enable the complete radio path for a comparison; the default six-channel cheap CRCL codec, GPS policy and file cadence are unchanged.
 
 GPS green follows the shared UI policy: solid while the powered receiver is searching or reacquiring, a 50 ms pulse for each new GPS PPS anchor accepted by the Time Service while tracking, and off in standby, power transitions, receiver error, or off. Receiver state is checked every 50 ms independently of buzzer playback, so the search indication does not wait for PPS or a time publication.
 
@@ -8,7 +10,7 @@ Build with `cargo build -p aardwolf --release --target thumbv8m.main-none-eabihf
 
 `bench-external-power` bypasses the boot SOC gate for externally powered bench work, while still applying the below-10% pause once a valid SOC is reported. It must stay disabled for the solar run. `bench-rx-beep` enables a short audible indication for each valid heartbeat received; field builds leave it disabled.
 
-The fixed run configuration is in `config.rs`: 868.1 MHz and 2441 MHz, twelve ordered profiles, a 30-minute UTC epoch, and 16-byte V4 heartbeats. Nodes must run the same network and schedule version. Slot permutation is based on NodeId, epoch and profile minute. Minutes 4 and 12 use two-second slots. The radio sleeps for minutes 13–30 and throughout energy recovery.
+With the `radio` feature, the fixed RF configuration is in `config.rs`: 868.1 MHz and 2441 MHz, twelve ordered profiles, a 30-minute UTC epoch, and 16-byte V4 heartbeats. Nodes must run the same network and schedule version. Slot permutation is based on NodeId, epoch and profile minute. Minutes 4 and 12 use two-second slots. The intended quiet-period behavior is retained sleep during minutes 13–30 and energy recovery; the observed `Initializing`/`Idle` pattern is under investigation, which is why the comparison build disables the entire driver.
 
 Audio uses the mono 16 kHz reference microphone configuration and creates one 32-bit FLAC per UTC minute in hourly folders, using 2048-sample blocks. Partial final frames preserve the actual sample count. The encoder is heapless and selects fixed predictors of orders 0–4 and Rice parameters by encoded size, with constant and verbatim fallbacks. FLAC files use frame CRCs; the optional STREAMINFO MD5 is deliberately absent. A file is opened exclusively after its first PCM arrives, so an empty segment creates no file and a repeated timestamp cannot append to or overwrite an earlier recording. Audio starts only when the card has room for a worst-case uncompressed FLAC minute, metadata and frame overhead, plus the 100 MB log reserve. System and radio events are written to the normal system log when the card is available; a missing card leaves the radio and heartbeat task running with storage error bits set.
 
@@ -21,6 +23,31 @@ Hexaphonic recording with the cheap CRCL v2 codec is enabled by default: acquire
 Hexaphonic recording uses one source reader and one paired lifecycle. Both files share the UTC filename stem, segment identity, sample interval and final sample count. Storage admits the entire pair plus the protected log reserve before opening either member; three stream slots permit the reference, companion and system log together. Pair errors stop recording and preserve existing files. The 127,998-scalar-sample hexaphonic ring retains about 1.33 seconds at 16 kHz; the mono ring retains eight seconds. `audio timing` reports combined codec time and paired writes, with a 64,000-microsecond CRCL block budget in hexaphonic mode.
 
 The default `cheap-crcl` feature selects CRCL v2 with no CRCL CRC or reference PCM SHA-256. MIC1 remains lossless FLAC and the paired lifecycle remains aligned; standard FLAC frame CRCs remain. To select the earlier v1 spatial codec explicitly, build with `--no-default-features --features firmware,core-smps,hexaphonic`; its quantizer has no minimum-shift policy. See the [variant definition](../../crates/services/crclencoder/cheap.md) and [historical bench results](../../servicetests/crclencoder/cheap-profiling.md).
+
+## File-transition SD diagnostics
+
+The default `sd-diagnostics` feature adds an observer below exFAT at the actual SDMMC read/write boundary. It captures each audio `open_ref`, `open_crcl`, `rewrite`, `close_ref` and `close_crcl` call, including failed calls. Observation starts **after acquiring the storage mutex**, so unrelated system-log writes cannot contaminate its counters. Mutex wait time is reported separately. Mono opens are covered too when that configuration enables the feature.
+
+Each operation produces a `storage sd` header with a unique `id`, start/end system ticks, lock wait, total backend execution, success, and explicit directory-preparation call count/time. Related `storage sd_io` records share the `id` and split reads/writes into `phase=directory` and `phase=file`:
+
+- `calls`, `sectors`, `single`, `err`: SD calls, 512-byte sectors, single-sector calls, and failed calls.
+- `us`, `max_us`, `lba`, `blocks`: cumulative command wall time and the longest command's duration, volume-absolute card LBA and sector count.
+- `poll_us`, `max_poll_us`: cumulative time inside SD future polls and the longest poll. These include interrupts during a poll; time outside polls includes both device waits and executor scheduling, so they do not alone prove a hardware stall.
+- `seq`: longest run of adjacent single-sector writes within that phase, allowing intervening reads. Single-sector counts expose a 256-write cluster initialization even if metadata writes interrupt the adjacent-address run.
+
+`phase=directory` covers the explicit create/ensure-parent-directory call. `phase=file` covers everything else in that operation, including directory entry scans and **directory expansion triggered inside file creation**; it does not mean exclusively audio payload. To obtain total I/O for an operation, add the disjoint directory and file counters. `dir_us` is inclusive and must not be added to backend execution time. A new hour should show roughly 256 extra single-sector writes in directory preparation; an expanded existing folder may show them in the file phase instead.
+
+Records use a fixed 16-operation queue, no heap or extra PCM buffers. They are emitted at no more than one operation per second, after at least two seconds without a completed critical operation and while no observation scope is active. This keeps formatting out of the close/reopen interval. Queue overflow/overlapping observation is reported as `storage sd diagnostics_lost=...`; standard logger drop/truncation counters still apply. There is no log message per sector.
+
+Use the operation timestamps to reconstruct a particular transition, rather than adding maxima from separate diagnostic windows. Summed SD command times show how much time is inside those calls; the remainder of backend execution includes filesystem work and scheduling outside the commands. As with any instrumentation, timestamp/counter bookkeeping adds some overhead. Ordinary append/log traffic retains the existing ten-second timing summaries without detailed sector records.
+
+For a radio-enabled comparison retaining these diagnostics:
+
+```powershell
+rtk proxy powershell -NoProfile -ExecutionPolicy Bypass -File scripts/firmware.ps1 aardwolf -CargoArgs @('--features', 'radio')
+```
+
+For mono with deep diagnostics, select `--no-default-features --features firmware,core-smps,sd-diagnostics`. Omitting `sd-diagnostics` compiles out the observer. The standalone benchmark can verify the hardware observer against its independent block-device counters with `scripts/sd_lifecycle_stress.ps1 -DeepDiagnostics`; it includes directory initialization when the chosen timestamps cross an hourly boundary.
 
 Use `scripts/crcl_decode.py` with the matching reference to verify and reconstruct six-channel WAV. It detects v1/v2 automatically and reports the absence of integrity checks for v2. Quantization precision is an evaluation setting pending beamforming and angle-of-arrival quality measurements; the successful laboratory board test does not establish acoustic calibration or GPS timing accuracy.
 

@@ -19,7 +19,14 @@ required-features = ["loop-benchmark"]
 test = false
 bench = false
 
+[[bin]]
+name = "sd-lifecycle-stress"
+path = "sd_lifecycle_stress.rs"
+test = false
+bench = false
+
 [dependencies]
+aligned = "0.4.2"
 raylar-stage-profiling = { path = "../../crates/profiling" }
 raylar-audio-recorder-service = { path = "../../crates/services/audiorecorder", features = ["defmt"] }
 raylar-audiosource = { path = "../../crates/metadrivers/audiosource", features = ["defmt"] }
@@ -50,4 +57,5 @@ stage-profiling = ["laboratory-time", "raylar-stage-profiling/detail"]
 profile-control = ["laboratory-time", "raylar-stage-profiling/dwt"]
 cheap-crcl = []
 loop-benchmark = ["raylar-crcl-encoder-service/loop-benchmark"]
+deep-sd-diagnostics = ["raylar-drivers/storage-diagnostics"]
 trustzone-secure = ["embassy-stm32/trustzone-secure", "raylar-drivers/trustzone-secure"]

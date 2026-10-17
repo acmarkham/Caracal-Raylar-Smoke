@@ -8,6 +8,8 @@ use raylar_radio_service::{
 
 pub const NETWORK_ID: u32 = 0x4141_5244;
 pub const SCHEDULE_VERSION: u8 = 4;
+/// Opt back into radio with `--features radio` after the storage comparison.
+pub const RADIO_ENABLED: bool = cfg!(feature = "radio");
 pub const CONFIG_ID: &str = "aardwolf-uk-v4-20261013-flac1";
 /// Board measurement used by Integration 002; recalibrate per hardware lot.
 pub const HSE_MEASURED_ERROR_PPM: i32 = -9;

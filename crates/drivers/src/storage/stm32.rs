@@ -1,6 +1,6 @@
-use aligned::{A4, Aligned};
-use embassy_stm32::sdmmc::Error as SdError;
+use aligned::{Aligned, A4};
 use embassy_stm32::sdmmc::sd::{Card, DataBlock, StorageDevice};
+use embassy_stm32::sdmmc::Error as SdError;
 use exfat_slim::asynchronous::BlockDevice;
 
 use super::StorageDeviceIdentity;
@@ -63,10 +63,18 @@ impl BlockDevice<512> for Stm32SdBlockDevice<'_, '_> {
             core::slice::from_raw_parts_mut(data.as_mut_ptr().cast::<DataBlock>(), data.len())
         };
         raylar_stage_profiling::bytes(raylar_stage_profiling::Stage::SdRead, data.len() * 512);
-        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::SdRead,
-            self.card.read_blocks(block_address, blocks))
-            .await
-            .map_err(Stm32SdError::Sd)
+        let future = raylar_stage_profiling::measure(
+            raylar_stage_profiling::Stage::SdRead,
+            self.card.read_blocks(block_address, blocks),
+        );
+        #[cfg(feature = "storage-diagnostics")]
+        let future = super::diagnostics::measure(
+            super::diagnostics::Direction::Read,
+            block_address,
+            data.len(),
+            future,
+        );
+        future.await.map_err(Stm32SdError::Sd)
     }
 
     async fn write(
@@ -77,10 +85,18 @@ impl BlockDevice<512> for Stm32SdBlockDevice<'_, '_> {
         let blocks =
             unsafe { core::slice::from_raw_parts(data.as_ptr().cast::<DataBlock>(), data.len()) };
         raylar_stage_profiling::bytes(raylar_stage_profiling::Stage::SdWrite, data.len() * 512);
-        raylar_stage_profiling::measure(raylar_stage_profiling::Stage::SdWrite,
-            self.card.write_blocks(block_address, blocks))
-            .await
-            .map_err(Stm32SdError::Sd)
+        let future = raylar_stage_profiling::measure(
+            raylar_stage_profiling::Stage::SdWrite,
+            self.card.write_blocks(block_address, blocks),
+        );
+        #[cfg(feature = "storage-diagnostics")]
+        let future = super::diagnostics::measure(
+            super::diagnostics::Direction::Write,
+            block_address,
+            data.len(),
+            future,
+        );
+        future.await.map_err(Stm32SdError::Sd)
     }
 
     async fn size(&mut self) -> Result<u64, Self::Error> {

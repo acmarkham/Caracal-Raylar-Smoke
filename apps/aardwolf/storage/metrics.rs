@@ -1,7 +1,10 @@
 //! Bounded storage diagnostics; no per-write logging or extra sample buffers.
 use core::sync::atomic::{AtomicU32, Ordering};
-use embassy_time::{Duration, Timer};
-use raylar_logging_service::{LoggerHandle, info};
+use embassy_time::{Duration, Instant, Timer};
+use raylar_logging_service::{info, LoggerHandle};
+#[cfg(feature = "sd-diagnostics")]
+#[path = "sd.rs"]
+pub(super) mod sd;
 
 #[derive(Clone, Copy)]
 #[repr(usize)]
@@ -67,8 +70,15 @@ pub(super) fn record(op: Op, wait: u64, execution: u64) {
 
 #[embassy_executor::task]
 pub async fn diagnostics_task(log: LoggerHandle<'static, 384, 32>) -> ! {
+    let mut last_summary = Instant::now();
     loop {
-        Timer::after(Duration::from_secs(10)).await;
+        Timer::after(Duration::from_secs(1)).await;
+        #[cfg(feature = "sd-diagnostics")]
+        sd::drain_one(log);
+        if last_summary.elapsed() < Duration::from_secs(10) {
+            continue;
+        }
+        last_summary = Instant::now();
         for (name, t) in NAMES.iter().zip(&TIMINGS) {
             let calls = t.calls.swap(0, Ordering::Relaxed);
             let wait = t.wait.swap(0, Ordering::Relaxed);
