@@ -243,16 +243,8 @@ async fn main(spawner: Spawner) -> ! {
     }
     // Populate exFAT's cached free-cluster count before starting microphone
     // capture. The first full bitmap scan must not consume the PCM ring budget.
-    match service.space_info().await {
-        Ok(Some((total, free, cluster))) => {
-            let _ = log_info!(
-                system_log,
-                "storage ready total_bytes={} free_bytes={} cluster_bytes={} write_buffer_bytes=16384",
-                total,
-                free,
-                cluster
-            );
-        }
+    let (total, free, cluster) = match service.space_info().await {
+        Ok(Some(space)) => space,
         result => {
             mark_storage_failure();
             error!("storage space initialization failed {:?}", result);
@@ -260,29 +252,15 @@ async fn main(spawner: Spawner) -> ! {
                 Timer::after_secs(60).await;
             }
         }
-    }
+    };
+    let sd_identity = service.device_identity();
     let mut versioning = IdentityVersioningService::new(&VERSIONING, IdentityConfig::default());
     versioning.set_sd_card_identity(
-        service
-            .device_identity()
+        sd_identity
             .map(|card| IdentityField::Known(card.into()))
             .unwrap_or(IdentityField::Unavailable),
     );
     let trace = versioning.state();
-    let _ = log_info!(
-        system_log,
-        "versioning device={:?} firmware={:?} board={:?}",
-        trace.device,
-        trace.firmware,
-        trace.hardware.board_revision
-    );
-    let _ = log_info!(
-        system_log,
-        "versioning sd_card={:?} gps_module={:?} radio_module={:?}",
-        trace.hardware.sd_card,
-        trace.hardware.gps_module,
-        trace.hardware.radio_module
-    );
     versioning.publish();
     let shared = SHARED_STORAGE.init(SharedStorage::new(service));
     let sink = match SystemLogSink::open(shared).await {
@@ -299,9 +277,56 @@ async fn main(spawner: Spawner) -> ! {
             }
         }
     };
+    let mut logging = LoggingService::<_, 384, 32, 512>::new(&LOGGING, sink);
+    // Radio diagnostics can fill the queue while the SD card is mounting.
+    // Drain it before enqueuing identity records, then persist those records
+    // before audio or further diagnostic producers are started.
+    let startup_logging = async {
+        logging.drain().await?;
+        let _ = log_info!(
+            system_log,
+            "storage ready total_bytes={} free_bytes={} cluster_bytes={} write_buffer_bytes=16384",
+            total, free, cluster
+        );
+        let _ = log_info!(
+            system_log,
+            "versioning device={:08x} node={} board={:?}",
+            node.0, node.0, trace.hardware.board_revision
+        );
+        let _ = log_info!(
+            system_log,
+            "versioning firmware={:?} source_git={:?} build_utc={:?} build_profile={:?}",
+            trace.firmware.version, trace.firmware.git_hash,
+            trace.firmware.build_timestamp, trace.firmware.build_profile
+        );
+        if let Some(card) = sd_identity {
+            let _ = log_info!(
+                system_log,
+                "versioning sd_card=known mid={} oem={:?} product={:?} revision={} serial={} manufactured={}-{:02} capacity_bytes={}",
+                card.manufacturer_id, card.oem_id, card.product_name,
+                card.product_revision, card.serial_number,
+                card.manufacture_year, card.manufacture_month, card.capacity_bytes
+            );
+        } else {
+            let _ = log_info!(system_log, "versioning sd_card=unavailable");
+        }
+        let _ = log_info!(
+            system_log,
+            "versioning gps_module={:?} radio_module={:?}",
+            trace.hardware.gps_module, trace.hardware.radio_module
+        );
+        logging.drain().await?;
+        logging.checkpoint().await
+    }.await;
+    if let Err(error) = startup_logging {
+        mark_storage_failure();
+        error!("startup identity logging failed {:?}", error);
+        loop {
+            Timer::after_secs(60).await;
+        }
+    }
     STORAGE_FLAGS.store(0, core::sync::atomic::Ordering::Relaxed);
     STORAGE_READY.store(true, core::sync::atomic::Ordering::Relaxed);
-    let logging = LoggingService::<_, 384, 32, 512>::new(&LOGGING, sink);
     spawner.spawn(unwrap!(logging_task(logging)));
     spawner.spawn(unwrap!(storage::diagnostics_task(
         LOGGING.register("Storage")

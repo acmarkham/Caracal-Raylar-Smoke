@@ -56,6 +56,13 @@ where
         Ok(ProcessOutcome::Written)
     }
 
+    /// Drain pending records before adding critical startup metadata. This
+    /// makes room in the existing bounded queue without increasing its size.
+    pub async fn drain(&mut self) -> Result<(), S::Error> {
+        while self.process_one().await? == ProcessOutcome::Written {}
+        Ok(())
+    }
+
     pub async fn flush(&mut self) -> Result<(), S::Error> {
         if let Err(error) = self.sink.flush().await {
             self.resources.record_write_failure();
@@ -97,6 +104,92 @@ mod tests {
 
     use super::*;
     use crate::{debug, error, info, LogLevel, LogOutcome};
+
+    #[derive(Default)]
+    struct StartupSink {
+        text: heapless::String<4096>,
+        fail_write: bool,
+        checkpoints: u8,
+    }
+
+    impl LogSink for StartupSink {
+        type Error = ();
+
+        async fn append(&mut self, bytes: &[u8]) -> Result<(), ()> {
+            if self.fail_write {
+                return Err(());
+            }
+            self.text
+                .push_str(core::str::from_utf8(bytes).unwrap())
+                .unwrap();
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<(), ()> {
+            self.checkpoints += 1;
+            Ok(())
+        }
+    }
+
+    fn ready<F: core::future::Future>(future: F) -> F::Output {
+        let mut future = core::pin::pin!(future);
+        let mut cx = core::task::Context::from_waker(core::task::Waker::noop());
+        match future.as_mut().poll(&mut cx) {
+            core::task::Poll::Ready(result) => result,
+            core::task::Poll::Pending => panic!("test sink must complete without waiting"),
+        }
+    }
+
+    #[test]
+    fn startup_identity_survives_a_full_production_sized_queue() {
+        let resources = LoggingResources::<384, 32>::new();
+        let log = resources.register("Aardwolf");
+        for _ in 0..32 {
+            assert_eq!(
+                info!(log, "radio startup diagnostics"),
+                LogOutcome::Enqueued
+            );
+        }
+        let mut service =
+            LoggingService::<_, 384, 32, 512>::new(&resources, StartupSink::default());
+        ready(service.drain()).unwrap();
+        assert_eq!(resources.stats().queue_depth, 0);
+        assert_eq!(
+            info!(
+                log,
+                "versioning sd_card=known serial={} capacity_bytes={}",
+                u32::MAX,
+                u64::MAX
+            ),
+            LogOutcome::Enqueued
+        );
+        ready(service.drain()).unwrap();
+        ready(service.checkpoint()).unwrap();
+        assert!(service
+            .sink_mut()
+            .text
+            .contains("serial=4294967295 capacity_bytes=18446744073709551615"));
+        assert_eq!(service.sink_mut().checkpoints, 1);
+        assert_eq!(resources.stats().dropped_messages, 0);
+        assert_eq!(resources.stats().truncated_messages, 0);
+        assert_eq!(resources.stats().queue_depth, 0);
+    }
+
+    #[test]
+    fn startup_drain_propagates_storage_failure() {
+        let resources = LoggingResources::<64, 2>::new();
+        let log = resources.register("Aardwolf");
+        let _ = info!(log, "versioning sd_card=known");
+        let mut service = LoggingService::<_, 64, 2, 128>::new(
+            &resources,
+            StartupSink {
+                fail_write: true,
+                ..StartupSink::default()
+            },
+        );
+        assert_eq!(ready(service.drain()), Err(()));
+        assert_eq!(resources.stats().write_failures, 1);
+    }
 
     #[test]
     fn three_components_log_ordered_formatted_records() {

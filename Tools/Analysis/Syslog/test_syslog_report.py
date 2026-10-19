@@ -39,6 +39,19 @@ def recording(root, stamp, first=0, frames=960000, status=1):
 
 
 class ReportTests(unittest.TestCase):
+    def test_compact_firmware_sd_identity_without_recording_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'log.txt'
+            path.write_text('0000000000 0.000 INFO Aardwolf boot node=941614212 boot=7 firmware=0.1.0\n'
+                '0000000001 1.000 INFO Aardwolf versioning device=381fe484 node=941614212 board=Known("Raylar v1.0")\n'
+                '0000000002 1.001 INFO Aardwolf versioning firmware=Known("0.1.0") source_git=Known("abc123")\n'
+                '0000000003 1.002 INFO Aardwolf versioning sd_card=known mid=27 serial=601970521 capacity_bytes=64021856256\n')
+            boots,_=parse(path)
+            report=analyze(boots[0],check_audio=False)
+            table=report['sections'][0]['table']
+            for expected in ('381fe484','abc123','601970521','64.022 GB (logged SD card)'):
+                self.assertIn(expected,table)
+            self.assertFalse(any('SD identity is absent' in s for s in report['alerts']))
     def test_location_wraps_with_50_km_projected_period(self):
         latitude, longitude = 51.2345678, -1.3456789
         x, y = wrapped_location(latitude, longitude)

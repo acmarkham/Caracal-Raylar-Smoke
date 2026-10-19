@@ -191,7 +191,9 @@ def analyze(boot, audio_root=None, check_audio=True):
     sections = []
     alerts = []
     device = selected('versioning device=')
+    firmware = selected('versioning firmware=')
     sd = selected('versioning sd_card=')
+    card_capacity = sd[0]['f'].get('capacity_bytes') if sd else None
     storage = selected('storage ready ')
     record_config = selected('recording mode=')
     audio_config = selected('audio config ')
@@ -223,11 +225,14 @@ def analyze(boot, audio_root=None, check_audio=True):
     bad = [f for f in files if not f['complete']]
     first_ref = next((f['reference'] for f in files if f['reference'].get('device_id')), {})
     identities = [
-        ('Device ID', first_ref.get('device_id') or (device[0]['msg'] if device else 'Not logged / unavailable')),
+        ('Device ID', first_ref.get('device_id') or
+            (str(device[0]['f']['device']) if device and re.fullmatch(r'[0-9a-fA-F]{8}',str(device[0]['f'].get('device'))) else
+             device[0]['msg'] if device else 'Not logged / unavailable')),
         ('Node / boot ID', f"{info.get('node', 'Unknown')} / {info.get('boot', 'Unknown')}"),
-        ('Firmware', first_ref.get('firmware_hash') or info.get('firmware', 'Unknown')),
+        ('Firmware', first_ref.get('firmware_hash') or (firmware[0]['msg'] if firmware else info.get('firmware', 'Unknown'))),
         ('SD identity', sd[0]['msg'] if sd else 'Not logged / unavailable'),
-        ('SD capacity', bytes_text(storage[0]['f']['total_bytes'])+' (logged filesystem)' if storage and 'total_bytes' in storage[0]['f'] else
+        ('SD capacity', bytes_text(card_capacity)+' (logged SD card)' if isinstance(card_capacity,int) else
+            bytes_text(storage[0]['f']['total_bytes'])+' (logged filesystem)' if storage and 'total_bytes' in storage[0]['f'] else
             bytes_text(shutil.disk_usage(audio_root).total)+' (current mounted filesystem; not logged card identity)' if audio_root else 'Not logged / unavailable'),
         ('Period (UTC)', f"{x(0)} to {x(end_t)}" if offset is not None else f'0–{end_t/3600:.2f} hours uptime; no UTC anchor'),
         ('Reset flags', selected('reset ')[0]['msg'] if selected('reset ') else 'Not logged'),
