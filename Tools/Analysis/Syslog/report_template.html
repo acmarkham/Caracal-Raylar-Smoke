@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aardwolf · Syslog report</title>
+<style>
+:root{color-scheme:dark;--bg:#0d131e;--panel:#172130;--line:#2a394c;--text:#edf3fa;--muted:#a7b7cc;--blue:#65aaff;--green:#4fd1a5;--red:#ff6b81;--amber:#ffb454}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}header{padding:38px 4vw 24px;border-bottom:1px solid var(--line);background:linear-gradient(115deg,#172b46,#101722)}h1{font-size:32px;letter-spacing:-1px;margin:3px 0 9px}h2{font-size:24px;margin:0 0 18px}h3{font-size:17px;margin:0 0 8px}p{margin:8px 0;color:var(--muted)}.eyebrow{color:var(--blue);text-transform:uppercase;letter-spacing:2px;font-size:12px;font-weight:700}.controls{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-top:20px}select,button{background:var(--panel);color:var(--text);border:1px solid #4b607c;border-radius:7px;padding:9px 12px;font:inherit}select{max-width:100%}.layout{display:grid;grid-template-columns:210px minmax(0,1fr);max-width:1740px;margin:auto}nav{padding:26px 20px;position:sticky;top:0;height:100vh;overflow:auto}nav a{display:block;color:var(--muted);text-decoration:none;padding:8px 10px;border-radius:5px}nav a:hover{background:var(--panel);color:white}main{padding:28px 3vw 70px;min-width:0}section{scroll-margin-top:20px;margin-bottom:34px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:13px;margin-bottom:24px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:17px}.card strong{display:block;font-size:24px;letter-spacing:-.5px}.card span{color:var(--muted);font-size:13px}.badge{display:inline-block;border-radius:50px;padding:3px 12px;margin-left:10px;font-size:13px;vertical-align:middle}.green{color:var(--green);background:#14392f}.red{color:var(--red);background:#3e202e}.amber{color:var(--amber);background:#392f22}.notice{border-left:3px solid var(--amber);padding:11px 16px;background:#211f25;margin:10px 0;font-size:14px}.chart-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 15px 12px;margin:15px 0}.chart{width:100%;height:340px}.chart-note{font-size:13px;padding:0 12px;color:var(--muted);max-width:1200px}.empty{padding:20px;border:1px dashed var(--line);border-radius:8px;color:var(--muted)}.table-scroll{overflow:auto;border:1px solid var(--line);border-radius:9px;margin:12px 0}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere;min-width:100px}th{background:#1c2a3d;color:#bfcde1;font-size:12px}td:first-child{color:#cfddf0}tr:last-child td{border-bottom:0}details{margin:16px 0}summary{cursor:pointer;color:var(--muted)}footer{padding-top:20px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}a{color:var(--blue)}#error{color:var(--red);white-space:pre-wrap}.subtle{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+@media(max-width:850px){.layout{display:block}nav{height:auto;position:static;display:flex;gap:4px;flex-wrap:wrap;padding:12px}nav a{font-size:12px}header{padding:24px}main{padding:20px}h1{font-size:27px}.chart{height:300px}.controls{gap:10px}}
+@media print{nav,.controls,.modebar{display:none!important}.layout{display:block}body{background:white;color:black}.chart-card,section{break-inside:avoid}main{padding:0}}
+</style>
+<script>/*__PLOTLY__*/</script>
+</head>
+<body>
+<header>
+<div class="eyebrow">Aardwolf / Field diagnostics</div>
+<h1>Syslog report</h1>
+<p>Recording integrity, observed PPS timing, power, sensors and radio activity.</p>
+<div class="controls"><label>Run <select id="boot-select" aria-label="Select boot"></select></label><label><input type="checkbox" id="linked" checked> Link time-axis zoom</label><button id="reset">Reset zoom</button><span id="axis-label" class="subtle"></span></div>
+<p id="source" class="subtle"></p>
+</header>
+<div class="layout"><nav id="nav" aria-label="Report sections"></nav><main id="report"><noscript>This report needs JavaScript to display its interactive plots.</noscript></main></div>
+<script id="report-data" type="application/json">/*__REPORT_DATA__*/</script>
+<script>
+'use strict';
+const report=JSON.parse(document.getElementById('report-data').textContent);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,'-');
+const select=document.getElementById('boot-select');
+let activePlots=[],syncing=false,renderGeneration=0;
+report.runs.forEach((run,i)=>{const o=document.createElement('option');o.value=i;o.textContent=run.label;select.append(o)});
+select.value=String(Math.max(0,report.runs.map(r=>r.summary.audio_encoded_seconds).lastIndexOf(Math.max(...report.runs.map(r=>r.summary.audio_encoded_seconds)))));
+document.getElementById('source').textContent=report.source+' · '+(report.metadata.input_bytes/1e6).toFixed(2)+' MB · SHA-256 '+report.metadata.sha256;
+function card(value,label){return '<div class="card"><strong>'+esc(value)+'</strong><span>'+esc(label)+'</span></div>'}
+async function showRun(){
+  const generation=++renderGeneration;
+  activePlots.forEach(p=>Plotly.purge(p.node));activePlots=[];
+  const run=report.runs[Number(select.value)],s=run.summary,main=document.getElementById('report');
+  document.getElementById('axis-label').textContent='Time axes: '+run.time_axis+(run.time_axis==='UTC'?' (not browser local time)':'');
+  document.getElementById('nav').innerHTML=run.sections.map(sec=>'<a href="#'+slug(sec.title)+'">'+esc(sec.title)+'</a>').join('');
+  let content='<div class="cards">'+card(s.audio_complete.toLocaleString(),'Finalized recordings')+card((s.audio_seconds/3600).toFixed(2)+' h','Finalized duration (metadata)')+card(s.audio_incomplete+s.missing_minutes,'Incomplete / missing minutes')+card(s.radio_tx+' / '+s.radio_rx,'TX / RX packets')+card(s.relocks.length,'Observed PPS returns')+'</div>';
+  content+=run.alerts.map(a=>'<div class="notice">'+esc(a)+'</div>').join('');
+  const pending=[];
+  run.sections.forEach((sec,si)=>{
+    content+='<section id="'+slug(sec.title)+'"><h2>'+esc(sec.title)+(sec.status?'<span class="badge '+sec.status+'">'+({green:'Finalized & aligned',red:'Issues found',amber:'Unverified / no audio'}[sec.status])+'</span>':'')+'</h2>';
+    if(sec.table)content+=sec.table;
+    if(sec.note)content+='<p>'+esc(sec.note)+'</p>';
+    (sec.plots||[]).forEach((p,pi)=>{const id='chart-'+si+'-'+pi;content+='<div class="chart-card"><h3>'+esc(p.title)+'</h3><div class="chart" id="'+id+'"></div>'+(p.note?'<p class="chart-note">'+esc(p.note)+'</p>':'')+'</div>';pending.push({id,p})});
+    if(!sec.table&&!(sec.plots||[]).length&&!sec.note)content+='<div class="empty">This log has no telemetry for this section.</div>';
+    content+='</section>';
+  });
+  content+='<footer>Generated from the supplied log and, when available, associated recording metadata. Unknown values are not treated as zero. Embedded Plotly works offline. File checks read headers and completion records; they do not exhaustively decode compressed audio. Time labels use UTC when anchored, otherwise boot-relative hours. Reacquisition ppm uses observed residuals only.</footer><div id="error"></div>';
+  main.innerHTML=content;
+  for(const {id,p} of pending){
+    if(generation!==renderGeneration)return;
+    const node=document.getElementById(id);
+    const timeAxis=p.title!=='Packets per radio configuration'&&!p.title.includes('coordinate view');
+    const base={paper_bgcolor:'#172130',plot_bgcolor:'#172130',font:{color:'#c5d3e6',family:'system-ui,Segoe UI,sans-serif'},colorway:['#65aaff','#4fd1a5','#ffb454','#da93ff','#ff6b81','#8bd5ea'],margin:{l:65,r:65,t:20,b:65},legend:{orientation:'h',y:-.21},hovermode:'closest',autosize:true,xaxis:{title:run.time_axis,gridcolor:'#2a394c',zerolinecolor:'#2a394c'},yaxis:{gridcolor:'#2a394c',zerolinecolor:'#496078'},showlegend:true};
+    const layout={...base,...p.layout,xaxis:{...base.xaxis,...(p.layout.xaxis||{})},yaxis:{...base.yaxis,...(p.layout.yaxis||{})}};
+    if(timeAxis&&run.time_axis==='UTC')layout.xaxis.type='date';
+    try{
+      await Plotly.newPlot(node,p.traces,layout,{responsive:true,displaylogo:false,scrollZoom:false,toImageButtonOptions:{format:'png',scale:2}});
+      if(generation!==renderGeneration){Plotly.purge(node);return}
+      activePlots.push({node,timeAxis});
+      node.on('plotly_relayout',async e=>{
+        if(syncing||!timeAxis||!document.getElementById('linked').checked)return;
+        let update=null;
+        if(e['xaxis.autorange'])update={'xaxis.autorange':true};
+        else if(e['xaxis.range[0]']!==undefined)update={'xaxis.range':[e['xaxis.range[0]'],e['xaxis.range[1]']]};
+        if(!update)return;
+        syncing=true;
+        try{await Promise.all(activePlots.filter(p=>p.timeAxis&&p.node!==node).map(p=>Plotly.relayout(p.node,update)))}finally{syncing=false}
+      });
+    }catch(e){document.getElementById('error').textContent+='Plot '+p.title+': '+e+'\n'}
+  }
+  document.body.dataset.reportReady='true';
+}
+select.addEventListener('change',()=>showRun());
+document.getElementById('reset').addEventListener('click',async()=>{syncing=true;try{await Promise.all(activePlots.map(p=>Plotly.relayout(p.node,{'xaxis.autorange':true,'yaxis.autorange':true}))) }finally{syncing=false}});
+showRun().catch(e=>{document.getElementById('report').textContent='Could not render report: '+e;document.body.dataset.reportError=String(e)});
+</script>
+</body>
+</html>

@@ -424,7 +424,6 @@ where
         if self.state == RadioState::Sleep {
             return self.wake().await;
         }
-        self.operation_in_flight = false;
         self.finish_standby().await
     }
 
@@ -443,11 +442,7 @@ where
     pub async fn wake(&mut self) -> Result<(), Error> {
         self.require_initialized()?;
         self.require_state(RadioState::Sleep)?;
-        with_timeout(self.timing.command_timeout, self.backend.standby(true))
-            .await
-            .map_err(|_| Error::WakeUp)?
-            .map_err(|_| Error::WakeUp)?;
-        with_timeout(self.timing.command_timeout, self.backend.wait_ready())
+        with_timeout(self.timing.command_timeout, self.backend.wake_retained())
             .await
             .map_err(|_| Error::WakeUp)?
             .map_err(|_| Error::WakeUp)?;
@@ -464,12 +459,13 @@ where
     }
 
     async fn finish_standby(&mut self) -> Result<(), Error> {
-        self.operation_in_flight = false;
+        // Keep cleanup pending if this future is cancelled while BUSY is high.
         with_timeout(self.timing.command_timeout, self.backend.standby(true))
             .await
             .map_err(|_| Error::BusyTimeout)?
             .map_err(|error| self.backend_error(error))?;
         self.set_state(RadioState::Standby);
+        self.operation_in_flight = false;
         Ok(())
     }
 
@@ -617,3 +613,6 @@ fn validate_tx_payload(channel: &ChannelConfig, length: usize) -> Result<(), Err
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod sleep_tests;

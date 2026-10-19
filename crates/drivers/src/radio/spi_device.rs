@@ -9,6 +9,16 @@ use embedded_hal::{
 };
 use embedded_hal_async::spi::{Operation, SpiDevice};
 
+// Sleep wake-up uses an async delay with NSS asserted. Always release NSS if
+// that transaction is cancelled (including an outer command timeout).
+struct CsGuard<'a, CS: OutputPin<Error = Infallible>>(&'a mut CS);
+
+impl<CS: OutputPin<Error = Infallible>> Drop for CsGuard<'_, CS> {
+    fn drop(&mut self) {
+        let _ = self.0.set_high();
+    }
+}
+
 /// Adapts a blocking SPI bus and infallible CS pin to async `SpiDevice`.
 ///
 /// Construction performs no I/O. The board must create the CS output inactive
@@ -47,6 +57,7 @@ where
     ) -> Result<(), Self::Error> {
         super::diagnostics::stage(super::diagnostics::Kind::Spi, 0, async {
             let _ = self.cs.set_low();
+            let _cs_guard = CsGuard(&mut self.cs);
             let mut result = Ok(());
 
             for operation in operations {
@@ -65,7 +76,6 @@ where
                 }
             }
 
-            let _ = self.cs.set_high();
             result
         })
         .await

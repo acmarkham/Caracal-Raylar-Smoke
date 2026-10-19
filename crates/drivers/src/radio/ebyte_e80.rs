@@ -98,8 +98,9 @@ where
         self.write_command(SET_RF_SWITCH, &RF_SWITCH_BYTES).await?;
         self.write_command(SET_TCXO_MODE, &TCXO_1V8_AND_9P8_MS)
             .await?;
-        // Crystal LF clock, wait for it before completing the command.
-        self.write_command(CONFIG_LF_CLOCK, &[0x05]).await?;
+        // UM section 6.3.1: internal LF RC; do not select an unverified external
+        // 32.768 kHz source. Selecting XTAL+wait (0x05) stalls wake on E80.
+        self.write_command(CONFIG_LF_CLOCK, &[0x00]).await?;
         self.write_command(CALIBRATE, &[0x3F])
             .await
             .map_err(calibration_error)?;
@@ -114,8 +115,40 @@ where
     }
 
     pub(crate) async fn sleep_retained(&mut self) -> Result<(), BackendError> {
+        // LR1121 UM Rev 2.1 section 2.1.5: BUSY stays HIGH in sleep.
+        // Do not use write_command's normal post-command BUSY-low wait.
         // Retention enabled, automatic wake disabled, no RTC wake timeout.
-        self.write_command(SET_SLEEP, &[0x01, 0, 0, 0, 0]).await
+        super::diagnostics::stage(super::diagnostics::Kind::Command, SET_SLEEP, async {
+            self.wait_busy().await?;
+            let mut status = [0u8; 2];
+            self.spi
+                .transaction(&mut [
+                    Operation::Transfer(&mut status, &SET_SLEEP.to_be_bytes()),
+                    Operation::Write(&[0x01, 0, 0, 0, 0]),
+                ])
+                .await
+                .map_err(|_| BackendError::Transport(TransportError::Spi))?;
+            check_command_status(status[0])?;
+            // Allow context saving to finish before a caller can wake immediately.
+            // A conservative guard, not a BUSY-low completion condition.
+            embassy_time::Timer::after_millis(1).await;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn wake_retained(&mut self) -> Result<(), BackendError> {
+        // Section 2.1.5: an NSS falling edge wakes the device; no command
+        // bytes may be sent until BUSY goes low after startup. This transaction
+        // only pulses NSS, with no SPI clocks or command/status interpretation.
+        // Datasheet Rev 2.0 section 4.3: NSS low, wait 100 us, NSS high,
+        // then wait for BUSY-low before executing the next command.
+        self.spi
+            .transaction(&mut [Operation::DelayNs(100_000)])
+            .await
+            .map_err(|_| BackendError::Transport(TransportError::Spi))?;
+        self.wait_busy().await?;
+        self.standby(true).await
     }
 
     pub(crate) async fn apply_channel(
