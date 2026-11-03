@@ -25,9 +25,11 @@ powershell -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
 The script embeds the package version, source Git identity, UTC build time,
 build profile, and board revision from `firmware-metadata.json`. Firmware that
 uses the versioning service writes these values to its syslog. A matching JSON
-record is created under `firmware-builds/`; commit the record for any overnight
-or field-test image so a syslog CRC and Git identity can be traced back to the
-tested source and exact ELF hash.
+record and a separate archive containing the exact `.elf`, flashable `.bin`,
+dependency lockfile and build provenance are created under `firmware-builds/`.
+Commit the record and archive for each distributed or field-test image. Earlier
+images remain available without rebuilding; see the [firmware archive and USB
+DFU instructions](firmware-builds/README.md).
 
 Use `-BuildOnly` when an image should be built and recorded without flashing.
 The rust-analyzer **Run** action above a `main` function uses the same metadata

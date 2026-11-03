@@ -1,0 +1,198 @@
+diff --git a/.cargo/probe-rs-runner.ps1 b/.cargo/probe-rs-runner.ps1
+index 85b0954..8494b48 100644
+--- a/.cargo/probe-rs-runner.ps1
++++ b/.cargo/probe-rs-runner.ps1
+@@ -7,6 +7,8 @@ $defmtLog = "info"
+ $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+ $logRoot = Join-Path $workspaceRoot ".probe-rs-logs"
+ $buildRecordRoot = Join-Path $workspaceRoot "firmware-builds"
++$ErrorActionPreference = 'Stop'
++. (Join-Path $workspaceRoot 'scripts/firmware-artifacts.ps1')
+ 
+ foreach ($arg in $RunnerArgs) {
+     if ($arg -match 'unit-smoke-09_serial-gps_pps') {
+@@ -43,11 +45,11 @@ if ($artifactPath -and (Test-Path -LiteralPath $artifactPath -PathType Leaf) -an
+         artifact_sha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+         runtime_crc32 = $null
+     }
+-    [System.IO.File]::WriteAllText(
+-        $buildRecordPath,
+-        ($buildRecord | ConvertTo-Json -Depth 4) + [Environment]::NewLine
+-    )
+-    Write-Host "Build record: $buildRecordPath (commit this file with the tested source)"
++    $archive = Save-FirmwareBuild -WorkspaceRoot $workspaceRoot -ArtifactPath $artifactPath `
++        -Record $buildRecord -BuildArguments @($env:RAYLAR_CARGO_ARGUMENTS | ConvertFrom-Json)
++    $buildRecordPath = $archive.RecordPath
++    $RunnerArgs[0] = $archive.ElfPath
++    Write-Host "Build record: $buildRecordPath (commit the record and archive with the tested source)"
+ }
+ 
+ $probeArgs = @(
+@@ -77,10 +79,7 @@ if ($buildRecord -and $targetLog -and (Test-Path -LiteralPath $targetLog -PathTy
+     )
+     if ($runtimeCrcMatch.Success) {
+         $buildRecord.runtime_crc32 = $runtimeCrcMatch.Groups['crc'].Value
+-        [System.IO.File]::WriteAllText(
+-            $buildRecordPath,
+-            ($buildRecord | ConvertTo-Json -Depth 4) + [Environment]::NewLine
+-        )
++        Write-FirmwareBuildRecord -Path $buildRecordPath -Record $buildRecord -WorkspaceRoot $workspaceRoot
+     }
+ }
+ 
+diff --git a/.gitignore b/.gitignore
+index 5a7bfcd..cde17b5 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -2,6 +2,7 @@ target/
+ __pycache__/
+ debug.log
+ *.lock
++!firmware-builds/**/Cargo.lock
+ /.serena
+ /.trialdata
+ /.probe-rs-logs/
+diff --git a/README.md b/README.md
+index be2a808..1b7161a 100644
+--- a/README.md
++++ b/README.md
+@@ -25,9 +25,11 @@ powershell -ExecutionPolicy Bypass -File scripts/firmware.ps1 `
+ The script embeds the package version, source Git identity, UTC build time,
+ build profile, and board revision from `firmware-metadata.json`. Firmware that
+ uses the versioning service writes these values to its syslog. A matching JSON
+-record is created under `firmware-builds/`; commit the record for any overnight
+-or field-test image so a syslog CRC and Git identity can be traced back to the
+-tested source and exact ELF hash.
++record and a separate archive containing the exact `.elf`, flashable `.bin`,
++dependency lockfile and build provenance are created under `firmware-builds/`.
++Commit the record and archive for each distributed or field-test image. Earlier
++images remain available without rebuilding; see the [firmware archive and USB
++DFU instructions](firmware-builds/README.md).
+ 
+ Use `-BuildOnly` when an image should be built and recorded without flashing.
+ The rust-analyzer **Run** action above a `main` function uses the same metadata
+diff --git a/scripts/cargo-with-firmware-metadata.ps1 b/scripts/cargo-with-firmware-metadata.ps1
+index 1aa964c..22e60b0 100644
+--- a/scripts/cargo-with-firmware-metadata.ps1
++++ b/scripts/cargo-with-firmware-metadata.ps1
+@@ -7,6 +7,7 @@ param(
+ $ErrorActionPreference = "Stop"
+ $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+ $metadataConfigPath = Join-Path $workspaceRoot "firmware-metadata.json"
++. (Join-Path $PSScriptRoot 'firmware-artifacts.ps1')
+ 
+ function Require-Command {
+     param([Parameter(Mandatory = $true)][string]$Name)
+@@ -69,10 +70,7 @@ try {
+     if ($LASTEXITCODE -ne 0 -or -not $gitHash) {
+         throw "Unable to determine the source Git hash."
+     }
+-    $trackedChanges = & $gitPath status --porcelain --untracked-files=no
+-    if ($LASTEXITCODE -ne 0) {
+-        throw "Unable to determine whether the source tree is dirty."
+-    }
++    $trackedChanges = Get-FirmwareSourceChanges -WorkspaceRoot $workspaceRoot
+     $sourceDirty = [bool]$trackedChanges
+     $gitIdentity = if ($sourceDirty) { "$gitHash-dirty" } else { $gitHash }
+     $profile = if ($CargoArgs -contains "--release") {
+@@ -94,11 +92,49 @@ try {
+     $env:RAYLAR_BUILD_PROFILE = $profile
+     $env:RAYLAR_BOARD_REVISION = [string]$metadataConfig.boardRevision
+     $env:RAYLAR_BUILD_PACKAGE = $package
++    $env:RAYLAR_CARGO_ARGUMENTS = ConvertTo-Json -InputObject @($CargoArgs) -Compress
+ 
+-    & $cargoPath @CargoArgs
+-    if ($null -eq $LASTEXITCODE) {
++    if ($CargoArgs[0] -eq 'build') {
++        # Archive only executable artifacts actually reported by this build;
++        # never guess from stale files left in target/ by another feature set.
++        $builtArtifacts = New-Object System.Collections.Generic.List[object]
++        $buildArgs = @($CargoArgs) + @('--message-format=json-render-diagnostics')
++        & $cargoPath @buildArgs | ForEach-Object {
++            $line = $_
++            try { $message = $line | ConvertFrom-Json -ErrorAction Stop }
++            catch { Write-Host $line; $message = $null }
++            if ($message.reason -eq 'compiler-message' -and $message.message.rendered) {
++                Write-Host -NoNewline $message.message.rendered
++            }
++            if ($message.reason -eq 'compiler-artifact' -and $message.executable -and
++                $message.target.kind -contains 'bin' -and $message.package_id -eq $packageInfo[0].id) {
++                $builtArtifacts.Add($message)
++            }
++        }
++        $cargoExitCode = $LASTEXITCODE
++        if ($cargoExitCode -ne 0) { exit $cargoExitCode }
++        foreach ($artifact in $builtArtifacts) {
++            $record = [ordered]@{
++                schema_version = 2
++                package = $package
++                binary = $artifact.target.name
++                firmware_version = [string]$packageInfo[0].version
++                source_git = $gitIdentity
++                source_tree_dirty = $sourceDirty
++                build_timestamp_utc = $buildTimestamp
++                build_profile = $profile
++                board_revision = [string]$metadataConfig.boardRevision
++                target = 'thumbv8m.main-none-eabihf'
++                artifact_sha256 = $null
++                runtime_crc32 = $null
++            }
++            $null = Save-FirmwareBuild -WorkspaceRoot $workspaceRoot -ArtifactPath $artifact.executable `
++                -Record $record -BuildArguments $buildArgs
++        }
+         exit 0
+     }
++    & $cargoPath @CargoArgs
++    if ($null -eq $LASTEXITCODE) { exit 0 }
+     exit $LASTEXITCODE
+ }
+ finally {
+diff --git a/scripts/firmware.ps1 b/scripts/firmware.ps1
+index c194f4f..a4ed86e 100644
+--- a/scripts/firmware.ps1
++++ b/scripts/firmware.ps1
+@@ -44,6 +44,7 @@ $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+ $logRoot = Join-Path $workspaceRoot ".probe-rs-logs"
+ $metadataConfigPath = Join-Path $workspaceRoot "firmware-metadata.json"
+ $buildRecordRoot = Join-Path $workspaceRoot "firmware-builds"
++. (Join-Path $PSScriptRoot 'firmware-artifacts.ps1')
+ 
+ function Require-Command {
+     param([Parameter(Mandatory = $true)][string]$Name)
+@@ -148,9 +149,7 @@ function Write-BuildRecord {
+         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record
+     )
+ 
+-    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
+-    $json = $Record | ConvertTo-Json -Depth 4
+-    [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine)
++    Write-FirmwareBuildRecord -Path $Path -Record $Record -WorkspaceRoot $workspaceRoot
+ }
+ 
+ $previousDefmtLog = $env:DEFMT_LOG
+@@ -226,10 +225,7 @@ try {
+         if ($LASTEXITCODE -ne 0 -or -not $gitHash) {
+             throw "Unable to determine the source Git hash."
+         }
+-        $trackedChanges = & $gitPath status --porcelain --untracked-files=no
+-        if ($LASTEXITCODE -ne 0) {
+-            throw "Unable to determine whether the source tree is dirty."
+-        }
++        $trackedChanges = Get-FirmwareSourceChanges -WorkspaceRoot $workspaceRoot
+         $sourceDirty = [bool]$trackedChanges
+         $gitIdentity = if ($sourceDirty) { "$gitHash-dirty" } else { $gitHash }
+         $buildTimestamp = [DateTime]::UtcNow.ToString(
+@@ -287,8 +283,11 @@ try {
+             artifact_sha256 = $artifactSha256
+             runtime_crc32 = $null
+         }
+-        Write-BuildRecord -Path $buildRecordPath -Record $buildRecord
+-        Write-Host "    Build record: $buildRecordPath (commit this file with the tested source)"
++        $archive = Save-FirmwareBuild -WorkspaceRoot $workspaceRoot -ArtifactPath $artifactPath `
++            -Record $buildRecord -BuildArguments $buildArguments -Chip $Chip
++        $buildRecordPath = $archive.RecordPath
++        $artifactPath = $archive.ElfPath
++        Write-Host "    Build record: $buildRecordPath (commit the record and archive with the tested source)"
+     }
+ 
+     if ($BuildOnly) {

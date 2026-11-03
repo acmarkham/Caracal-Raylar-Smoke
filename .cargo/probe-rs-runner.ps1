@@ -7,6 +7,8 @@ $defmtLog = "info"
 $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $logRoot = Join-Path $workspaceRoot ".probe-rs-logs"
 $buildRecordRoot = Join-Path $workspaceRoot "firmware-builds"
+$ErrorActionPreference = 'Stop'
+. (Join-Path $workspaceRoot 'scripts/firmware-artifacts.ps1')
 
 foreach ($arg in $RunnerArgs) {
     if ($arg -match 'unit-smoke-09_serial-gps_pps') {
@@ -43,11 +45,11 @@ if ($artifactPath -and (Test-Path -LiteralPath $artifactPath -PathType Leaf) -an
         artifact_sha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
         runtime_crc32 = $null
     }
-    [System.IO.File]::WriteAllText(
-        $buildRecordPath,
-        ($buildRecord | ConvertTo-Json -Depth 4) + [Environment]::NewLine
-    )
-    Write-Host "Build record: $buildRecordPath (commit this file with the tested source)"
+    $archive = Save-FirmwareBuild -WorkspaceRoot $workspaceRoot -ArtifactPath $artifactPath `
+        -Record $buildRecord -BuildArguments @($env:RAYLAR_CARGO_ARGUMENTS | ConvertFrom-Json)
+    $buildRecordPath = $archive.RecordPath
+    $RunnerArgs[0] = $archive.ElfPath
+    Write-Host "Build record: $buildRecordPath (commit the record and archive with the tested source)"
 }
 
 $probeArgs = @(
@@ -77,10 +79,7 @@ if ($buildRecord -and $targetLog -and (Test-Path -LiteralPath $targetLog -PathTy
     )
     if ($runtimeCrcMatch.Success) {
         $buildRecord.runtime_crc32 = $runtimeCrcMatch.Groups['crc'].Value
-        [System.IO.File]::WriteAllText(
-            $buildRecordPath,
-            ($buildRecord | ConvertTo-Json -Depth 4) + [Environment]::NewLine
-        )
+        Write-FirmwareBuildRecord -Path $buildRecordPath -Record $buildRecord -WorkspaceRoot $workspaceRoot
     }
 }
 

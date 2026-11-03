@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $metadataConfigPath = Join-Path $workspaceRoot "firmware-metadata.json"
+. (Join-Path $PSScriptRoot 'firmware-artifacts.ps1')
 
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -69,10 +70,7 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $gitHash) {
         throw "Unable to determine the source Git hash."
     }
-    $trackedChanges = & $gitPath status --porcelain --untracked-files=no
-    if ($LASTEXITCODE -ne 0) {
-        throw "Unable to determine whether the source tree is dirty."
-    }
+    $trackedChanges = Get-FirmwareSourceChanges -WorkspaceRoot $workspaceRoot
     $sourceDirty = [bool]$trackedChanges
     $gitIdentity = if ($sourceDirty) { "$gitHash-dirty" } else { $gitHash }
     $profile = if ($CargoArgs -contains "--release") {
@@ -94,11 +92,49 @@ try {
     $env:RAYLAR_BUILD_PROFILE = $profile
     $env:RAYLAR_BOARD_REVISION = [string]$metadataConfig.boardRevision
     $env:RAYLAR_BUILD_PACKAGE = $package
+    $env:RAYLAR_CARGO_ARGUMENTS = ConvertTo-Json -InputObject @($CargoArgs) -Compress
 
-    & $cargoPath @CargoArgs
-    if ($null -eq $LASTEXITCODE) {
+    if ($CargoArgs[0] -eq 'build') {
+        # Archive only executable artifacts actually reported by this build;
+        # never guess from stale files left in target/ by another feature set.
+        $builtArtifacts = New-Object System.Collections.Generic.List[object]
+        $buildArgs = @($CargoArgs) + @('--message-format=json-render-diagnostics')
+        & $cargoPath @buildArgs | ForEach-Object {
+            $line = $_
+            try { $message = $line | ConvertFrom-Json -ErrorAction Stop }
+            catch { Write-Host $line; $message = $null }
+            if ($message.reason -eq 'compiler-message' -and $message.message.rendered) {
+                Write-Host -NoNewline $message.message.rendered
+            }
+            if ($message.reason -eq 'compiler-artifact' -and $message.executable -and
+                $message.target.kind -contains 'bin' -and $message.package_id -eq $packageInfo[0].id) {
+                $builtArtifacts.Add($message)
+            }
+        }
+        $cargoExitCode = $LASTEXITCODE
+        if ($cargoExitCode -ne 0) { exit $cargoExitCode }
+        foreach ($artifact in $builtArtifacts) {
+            $record = [ordered]@{
+                schema_version = 2
+                package = $package
+                binary = $artifact.target.name
+                firmware_version = [string]$packageInfo[0].version
+                source_git = $gitIdentity
+                source_tree_dirty = $sourceDirty
+                build_timestamp_utc = $buildTimestamp
+                build_profile = $profile
+                board_revision = [string]$metadataConfig.boardRevision
+                target = 'thumbv8m.main-none-eabihf'
+                artifact_sha256 = $null
+                runtime_crc32 = $null
+            }
+            $null = Save-FirmwareBuild -WorkspaceRoot $workspaceRoot -ArtifactPath $artifact.executable `
+                -Record $record -BuildArguments $buildArgs
+        }
         exit 0
     }
+    & $cargoPath @CargoArgs
+    if ($null -eq $LASTEXITCODE) { exit 0 }
     exit $LASTEXITCODE
 }
 finally {

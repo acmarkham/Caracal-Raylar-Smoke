@@ -1,0 +1,14 @@
+aardwolf 0.1.0 - Raylar v1.0
+Built 2026-11-03T10:43:28Z from 66cec84bd7f07de4e9de9a9219cb0a7b5a3de77d-dirty
+
+STM32CubeProgrammer: select the board's USB DFU device, connect, and open
+aardwolf.bin in Erasing & Programming. Set start address to
+0x08000000, enable verification, and program. Start the application
+after leaving the board's bootloader mode. Alternatively open aardwolf.elf;
+the ELF carries its own load addresses. Use the board's documented BOOT0/reset
+procedure to enter USB DFU; this image does not add a USB DFU bootloader.
+
+BIN SHA256: f241eceb385a9c0c302146bd05587797046ecd582750f192e147471893795f0e
+ELF SHA256: 13991ef0ce69288e77bfcbe88ec0d165b50904f5891561448bbcd0282a453748
+Intended MCU: STM32U595VJ. This is the application image for the recorded board and
+security configuration; option bytes are not changed by this package.

@@ -44,6 +44,7 @@ $workspaceRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $logRoot = Join-Path $workspaceRoot ".probe-rs-logs"
 $metadataConfigPath = Join-Path $workspaceRoot "firmware-metadata.json"
 $buildRecordRoot = Join-Path $workspaceRoot "firmware-builds"
+. (Join-Path $PSScriptRoot 'firmware-artifacts.ps1')
 
 function Require-Command {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -148,9 +149,7 @@ function Write-BuildRecord {
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Record
     )
 
-    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
-    $json = $Record | ConvertTo-Json -Depth 4
-    [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine)
+    Write-FirmwareBuildRecord -Path $Path -Record $Record -WorkspaceRoot $workspaceRoot
 }
 
 $previousDefmtLog = $env:DEFMT_LOG
@@ -226,10 +225,7 @@ try {
         if ($LASTEXITCODE -ne 0 -or -not $gitHash) {
             throw "Unable to determine the source Git hash."
         }
-        $trackedChanges = & $gitPath status --porcelain --untracked-files=no
-        if ($LASTEXITCODE -ne 0) {
-            throw "Unable to determine whether the source tree is dirty."
-        }
+        $trackedChanges = Get-FirmwareSourceChanges -WorkspaceRoot $workspaceRoot
         $sourceDirty = [bool]$trackedChanges
         $gitIdentity = if ($sourceDirty) { "$gitHash-dirty" } else { $gitHash }
         $buildTimestamp = [DateTime]::UtcNow.ToString(
@@ -287,8 +283,11 @@ try {
             artifact_sha256 = $artifactSha256
             runtime_crc32 = $null
         }
-        Write-BuildRecord -Path $buildRecordPath -Record $buildRecord
-        Write-Host "    Build record: $buildRecordPath (commit this file with the tested source)"
+        $archive = Save-FirmwareBuild -WorkspaceRoot $workspaceRoot -ArtifactPath $artifactPath `
+            -Record $buildRecord -BuildArguments $buildArguments -Chip $Chip
+        $buildRecordPath = $archive.RecordPath
+        $artifactPath = $archive.ElfPath
+        Write-Host "    Build record: $buildRecordPath (commit the record and archive with the tested source)"
     }
 
     if ($BuildOnly) {

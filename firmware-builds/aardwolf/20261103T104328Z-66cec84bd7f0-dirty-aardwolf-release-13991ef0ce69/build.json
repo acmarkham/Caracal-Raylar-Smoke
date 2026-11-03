@@ -1,0 +1,53 @@
+{
+    "schema_version":  2,
+    "package":  "aardwolf",
+    "binary":  "aardwolf",
+    "firmware_version":  "0.1.0",
+    "source_git":  "66cec84bd7f07de4e9de9a9219cb0a7b5a3de77d-dirty",
+    "source_tree_dirty":  true,
+    "build_timestamp_utc":  "2026-11-03T10:43:28Z",
+    "build_profile":  "release",
+    "board_revision":  "Raylar v1.0",
+    "target":  "thumbv8m.main-none-eabihf",
+    "artifact_sha256":  "13991ef0ce69288e77bfcbe88ec0d165b50904f5891561448bbcd0282a453748",
+    "runtime_crc32":  null,
+    "chip":  "STM32U595VJ",
+    "flash_address":  "0x08000000",
+    "flash_image_bytes":  987600,
+    "archive_record":  "firmware-builds/aardwolf/20261103T104328Z-66cec84bd7f0-dirty-aardwolf-release-13991ef0ce69/build.json",
+    "cargo_arguments":  [
+                            "build",
+                            "--package",
+                            "aardwolf",
+                            "--release",
+                            "--target",
+                            "thumbv8m.main-none-eabihf",
+                            "--message-format=json-render-diagnostics"
+                        ],
+    "rustc_version":  "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo_version":  "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "objcopy_version":  "llvm-objcopy, compatible with GNU objcopy",
+    "build_environment":  {
+                              "RUSTFLAGS":  null,
+                              "CARGO_ENCODED_RUSTFLAGS":  null,
+                              "CARGO_INCREMENTAL":  null,
+                              "DEFMT_LOG":  null
+                          },
+    "artifacts":  {
+                      "elf":  {
+                                  "path":  "firmware-builds/aardwolf/20261103T104328Z-66cec84bd7f0-dirty-aardwolf-release-13991ef0ce69/aardwolf.elf",
+                                  "sha256":  "13991ef0ce69288e77bfcbe88ec0d165b50904f5891561448bbcd0282a453748",
+                                  "bytes":  13244936
+                              },
+                      "bin":  {
+                                  "path":  "firmware-builds/aardwolf/20261103T104328Z-66cec84bd7f0-dirty-aardwolf-release-13991ef0ce69/aardwolf.bin",
+                                  "sha256":  "f241eceb385a9c0c302146bd05587797046ecd582750f192e147471893795f0e",
+                                  "bytes":  987600
+                              }
+                  },
+    "provenance":  {
+                       "cargo_lock_sha256":  "c19dbe2057c722541d4d3b6da7bf578ac02404caba48e2c3096dff35dc957584",
+                       "source_patch_sha256":  "648dc0f11b3d4492a8e5d147b69644d3e1d0c58a16c37ae32426a6115472653f",
+                       "untracked_source_sha256":  "9ef27525492522697166fe2863d2ca34126e7e362371698721ae88b0639adc2b"
+                   }
+}
