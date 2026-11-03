@@ -1,6 +1,22 @@
 # exfat-slim
 An exFAT file system library written in safe Rust for embedded environments. 
 
+## Raylar fork regression tests
+
+Run the vendored crate's tests separately from the main workspace:
+
+```powershell
+rtk cargo test --manifest-path third_party/exfat-slim/Cargo.toml --target x86_64-pc-windows-msvc
+```
+
+`src/file_tests.rs` exercises the blocking API against an in-memory block device
+with 128 KiB clusters. It covers header rewrites without extra allocation,
+cluster-aligned EOF seeks, fragmented extensions from an earlier cursor position,
+multi-run initial allocation, failed seeks, and paired-file close/reopen with
+fresh caches. The async API shares the implementation through `bisync`; the
+Aardwolf target build checks its embedded integration. These tests do not replace
+an SD-card endurance trial.
+
 ## Introduction
 
 The exfat file system is an upgrade to the FAT32 file system. 

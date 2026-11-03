@@ -544,7 +544,16 @@ impl File {
             .contains(GeneralSecondaryFlags::NoFatChain);
 
         if has_fat_chain {
-            let mut cluster_id = self.current_cluster;
+            // Allocation extends the chain, regardless of the current read/
+            // write position (e.g. an overwrite that also extends the file).
+            let mut cluster_id = match self.chain {
+                StoredChain::Contiguous {
+                    first,
+                    cluster_count,
+                } => first + cluster_count - 1,
+                StoredChain::Fat { last, .. } => last,
+                StoredChain::Empty => return Err(ExFatError::Unexpected("empty FAT chain")),
+            };
             for cluster_next in run.first_cluster..run.first_cluster + run.cluster_count {
                 fs.fat
                     .set(&mut fs.dev, &mut self.touched, cluster_id, cluster_next)
@@ -608,16 +617,14 @@ impl File {
     }
 
     #[bisync]
-    async fn allocate_clusters_for<D, const SIZE: usize, const N: usize>(
+    async fn allocate_clusters<D, const SIZE: usize, const N: usize>(
         &mut self,
         fs: &mut FileSystem<D, SIZE, N>,
-        num_bytes: usize,
+        mut cluster_count: u32,
     ) -> ExFatResult<(), D, SIZE>
     where
         D: BlockDevice<SIZE>,
     {
-        let mut cluster_count = num_bytes.div_ceil(fs.fs.cluster_length as usize) as u32;
-
         loop {
             let run = fs
                 .allocator
@@ -669,16 +676,21 @@ impl File {
             return Err(ExFatError::WriteNotEnabled);
         }
 
-        let data_length = self.details.data_length;
-
-        // allocate new clusters if required
-        let used_in_cluster = (data_length % fs.fs.cluster_length as u64) as u32;
-        let remaining_bytes_in_current_cluster = fs.fs.cluster_length - used_in_cluster;
-        if buf.len() > remaining_bytes_in_current_cluster as usize {
-            let num_bytes = buf.len() - remaining_bytes_in_current_cluster as usize;
-            self.allocate_clusters_for(fs, num_bytes).await?;
-        } else if data_length > 0 && used_in_cluster == 0 || self.current_cluster == NO_CLUSTER_ID {
-            self.allocate_clusters_for(fs, fs.fs.cluster_length as usize)
+        let end = self
+            .cursor
+            .checked_add(buf.len() as u64)
+            .ok_or(ExFatError::Unexpected("file length overflow"))?;
+        let required_clusters = u32::try_from(end.div_ceil(fs.fs.cluster_length as u64))
+            .map_err(|_| ExFatError::Unexpected("file cluster count exceeds u32"))?;
+        let allocated_clusters = match self.chain {
+            StoredChain::Empty => 0,
+            StoredChain::Contiguous { cluster_count, .. }
+            | StoredChain::Fat { cluster_count, .. } => cluster_count,
+        };
+        // A header rewrite uses existing allocation. Only bytes beyond the
+        // allocated extent require clusters, even when EOF is cluster-aligned.
+        if required_clusters > allocated_clusters {
+            self.allocate_clusters(fs, required_clusters - allocated_clusters)
                 .await?;
         }
         self.update_data_length(buf.len());
@@ -757,14 +769,16 @@ impl File {
             return Err(ExFatError::SeekOutOfRange);
         }
 
-        self.cursor = cursor;
-        let num_clusters = (cursor / fs.fs.cluster_length as u64) as u32;
-        match self.chain {
-            StoredChain::Empty => self.current_cluster = self.details.first_cluster,
+        // At a positive cluster boundary, retain the preceding cluster with
+        // zero bytes remaining, just as sequential I/O does. EOF need not have
+        // a successor; the next read/write advances only when it needs data.
+        let num_clusters = (cursor.saturating_sub(1) / fs.fs.cluster_length as u64) as u32;
+        let current_cluster = match self.chain {
+            StoredChain::Empty => self.details.first_cluster,
             StoredChain::Contiguous {
                 first,
                 cluster_count: _cluster_count,
-            } => self.set_current_cluster(first + num_clusters, fs),
+            } => first + num_clusters,
             StoredChain::Fat {
                 first,
                 last: _last,
@@ -782,15 +796,14 @@ impl File {
                     }
                 }
 
-                self.set_current_cluster(cluster_id, fs);
+                cluster_id
             }
-        }
+        };
 
-        // set_current_cluster starts with a full cluster remaining. A seek
-        // into the middle of that cluster must subtract the intra-cluster
-        // offset or a later sector read can appear to cross the boundary.
-        let cluster_offset = (cursor % fs.fs.cluster_length as u64) as u32;
-        self.remaining_bytes_in_cluster = fs.fs.cluster_length - cluster_offset;
+        // Commit together so a failed FAT traversal leaves a usable cursor.
+        self.set_current_cluster(current_cluster, fs);
+        self.cursor = cursor;
+        self.remaining_bytes_in_cluster = remaining_bytes_at_cursor(cursor, fs.fs.cluster_length);
 
         Ok(())
     }
@@ -915,16 +928,19 @@ impl File {
             // cluster into the directory entry yet, leaving the old details
             // value at NO_CLUSTER_ID (0). Using that stale value here causes a
             // FAT write for cluster 0 and trips Fat::set's validity assertion.
-            let first_cluster = match self.chain {
-                StoredChain::Contiguous { first, .. } | StoredChain::Fat { first, .. } => first,
-                StoredChain::Empty => {
+            let (first_cluster, cluster_count) = match self.chain {
+                StoredChain::Contiguous {
+                    first,
+                    cluster_count,
+                } => (first, cluster_count),
+                StoredChain::Empty | StoredChain::Fat { .. } => {
                     return Err(ExFatError::Unexpected(
-                        "cannot convert an empty file to a FAT chain",
+                        "FAT conversion requires a contiguous chain",
                     ));
                 }
             };
 
-            for cluster_id in first_cluster..self.current_cluster {
+            for cluster_id in first_cluster..first_cluster + cluster_count - 1 {
                 fs.fat
                     .set(&mut fs.dev, &mut self.touched, cluster_id, cluster_id + 1)
                     .await?;
@@ -1081,6 +1097,12 @@ fn remaining_bytes_at_cursor(cursor: u64, cluster_length: u32) -> u32 {
     } else {
         cluster_length - used
     }
+}
+
+#[cfg(test)]
+#[super::only_sync]
+mod io_tests {
+    include!("file_tests.rs");
 }
 
 #[cfg(test)]
