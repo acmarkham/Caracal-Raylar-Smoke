@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "utc": "2026-11-24T13:01:24.632787+00:00",
+  "source_git": "69cf47dd69a6e16b8c4433229b8b4e142226a1ea-dirty",
+  "package": "unit-smoke-l4-03-gps",
+  "chip": "STM32L476RGTx",
+  "target": "thumbv7em-none-eabihf",
+  "profile": "release",
+  "build_command": [
+    "cargo",
+    "build",
+    "-p",
+    "unit-smoke-l4-03-gps",
+    "--target",
+    "thumbv7em-none-eabihf",
+    "--release",
+    "--locked",
+    "--offline",
+    "--config",
+    "unitsmokeL4/03_gps/defmt.toml"
+  ],
+  "tool_versions": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "probe_rs": "probe-rs 0.30.0 (git commit: eab9c5e)"
+  },
+  "environment": {
+    "DEFMT_LOG": "info,embassy_stm32=error"
+  },
+  "source_sha256": {
+    "Cargo.toml": "dda4c532e0b0e712d9698355f5d0cded6dbddf15868f221711eefcfb02627c80",
+    ".cargo/config.toml": "f2eccf4e494eed37d5aa0cc49b117251920df18cd509c2d199b47b55f6a5413c",
+    "unitsmokeL4/03_gps/build.rs": "48735dbaa00ebab23aa6d9d3409e8c40c244dd94ba6d92931ddc91f0be641bbb",
+    "unitsmokeL4/03_gps/Cargo.toml": "72015b4fd3580ff8935078d7089a5e3c580eca542266535a7c3f55007bfa199c",
+    "unitsmokeL4/03_gps/defmt.toml": "d78186d10f2cb071abe94af932328f0463565a857d773c8c22ea191f9532abdc",
+    "unitsmokeL4/03_gps/lib.rs": "9b587eb21b87b70bb02633bed140c88a32001305b2b9cb13162b0ebd7d164c5b",
+    "unitsmokeL4/03_gps/main.rs": "30d3d1dec99771e80969c42ccc20c428583b8997fafe72336492314f1b1450d5",
+    "unitsmokeL4/03_gps/stack-check.x": "197ac873a9576a374a146482a0513151ddf016aa9737af7e4d79b215ad61ea6a"
+  },
+  "lockfile_sha256": "ae243f83b0b177149887f2bfd0669af338f629f06e7b1addd20c74797d390a2e",
+  "image": {
+    "elf_sha256": "aac457c50fb5dac595ef4bd07a41c3808e70502d800849ea9260f42c2bde2715",
+    "bin_sha256": "e83084019aa52920c75ab23062af24417704c623f27d04b846b33d0ca872b223",
+    "flash_origin": "0x08000000",
+    "flash_bytes": 43568,
+    "sram1_static_extent_bytes": 7332,
+    "sram1_stack_and_unused_bytes": 90972,
+    "sram2_bytes_used": 0,
+    "initial_sp": "0x20018000",
+    "segments": [
+      {
+        "offset": 276,
+        "vaddr": 134217728,
+        "paddr": 134217728,
+        "filesz": 392,
+        "memsz": 392
+      },
+      {
+        "offset": 668,
+        "vaddr": 134218120,
+        "paddr": 134218120,
+        "filesz": 35120,
+        "memsz": 35120
+      },
+      {
+        "offset": 35788,
+        "vaddr": 134253240,
+        "paddr": 134253240,
+        "filesz": 7920,
+        "memsz": 7920
+      },
+      {
+        "offset": 43712,
+        "vaddr": 536870912,
+        "paddr": 134261160,
+        "filesz": 136,
+        "memsz": 136
+      },
+      {
+        "offset": 43872,
+        "vaddr": 536871048,
+        "paddr": 536871048,
+        "filesz": 0,
+        "memsz": 7196
+      }
+    ]
+  },
+  "scope": "UART identity/fixes and EXTI pulse continuity; no precise UTC or cold-start TTFF claim"
+}

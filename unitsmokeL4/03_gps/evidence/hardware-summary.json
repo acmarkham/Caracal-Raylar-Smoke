@@ -1,0 +1,23 @@
+{
+  "baud": 38400,
+  "software": "ROM SPG 5.10 (7b202e)",
+  "hardware": "000A0000",
+  "firmware": "SPG 5.10",
+  "protocol": "34.10",
+  "module_extension": null,
+  "operator_module_label": "Quescan G10A-F30",
+  "extensions": [
+    "FWVER=SPG 5.10",
+    "PROTVER=34.10",
+    "GPS;GLO;GAL;BDS",
+    "SBAS;QZSS"
+  ],
+  "qualified_nav_pvt_reports": 26,
+  "satellites_min": 22,
+  "satellites_max": 24,
+  "final_status": "54.592049 [INFO ] L4 GPS status elapsed_s=54 bytes=59312 nmea=1010 ubx=26 rejected=1 parse_errors=0 uart_error_irqs=0 identity=true pubx00=true pubx04=true pvt_valid=true epoch_match_now=false pps_edges=55 pps_streak=54 passed=true",
+  "last_logged_pps_statistics": "49.446810 [INFO ] L4 GPS PPS edge=50 mono_us=49446798 delta_us=Some(999991) streak=49 bad=0 min_us=Some(999991) max_us=Some(999992)",
+  "pass_line": "20.453957 [INFO ] L4 GPS PASS baud=38400 identity=true pubx00=true pubx04=true pvt_fixes=8 gga_fixes=16 pps_edges=21 pps_streak=20 first_fix_ms=Some(5567) elapsed_ms=20453 (receiver UTC; no TimeService anchor)",
+  "cold_start_ttff_measured": false,
+  "receiver_configuration_changed": false
+}

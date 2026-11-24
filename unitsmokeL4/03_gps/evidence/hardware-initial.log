@@ -1,0 +1,17 @@
+     Finished in 22.74s
+0.000019 [INFO ] L4 GPS boot board=CaracalEvo receiver_label=Quescan_G10A-F30 uart=USART2 tx=PA2 rx=PA3 pps=PB5 enable=PB4_input enable_high=true initial_pps_high=false search_s=900
+0.000139 [INFO ] L4 GPS baud scan baud=9600
+4.000414 [INFO ] L4 GPS baud scan complete baud=9600 bytes=0 valid_frames=0
+4.000476 [INFO ] L4 GPS baud scan baud=38400
+8.000754 [INFO ] L4 GPS baud scan complete baud=38400 bytes=0 valid_frames=0
+8.000814 [INFO ] L4 GPS baud scan baud=115200
+12.001094 [INFO ] L4 GPS baud scan complete baud=115200 bytes=0 valid_frames=0
+12.001156 [INFO ] L4 GPS baud scan baud=19200
+16.001434 [INFO ] L4 GPS baud scan complete baud=19200 bytes=0 valid_frames=0
+16.001494 [INFO ] L4 GPS baud scan baud=57600
+20.001772 [INFO ] L4 GPS baud scan complete baud=57600 bytes=0 valid_frames=0
+20.001834 [INFO ] L4 GPS baud scan baud=4800
+24.002116 [INFO ] L4 GPS baud scan complete baud=4800 bytes=0 valid_frames=0
+24.002180 [INFO ] L4 GPS baud scan baud=230400
+28.002467 [INFO ] L4 GPS baud scan complete baud=230400 bytes=0 valid_frames=0
+28.002526 [ERROR] panicked at unitsmokeL4\03_gps\main.rs:167:21:

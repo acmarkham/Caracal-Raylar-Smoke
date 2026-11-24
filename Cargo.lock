@@ -2612,6 +2612,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "unit-smoke-l4-03-gps"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "defmt 1.1.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-stm32",
+ "embassy-time",
+ "embedded-io-async 0.7.0",
+ "panic-probe",
+ "raylar-drivers",
+]
+
+[[package]]
 name = "usb-device"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

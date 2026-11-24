@@ -1,0 +1,14 @@
+   Compiling unit-smoke-l4-03-gps v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\03_gps)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.93s
+     Running unittests lib.rs (target\x86_64-pc-windows-msvc\debug\deps\unit_smoke_l4_03_gps-66b689384ccb189e.exe)
+
+running 6 tests
+test tests::corruption_oversize_truncation_and_resynchronization ... ok
+test tests::fix_requires_flags_time_coordinates_and_satellites ... ok
+test tests::pps_streak_resets_on_missing_edges_and_expires ... ok
+test tests::published_poll_and_ascii_checksums ... ok
+test tests::version_fields_and_extension_bounds ... ok
+test tests::mixed_stream_embedded_delimiters_and_noise ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

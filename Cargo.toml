@@ -94,6 +94,7 @@ members = [
     "unitsmoke/33_power_profile",
     "unitsmokeL4/01_helloworld",
     "unitsmokeL4/02_exfat",
+    "unitsmokeL4/03_gps",
 ]
 
 [workspace.package]

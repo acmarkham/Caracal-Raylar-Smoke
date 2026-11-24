@@ -1,0 +1,60 @@
+     Finished in 22.47s
+0.000019 [INFO ] L4 GPS boot board=CaracalEvo receiver_label=Quescan_G10A-F30 uart=USART2 tx=PA2 rx=PA3 pps=PB5 enable=PB4_input enable_high=true initial_pps_high=false search_s=900
+0.000138 [INFO ] L4 GPS baud scan baud=9600
+0.447240 [INFO ] L4 GPS PPS edge=1 mono_us=447229 delta_us=None streak=0 bad=0 min_us=None max_us=None
+1.447232 [INFO ] L4 GPS PPS edge=2 mono_us=1447220 delta_us=Some(999991) streak=1 bad=0 min_us=Some(999991) max_us=Some(999991)
+2.447224 [INFO ] L4 GPS PPS edge=3 mono_us=2447211 delta_us=Some(999991) streak=2 bad=0 min_us=Some(999991) max_us=Some(999991)
+4.040142 [INFO ] L4 GPS baud scan complete baud=9600 bytes=990 valid_frames=0
+4.040204 [INFO ] L4 GPS baud scan baud=38400
+4.580234 [INFO ] L4 GPS UART PASS baud=38400 data=8N1 scan_error_irqs=990 (receiver baud unchanged)
+4.591360 [INFO ] L4 GPS status elapsed_s=4 bytes=42 nmea=0 ubx=0 rejected=1 parse_errors=0 uart_error_irqs=0 identity=false pubx00=false pubx04=false pvt_valid=false epoch_match_now=false pps_edges=5 pps_streak=4 passed=false
+4.599935 [INFO ] L4 GPS GGA utc=UtcTime { hour: 12, minute: 58, second: 57 } sv=12 hdop_centi=Some(61) accepted=true streak=1
+4.887190 [INFO ] L4 GPS MON-VER sw=ROM SPG 5.10 (7b202e) hw=000A0000
+4.887314 [INFO ] L4 GPS MON-VER extension=FWVER=SPG 5.10
+4.887391 [INFO ] L4 GPS MON-VER extension=PROTVER=34.10
+4.887470 [INFO ] L4 GPS MON-VER extension=GPS;GLO;GAL;BDS
+4.887549 [INFO ] L4 GPS MON-VER extension=SBAS;QZSS
+5.567855 [INFO ] L4 GPS NAV-PVT tow_ms=219556000 utc=2026-11-24T12:58:58 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=656 pdop_centi=112 qualified=true streak=1
+5.586241 [INFO ] L4 GPS RMC utc=UtcDateTime { date: Some(UtcDate { day: 24, month: 11, year: 2026 }), time: UtcTime { hour: 12, minute: 58, second: 58 } } status=A
+5.614979 [INFO ] L4 GPS GGA utc=UtcTime { hour: 12, minute: 58, second: 58 } sv=12 hdop_centi=Some(69) accepted=true streak=2
+5.888144 [INFO ] L4 GPS PUBX position=$PUBX,00,125858.00,5155.81470,N,00114.90720,W,169.059,D3,0.66,0.77,0.062,23.80,0.016,,0.69,0.88,0.60,24,0,0*73
+5.906155 [INFO ] L4 GPS PUBX time=$PUBX,04,125858.00,241126,219537.99,2446,18,-593021,-2213.657,16*23
+6.567571 [INFO ] L4 GPS RMC utc=UtcDateTime { date: Some(UtcDate { day: 24, month: 11, year: 2026 }), time: UtcTime { hour: 12, minute: 58, second: 59 } } status=A
+6.596309 [INFO ] L4 GPS GGA utc=UtcTime { hour: 12, minute: 58, second: 59 } sv=12 hdop_centi=Some(79) accepted=true streak=3
+7.560713 [INFO ] L4 GPS NAV-PVT tow_ms=219558000 utc=2026-11-24T12:59:0 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=616 pdop_centi=108 qualified=true streak=2
+7.579099 [INFO ] L4 GPS RMC utc=UtcDateTime { date: Some(UtcDate { day: 24, month: 11, year: 2026 }), time: UtcTime { hour: 12, minute: 59, second: 0 } } status=A
+9.447162 [INFO ] L4 GPS PPS edge=10 mono_us=9447150 delta_us=Some(999992) streak=9 bad=0 min_us=Some(999991) max_us=Some(999992)
+9.550868 [INFO ] L4 GPS NAV-PVT tow_ms=219560000 utc=2026-11-24T12:59:2 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=588 pdop_centi=108 qualified=true streak=3
+11.544558 [INFO ] L4 GPS NAV-PVT tow_ms=219562000 utc=2026-11-24T12:59:4 valid=37 fix_type=3 flags=03 sv=23 hacc_mm=569 pdop_centi=119 qualified=true streak=4
+13.546886 [INFO ] L4 GPS NAV-PVT tow_ms=219564000 utc=2026-11-24T12:59:6 valid=37 fix_type=3 flags=03 sv=23 hacc_mm=557 pdop_centi=117 qualified=true streak=5
+14.591404 [INFO ] L4 GPS status elapsed_s=14 bytes=12066 nmea=203 ubx=6 rejected=1 parse_errors=0 uart_error_irqs=0 identity=true pubx00=true pubx04=true pvt_valid=true epoch_match_now=false pps_edges=15 pps_streak=14 passed=false
+15.572751 [INFO ] L4 GPS NAV-PVT tow_ms=219566000 utc=2026-11-24T12:59:8 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=550 pdop_centi=113 qualified=true streak=6
+17.560800 [INFO ] L4 GPS NAV-PVT tow_ms=219568000 utc=2026-11-24T12:59:10 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=543 pdop_centi=113 qualified=true streak=7
+19.447074 [INFO ] L4 GPS PPS edge=20 mono_us=19447062 delta_us=Some(999991) streak=19 bad=0 min_us=Some(999991) max_us=Some(999992)
+19.562795 [INFO ] L4 GPS NAV-PVT tow_ms=219570000 utc=2026-11-24T12:59:12 valid=37 fix_type=3 flags=03 sv=23 hacc_mm=534 pdop_centi=117 qualified=true streak=8
+20.453957 [INFO ] L4 GPS PASS baud=38400 identity=true pubx00=true pubx04=true pvt_fixes=8 gga_fixes=16 pps_edges=21 pps_streak=20 first_fix_ms=Some(5567) elapsed_ms=20453 (receiver UTC; no TimeService anchor)
+21.566682 [INFO ] L4 GPS NAV-PVT tow_ms=219572000 utc=2026-11-24T12:59:14 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=528 pdop_centi=128 qualified=true streak=9
+23.567391 [INFO ] L4 GPS NAV-PVT tow_ms=219574000 utc=2026-11-24T12:59:16 valid=37 fix_type=3 flags=03 sv=22 hacc_mm=528 pdop_centi=128 qualified=true streak=10
+24.591572 [INFO ] L4 GPS status elapsed_s=24 bytes=23879 nmea=404 ubx=11 rejected=1 parse_errors=0 uart_error_irqs=0 identity=true pubx00=true pubx04=true pvt_valid=true epoch_match_now=false pps_edges=25 pps_streak=24 passed=true
+25.572788 [INFO ] L4 GPS NAV-PVT tow_ms=219576000 utc=2026-11-24T12:59:18 valid=37 fix_type=3 flags=03 sv=23 hacc_mm=526 pdop_centi=143 qualified=true streak=11
+27.571321 [INFO ] L4 GPS NAV-PVT tow_ms=219578000 utc=2026-11-24T12:59:20 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=523 pdop_centi=124 qualified=true streak=12
+29.446986 [INFO ] L4 GPS PPS edge=30 mono_us=29446974 delta_us=Some(999991) streak=29 bad=0 min_us=Some(999991) max_us=Some(999992)
+29.561491 [INFO ] L4 GPS NAV-PVT tow_ms=219580000 utc=2026-11-24T12:59:22 valid=37 fix_type=3 flags=03 sv=23 hacc_mm=525 pdop_centi=106 qualified=true streak=13
+31.588490 [INFO ] L4 GPS NAV-PVT tow_ms=219582000 utc=2026-11-24T12:59:24 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=525 pdop_centi=106 qualified=true streak=14
+33.569636 [INFO ] L4 GPS NAV-PVT tow_ms=219584000 utc=2026-11-24T12:59:26 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=523 pdop_centi=106 qualified=true streak=15
+34.591789 [INFO ] L4 GPS status elapsed_s=34 bytes=35732 nmea=607 ubx=16 rejected=1 parse_errors=0 uart_error_irqs=0 identity=true pubx00=true pubx04=true pvt_valid=true epoch_match_now=false pps_edges=35 pps_streak=34 passed=true
+35.563655 [INFO ] L4 GPS NAV-PVT tow_ms=219586000 utc=2026-11-24T12:59:28 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=528 pdop_centi=103 qualified=true streak=16
+37.561666 [INFO ] L4 GPS NAV-PVT tow_ms=219588000 utc=2026-11-24T12:59:30 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=528 pdop_centi=103 qualified=true streak=17
+39.446898 [INFO ] L4 GPS PPS edge=40 mono_us=39446886 delta_us=Some(999991) streak=39 bad=0 min_us=Some(999991) max_us=Some(999992)
+39.551670 [INFO ] L4 GPS NAV-PVT tow_ms=219590000 utc=2026-11-24T12:59:32 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=527 pdop_centi=103 qualified=true streak=18
+41.552387 [INFO ] L4 GPS NAV-PVT tow_ms=219592000 utc=2026-11-24T12:59:34 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=525 pdop_centi=103 qualified=true streak=19
+43.570556 [INFO ] L4 GPS NAV-PVT tow_ms=219594000 utc=2026-11-24T12:59:36 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=522 pdop_centi=103 qualified=true streak=20
+44.591818 [INFO ] L4 GPS status elapsed_s=44 bytes=47563 nmea=809 ubx=21 rejected=1 parse_errors=0 uart_error_irqs=0 identity=true pubx00=true pubx04=true pvt_valid=true epoch_match_now=false pps_edges=45 pps_streak=44 passed=true
+45.566392 [INFO ] L4 GPS NAV-PVT tow_ms=219596000 utc=2026-11-24T12:59:38 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=521 pdop_centi=103 qualified=true streak=21
+47.567038 [INFO ] L4 GPS NAV-PVT tow_ms=219598000 utc=2026-11-24T12:59:40 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=517 pdop_centi=103 qualified=true streak=22
+49.446810 [INFO ] L4 GPS PPS edge=50 mono_us=49446798 delta_us=Some(999991) streak=49 bad=0 min_us=Some(999991) max_us=Some(999992)
+49.567328 [INFO ] L4 GPS NAV-PVT tow_ms=219600000 utc=2026-11-24T12:59:42 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=516 pdop_centi=103 qualified=true streak=23
+51.570136 [INFO ] L4 GPS NAV-PVT tow_ms=219602000 utc=2026-11-24T12:59:44 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=513 pdop_centi=103 qualified=true streak=24
+53.574380 [INFO ] L4 GPS NAV-PVT tow_ms=219604000 utc=2026-11-24T12:59:46 valid=37 fix_type=3 flags=03 sv=24 hacc_mm=521 pdop_centi=114 qualified=true streak=25
+54.592049 [INFO ] L4 GPS status elapsed_s=54 bytes=59312 nmea=1010 ubx=26 rejected=1 parse_errors=0 uart_error_irqs=0 identity=true pubx00=true pubx04=true pvt_valid=true epoch_match_now=false pps_edges=55 pps_streak=54 passed=true
+55.580584 [INFO ] L4 GPS NAV-PVT tow_ms=219606000 utc=2026-11-24T12:59:48 valid=37 fix_type=3 flags=03 sv=23 hacc_mm=530 pdop_centi=114 qualified=true streak=26

@@ -1,0 +1,18 @@
+    Checking defmt v1.1.0
+   Compiling embassy-stm32 v0.6.0
+   Compiling unit-smoke-l4-03-gps v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\03_gps)
+error: failed to run custom build command for `unit-smoke-l4-03-gps v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\03_gps)`
+
+Caused by:
+  process didn't exit successfully: `C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\target\release\build\unit-smoke-l4-03-gps-558bdfa6886f6745\build-script-build` (exit code: 101)
+  --- stdout
+  cargo:rerun-if-changed=stack-check.x
+
+  --- stderr
+
+  thread 'main' (47464) panicked at unitsmokeL4\03_gps\build.rs:6:5:
+  assertion `left == right` failed: Evo L4 firmware requires --target thumbv7em-none-eabihf
+    left: "thumbv8m.main-none-eabihf"
+   right: "thumbv7em-none-eabihf"
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...

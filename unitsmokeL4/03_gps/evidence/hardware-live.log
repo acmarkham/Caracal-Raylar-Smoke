@@ -1,0 +1,6 @@
+Error: Failed to open probe: Failed to open the debug probe.
+
+Caused by:
+    0: An error which is specific to the debug probe in use occurred.
+    1: USB error.
+    2: reset not supported by WinUSB

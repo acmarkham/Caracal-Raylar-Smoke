@@ -1,0 +1,6 @@
+# Pass explicitly with --config; never changes the root U5 logging defaults.
+# Wrong-baud scanning deliberately creates USART framing/noise errors. Logging
+# each one from the HAL IRQ can stall RTT and disturb the clock being measured.
+# The leaf IRQ wrapper counts these errors instead.
+[env]
+DEFMT_LOG = { value = "info,embassy_stm32=error", force = true }

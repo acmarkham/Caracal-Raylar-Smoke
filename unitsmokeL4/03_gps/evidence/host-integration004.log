@@ -1,0 +1,29 @@
+warning: function `resolve_periodic_capture_delta` is never used
+ --> crates\drivers\src\gps\capture_counter.rs:7:15
+  |
+7 | pub(crate) fn resolve_periodic_capture_delta(
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `raylar-drivers` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
+     Running unittests lib.rs (target\x86_64-pc-windows-msvc\debug\deps\integration004_radioheartbeat-aafbaa09afe55c2a.exe)
+
+running 13 tests
+test config::tests::fixed_presence_and_heartbeat_vectors_use_distinct_subwindows ... ok
+test policy::tests::role_selection_latches_first_sample ... ok
+test policy::tests::neighbour_state_is_bounded_and_boot_changes_replace_sessions ... ok
+test config::tests::observed_campaign_pair_has_distinct_heartbeat_slots ... ok
+test policy::tests::integration_frames_have_exact_sizes_and_base_capability ... ok
+test policy::tests::local_tx_slots_split_receive_windows_without_overlap ... ok
+test policy::tests::malformed_and_unsupported_presence_are_rejected ... ok
+test policy::tests::observations_are_scan_predicted_outside_or_unverifiable ... ok
+test policy::tests::overlapping_peer_windows_are_merged ... ok
+test policy::tests::guard_uses_every_uncertainty_term ... ok
+test config::tests::accelerated_epoch_and_subwindow_boundaries_are_exact ... ok
+test policy::tests::scan_policy_covers_bootstrap_loss_recovery_and_periodic_discovery ... ok
+test config::tests::every_node_and_purpose_visits_all_slots_without_lockstep ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

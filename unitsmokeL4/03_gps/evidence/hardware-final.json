@@ -1,0 +1,24 @@
+{
+  "started_utc": "2026-11-24T12:58:29.027197+00:00",
+  "command": [
+    "probe-rs",
+    "run",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--verify",
+    "--preverify",
+    "--non-interactive",
+    "--disable-progressbars",
+    "--no-location",
+    "target/thumbv7em-none-eabihf/release/unit-smoke-l4-03-gps"
+  ],
+  "process_id": 39152,
+  "pass": true,
+  "elf_sha256": "aac457c50fb5dac595ef4bd07a41c3808e70502d800849ea9260f42c2bde2715",
+  "host_seconds": 78.85900000005495,
+  "extra_seconds_after_pass": 35.23400000005495
+}

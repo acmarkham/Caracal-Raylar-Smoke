@@ -20,6 +20,7 @@ Read these decisions in order:
 | [L4-005: Schematic and legacy reference](ADR-L4-005-schematic-and-legacy-reference.md) | Initial pin map, conflicting evidence and hardware verification gates |
 | [L4-006: First LED bring-up](ADR-L4-006-first-led-bring-up.md) | Implemented L4 HSE/PLL, Embassy time, GPIO and ST-Link smoke target |
 | [L4-007: SDMMC/DMA and exFAT](ADR-L4-007-sdmmc-dma-exfat.md) | L4 card inspection, exclusive file I/O, fresh-mount readback and reset persistence |
+| [L4-008: GPS UART, fixes and PPS](ADR-L4-008-gps-uart-fix-pps.md) | Quescan/u-blox M10 identity, NMEA/PUBX/UBX and PB5 pulse qualification |
 
 The most consequential correction to the initial brief is **128 KiB physical
 SRAM, not 192 KiB**, for the STM32L476RGT6. The flash limit is 1 MiB.

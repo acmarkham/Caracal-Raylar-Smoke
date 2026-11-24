@@ -1,0 +1,700 @@
+unit-smoke-l4-03-gps v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\03_gps)
+â”œâ”€â”€ cortex-m feature "critical-section-single-core"
+â”‚   â”œâ”€â”€ cortex-m v0.7.7
+â”‚   â”‚   â”œâ”€â”€ bare-metal feature "const-fn"
+â”‚   â”‚   â”‚   â””â”€â”€ bare-metal v0.2.5
+â”‚   â”‚   â”‚       [build-dependencies]
+â”‚   â”‚   â”‚       â””â”€â”€ rustc_version feature "default"
+â”‚   â”‚   â”‚           â””â”€â”€ rustc_version v0.2.3
+â”‚   â”‚   â”‚               â””â”€â”€ semver feature "default"
+â”‚   â”‚   â”‚                   â””â”€â”€ semver v0.9.0
+â”‚   â”‚   â”‚                       â””â”€â”€ semver-parser feature "default"
+â”‚   â”‚   â”‚                           â””â”€â”€ semver-parser v0.7.0
+â”‚   â”‚   â”œâ”€â”€ bare-metal feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ bare-metal v0.2.5 (*)
+â”‚   â”‚   â”œâ”€â”€ bitfield feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ bitfield v0.13.2
+â”‚   â”‚   â”œâ”€â”€ critical-section feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ critical-section v1.2.0
+â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embedded-hal v0.2.7
+â”‚   â”‚   â”‚       â”œâ”€â”€ void v1.0.2
+â”‚   â”‚   â”‚       â””â”€â”€ nb feature "default"
+â”‚   â”‚   â”‚           â””â”€â”€ nb v0.1.3
+â”‚   â”‚   â”‚               â””â”€â”€ nb feature "default"
+â”‚   â”‚   â”‚                   â””â”€â”€ nb v1.1.0
+â”‚   â”‚   â””â”€â”€ volatile-register feature "default"
+â”‚   â”‚       â””â”€â”€ volatile-register v0.2.2
+â”‚   â”‚           â””â”€â”€ vcell feature "default"
+â”‚   â”‚               â””â”€â”€ vcell v0.1.3
+â”‚   â”œâ”€â”€ cortex-m feature "critical-section"
+â”‚   â”‚   â””â”€â”€ cortex-m v0.7.7 (*)
+â”‚   â””â”€â”€ critical-section feature "restore-state-bool"
+â”‚       â””â”€â”€ critical-section v1.2.0
+â”œâ”€â”€ cortex-m feature "default"
+â”‚   â””â”€â”€ cortex-m v0.7.7 (*)
+â”œâ”€â”€ cortex-m feature "inline-asm"
+â”‚   â””â”€â”€ cortex-m v0.7.7 (*)
+â”œâ”€â”€ critical-section feature "default" (*)
+â”œâ”€â”€ cortex-m-rt feature "default"
+â”‚   â””â”€â”€ cortex-m-rt v0.7.5
+â”‚       â””â”€â”€ cortex-m-rt-macros feature "default"
+â”‚           â””â”€â”€ cortex-m-rt-macros v0.7.5 (proc-macro)
+â”‚               â”œâ”€â”€ proc-macro2 feature "default"
+â”‚               â”‚   â”œâ”€â”€ proc-macro2 v1.0.106
+â”‚               â”‚   â”‚   â””â”€â”€ unicode-ident feature "default"
+â”‚               â”‚   â”‚       â””â”€â”€ unicode-ident v1.0.24
+â”‚               â”‚   â””â”€â”€ proc-macro2 feature "proc-macro"
+â”‚               â”‚       â””â”€â”€ proc-macro2 v1.0.106 (*)
+â”‚               â”œâ”€â”€ quote feature "default"
+â”‚               â”‚   â”œâ”€â”€ quote v1.0.45
+â”‚               â”‚   â”‚   â””â”€â”€ proc-macro2 v1.0.106 (*)
+â”‚               â”‚   â””â”€â”€ quote feature "proc-macro"
+â”‚               â”‚       â”œâ”€â”€ quote v1.0.45 (*)
+â”‚               â”‚       â””â”€â”€ proc-macro2 feature "proc-macro" (*)
+â”‚               â”œâ”€â”€ syn feature "default"
+â”‚               â”‚   â”œâ”€â”€ syn v2.0.118
+â”‚               â”‚   â”‚   â”œâ”€â”€ proc-macro2 v1.0.106 (*)
+â”‚               â”‚   â”‚   â”œâ”€â”€ quote v1.0.45 (*)
+â”‚               â”‚   â”‚   â””â”€â”€ unicode-ident feature "default" (*)
+â”‚               â”‚   â”œâ”€â”€ syn feature "clone-impls"
+â”‚               â”‚   â”‚   â””â”€â”€ syn v2.0.118 (*)
+â”‚               â”‚   â”œâ”€â”€ syn feature "derive"
+â”‚               â”‚   â”‚   â””â”€â”€ syn v2.0.118 (*)
+â”‚               â”‚   â”œâ”€â”€ syn feature "parsing"
+â”‚               â”‚   â”‚   â””â”€â”€ syn v2.0.118 (*)
+â”‚               â”‚   â”œâ”€â”€ syn feature "printing"
+â”‚               â”‚   â”‚   â””â”€â”€ syn v2.0.118 (*)
+â”‚               â”‚   â””â”€â”€ syn feature "proc-macro"
+â”‚               â”‚       â”œâ”€â”€ syn v2.0.118 (*)
+â”‚               â”‚       â”œâ”€â”€ proc-macro2 feature "proc-macro" (*)
+â”‚               â”‚       â””â”€â”€ quote feature "proc-macro" (*)
+â”‚               â”œâ”€â”€ syn feature "extra-traits"
+â”‚               â”‚   â””â”€â”€ syn v2.0.118 (*)
+â”‚               â””â”€â”€ syn feature "full"
+â”‚                   â””â”€â”€ syn v2.0.118 (*)
+â”œâ”€â”€ defmt feature "default"
+â”‚   â””â”€â”€ defmt v1.1.0
+â”‚       â”œâ”€â”€ bitflags feature "default"
+â”‚       â”‚   â””â”€â”€ bitflags v1.3.2
+â”‚       â””â”€â”€ defmt-macros feature "default"
+â”‚           â””â”€â”€ defmt-macros v1.1.0 (proc-macro)
+â”‚               â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚               â”œâ”€â”€ quote feature "default" (*)
+â”‚               â”œâ”€â”€ syn feature "default" (*)
+â”‚               â”œâ”€â”€ syn feature "extra-traits" (*)
+â”‚               â”œâ”€â”€ syn feature "full" (*)
+â”‚               â”œâ”€â”€ defmt-parser feature "default"
+â”‚               â”‚   â””â”€â”€ defmt-parser v1.0.0
+â”‚               â”‚       â””â”€â”€ thiserror feature "default"
+â”‚               â”‚           â”œâ”€â”€ thiserror v2.0.18
+â”‚               â”‚           â”‚   â””â”€â”€ thiserror-impl feature "default"
+â”‚               â”‚           â”‚       â””â”€â”€ thiserror-impl v2.0.18 (proc-macro)
+â”‚               â”‚           â”‚           â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚               â”‚           â”‚           â”œâ”€â”€ quote feature "default" (*)
+â”‚               â”‚           â”‚           â””â”€â”€ syn feature "default" (*)
+â”‚               â”‚           â””â”€â”€ thiserror feature "std"
+â”‚               â”‚               â””â”€â”€ thiserror v2.0.18 (*)
+â”‚               â””â”€â”€ proc-macro-error2 feature "default"
+â”‚                   â”œâ”€â”€ proc-macro-error2 v2.0.1
+â”‚                   â”‚   â”œâ”€â”€ syn v2.0.118 (*)
+â”‚                   â”‚   â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚                   â”‚   â”œâ”€â”€ quote feature "default" (*)
+â”‚                   â”‚   â””â”€â”€ proc-macro-error-attr2 feature "default"
+â”‚                   â”‚       â””â”€â”€ proc-macro-error-attr2 v2.0.0 (proc-macro)
+â”‚                   â”‚           â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚                   â”‚           â””â”€â”€ quote feature "default" (*)
+â”‚                   â””â”€â”€ proc-macro-error2 feature "syn-error"
+â”‚                       â””â”€â”€ proc-macro-error2 v2.0.1 (*)
+â”œâ”€â”€ defmt-rtt feature "default"
+â”‚   â””â”€â”€ defmt-rtt v1.2.0
+â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+â”‚       â””â”€â”€ defmt feature "default" (*)
+â”œâ”€â”€ embassy-executor feature "default"
+â”‚   â””â”€â”€ embassy-executor v0.10.0
+â”‚       â”œâ”€â”€ cortex-m feature "default" (*)
+â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+â”‚       â”œâ”€â”€ defmt feature "default" (*)
+â”‚       â”œâ”€â”€ cordyceps feature "default"
+â”‚       â”‚   â””â”€â”€ cordyceps v0.3.4
+â”‚       â”œâ”€â”€ cordyceps feature "no-cache-pad"
+â”‚       â”‚   â””â”€â”€ cordyceps v0.3.4
+â”‚       â”œâ”€â”€ document-features feature "default"
+â”‚       â”‚   â””â”€â”€ document-features v0.2.12 (proc-macro)
+â”‚       â”‚       â””â”€â”€ litrs feature "default"
+â”‚       â”‚           â””â”€â”€ litrs v1.0.0
+â”‚       â”œâ”€â”€ embassy-executor-macros feature "default"
+â”‚       â”‚   â””â”€â”€ embassy-executor-macros v0.8.0 (proc-macro)
+â”‚       â”‚       â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚       â”‚       â”œâ”€â”€ quote feature "default" (*)
+â”‚       â”‚       â”œâ”€â”€ syn feature "default" (*)
+â”‚       â”‚       â”œâ”€â”€ syn feature "full" (*)
+â”‚       â”‚       â”œâ”€â”€ syn feature "visit"
+â”‚       â”‚       â”‚   â””â”€â”€ syn v2.0.118 (*)
+â”‚       â”‚       â””â”€â”€ darling feature "default"
+â”‚       â”‚           â”œâ”€â”€ darling v0.20.11
+â”‚       â”‚           â”‚   â”œâ”€â”€ darling_core feature "default"
+â”‚       â”‚           â”‚   â”‚   â””â”€â”€ darling_core v0.20.11
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ quote feature "default" (*)
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ syn feature "default" (*)
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ syn feature "extra-traits" (*)
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ syn feature "full" (*)
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ fnv feature "default"
+â”‚       â”‚           â”‚   â”‚       â”‚   â”œâ”€â”€ fnv v1.0.7
+â”‚       â”‚           â”‚   â”‚       â”‚   â””â”€â”€ fnv feature "std"
+â”‚       â”‚           â”‚   â”‚       â”‚       â””â”€â”€ fnv v1.0.7
+â”‚       â”‚           â”‚   â”‚       â”œâ”€â”€ ident_case feature "default"
+â”‚       â”‚           â”‚   â”‚       â”‚   â””â”€â”€ ident_case v1.0.1
+â”‚       â”‚           â”‚   â”‚       â””â”€â”€ strsim feature "default"
+â”‚       â”‚           â”‚   â”‚           â””â”€â”€ strsim v0.11.1
+â”‚       â”‚           â”‚   â””â”€â”€ darling_macro feature "default"
+â”‚       â”‚           â”‚       â””â”€â”€ darling_macro v0.20.11 (proc-macro)
+â”‚       â”‚           â”‚           â”œâ”€â”€ quote feature "default" (*)
+â”‚       â”‚           â”‚           â”œâ”€â”€ syn feature "default" (*)
+â”‚       â”‚           â”‚           â””â”€â”€ darling_core feature "default" (*)
+â”‚       â”‚           â””â”€â”€ darling feature "suggestions"
+â”‚       â”‚               â”œâ”€â”€ darling v0.20.11 (*)
+â”‚       â”‚               â””â”€â”€ darling_core feature "suggestions"
+â”‚       â”‚                   â”œâ”€â”€ darling_core v0.20.11 (*)
+â”‚       â”‚                   â””â”€â”€ darling_core feature "strsim"
+â”‚       â”‚                       â””â”€â”€ darling_core v0.20.11 (*)
+â”‚       â””â”€â”€ embassy-executor-timer-queue feature "default"
+â”‚           â””â”€â”€ embassy-executor-timer-queue v0.1.0
+â”œâ”€â”€ embassy-executor feature "defmt"
+â”‚   â””â”€â”€ embassy-executor v0.10.0 (*)
+â”œâ”€â”€ embassy-executor feature "executor-thread"
+â”‚   â””â”€â”€ embassy-executor v0.10.0 (*)
+â”œâ”€â”€ embassy-executor feature "platform-cortex-m"
+â”‚   â”œâ”€â”€ embassy-executor v0.10.0 (*)
+â”‚   â””â”€â”€ embassy-executor feature "_platform"
+â”‚       â””â”€â”€ embassy-executor v0.10.0 (*)
+â”œâ”€â”€ embassy-stm32 feature "default"
+â”‚   â”œâ”€â”€ embassy-stm32 v0.6.0
+â”‚   â”‚   â”œâ”€â”€ embassy-embedded-hal v0.6.0
+â”‚   â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "unproven"
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ embedded-hal v0.2.7 (*)
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ nb feature "unstable"
+â”‚   â”‚   â”‚   â”‚       â””â”€â”€ nb v0.1.3 (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ nb feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ embassy-futures feature "default"
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ embassy-futures v0.1.2
+â”‚   â”‚   â”‚   â”œâ”€â”€ embassy-hal-internal feature "default"
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ embassy-hal-internal v0.4.0
+â”‚   â”‚   â”‚   â”‚       â””â”€â”€ num-traits v0.2.19
+â”‚   â”‚   â”‚   â”‚           [build-dependencies]
+â”‚   â”‚   â”‚   â”‚           â””â”€â”€ autocfg feature "default"
+â”‚   â”‚   â”‚   â”‚               â””â”€â”€ autocfg v1.5.1
+â”‚   â”‚   â”‚   â”œâ”€â”€ embassy-sync feature "default"
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ embassy-sync v0.8.0
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ futures-core v0.3.32
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ futures-sink v0.3.32
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ cfg-if feature "default"
+â”‚   â”‚   â”‚   â”‚       â”‚   â””â”€â”€ cfg-if v1.0.4
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ embedded-io-async feature "default"
+â”‚   â”‚   â”‚   â”‚       â”‚   â””â”€â”€ embedded-io-async v0.7.0
+â”‚   â”‚   â”‚   â”‚       â”‚       â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”‚       â””â”€â”€ embedded-io feature "default"
+â”‚   â”‚   â”‚   â”‚       â”‚           â””â”€â”€ embedded-io v0.7.1
+â”‚   â”‚   â”‚   â”‚       â”‚               â””â”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â””â”€â”€ heapless feature "default"
+â”‚   â”‚   â”‚   â”‚           â””â”€â”€ heapless v0.9.3
+â”‚   â”‚   â”‚   â”‚               â”œâ”€â”€ stable_deref_trait v1.2.1
+â”‚   â”‚   â”‚   â”‚               â””â”€â”€ hash32 feature "default"
+â”‚   â”‚   â”‚   â”‚                   â””â”€â”€ hash32 v0.3.1
+â”‚   â”‚   â”‚   â”‚                       â””â”€â”€ byteorder v1.5.0
+â”‚   â”‚   â”‚   â”œâ”€â”€ embassy-time feature "default"
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ embassy-time v0.5.1
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ futures-core v0.3.32
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ document-features feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ cfg-if feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ embassy-time-driver feature "default"
+â”‚   â”‚   â”‚   â”‚       â”‚   â””â”€â”€ embassy-time-driver v0.2.2
+â”‚   â”‚   â”‚   â”‚       â”‚       â””â”€â”€ document-features feature "default" (*)
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ embedded-hal feature "default"
+â”‚   â”‚   â”‚   â”‚       â”‚   â””â”€â”€ embedded-hal v1.0.0
+â”‚   â”‚   â”‚   â”‚       â””â”€â”€ embedded-hal-async feature "default"
+â”‚   â”‚   â”‚   â”‚           â””â”€â”€ embedded-hal-async v1.0.0
+â”‚   â”‚   â”‚   â”‚               â””â”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ embedded-hal-async feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ embedded-storage feature "default"
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ embedded-storage v0.3.1
+â”‚   â”‚   â”‚   â””â”€â”€ embedded-storage-async feature "default"
+â”‚   â”‚   â”‚       â””â”€â”€ embedded-storage-async v0.4.1
+â”‚   â”‚   â”‚           â””â”€â”€ embedded-storage feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ futures-util v0.3.32
+â”‚   â”‚   â”‚   â”œâ”€â”€ futures-core v0.3.32
+â”‚   â”‚   â”‚   â”œâ”€â”€ futures-task v0.3.32
+â”‚   â”‚   â”‚   â””â”€â”€ pin-project-lite feature "default"
+â”‚   â”‚   â”‚       â””â”€â”€ pin-project-lite v0.2.17
+â”‚   â”‚   â”œâ”€â”€ cortex-m feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ critical-section feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "unproven" (*)
+â”‚   â”‚   â”œâ”€â”€ nb feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ volatile-register feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ vcell feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ cortex-m-rt feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ document-features feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ aligned feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ aligned v0.4.3
+â”‚   â”‚   â”‚       â””â”€â”€ as-slice feature "default"
+â”‚   â”‚   â”‚           â””â”€â”€ as-slice v0.2.1
+â”‚   â”‚   â”‚               â””â”€â”€ stable_deref_trait v1.2.1
+â”‚   â”‚   â”œâ”€â”€ bit_field feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ bit_field v0.10.3
+â”‚   â”‚   â”œâ”€â”€ bitflags feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ bitflags v2.13.0
+â”‚   â”‚   â”œâ”€â”€ block-device-driver feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ block-device-driver v0.2.0
+â”‚   â”‚   â”‚       â””â”€â”€ aligned feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ cfg-if feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-futures feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-sync feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-io-async feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-io feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ heapless feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-time feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-time-driver feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-hal-async feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-storage feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-storage-async feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-hal-internal feature "cortex-m"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-hal-internal v0.5.0
+â”‚   â”‚   â”‚       â”œâ”€â”€ num-traits v0.2.19 (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ cortex-m feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+â”‚   â”‚   â”‚       â””â”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-hal-internal feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-hal-internal v0.5.0 (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-hal-internal feature "prio-bits-4"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-hal-internal v0.5.0 (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-net-driver feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-net-driver v0.2.0
+â”‚   â”‚   â”‚       â””â”€â”€ defmt feature "default"
+â”‚   â”‚   â”‚           â””â”€â”€ defmt v0.3.100
+â”‚   â”‚   â”‚               â””â”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-time-queue-utils feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-time-queue-utils v0.3.2
+â”‚   â”‚   â”‚       â”œâ”€â”€ embassy-executor-timer-queue feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ embassy-executor-timer-queue feature "timer-item-size-6-words"
+â”‚   â”‚   â”‚       â”‚   â””â”€â”€ embassy-executor-timer-queue v0.1.0
+â”‚   â”‚   â”‚       â””â”€â”€ heapless feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embassy-usb-driver feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-usb-driver v0.2.2
+â”‚   â”‚   â”‚       â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ embedded-io-async feature "default" (*)
+â”‚   â”‚   â”‚       â””â”€â”€ embedded-io-async feature "default"
+â”‚   â”‚   â”‚           â””â”€â”€ embedded-io-async v0.6.1
+â”‚   â”‚   â”‚               â””â”€â”€ embedded-io feature "default"
+â”‚   â”‚   â”‚                   â””â”€â”€ embedded-io v0.6.1
+â”‚   â”‚   â”œâ”€â”€ embassy-usb-synopsys-otg feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embassy-usb-synopsys-otg v0.3.3
+â”‚   â”‚   â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ embassy-sync feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ embassy-time feature "default" (*)
+â”‚   â”‚   â”‚       â”œâ”€â”€ embassy-usb-driver feature "default" (*)
+â”‚   â”‚   â”‚       â””â”€â”€ portable-atomic feature "default"
+â”‚   â”‚   â”‚           â”œâ”€â”€ portable-atomic v1.13.1
+â”‚   â”‚   â”‚           â””â”€â”€ portable-atomic feature "fallback"
+â”‚   â”‚   â”‚               â””â”€â”€ portable-atomic v1.13.1
+â”‚   â”‚   â”œâ”€â”€ embedded-can feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embedded-can v0.4.1
+â”‚   â”‚   â”‚       â””â”€â”€ nb feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ embedded-hal-nb feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ embedded-hal-nb v1.0.0
+â”‚   â”‚   â”‚       â”œâ”€â”€ nb feature "default" (*)
+â”‚   â”‚   â”‚       â””â”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ rand_core feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ rand_core v0.6.4
+â”‚   â”‚   â”œâ”€â”€ rand_core feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ rand_core v0.9.5
+â”‚   â”‚   â”œâ”€â”€ sdio-host feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ sdio-host v0.9.0
+â”‚   â”‚   â”œâ”€â”€ static_assertions feature "default"
+â”‚   â”‚   â”‚   â””â”€â”€ static_assertions v1.1.0
+â”‚   â”‚   â”œâ”€â”€ stm32-fmc feature "default"
+â”‚   â”‚   â”‚   â”œâ”€â”€ stm32-fmc v0.4.0
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ embedded-hal feature "default" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ stm32-fmc feature "nand"
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ stm32-fmc v0.4.0 (*)
+â”‚   â”‚   â”‚   â””â”€â”€ stm32-fmc feature "sdram"
+â”‚   â”‚   â”‚       â””â”€â”€ stm32-fmc v0.4.0 (*)
+â”‚   â”‚   â”œâ”€â”€ stm32-metapac feature "default"
+â”‚   â”‚   â”‚   â”œâ”€â”€ stm32-metapac v21.0.0
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ cortex-m feature "default" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ cortex-m-rt feature "default" (*)
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ defmt feature "default" (*)
+â”‚   â”‚   â”‚   â””â”€â”€ stm32-metapac feature "pac"
+â”‚   â”‚   â”‚       â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”‚   â”‚   â””â”€â”€ trait-set feature "default"
+â”‚   â”‚       â””â”€â”€ trait-set v0.3.0 (proc-macro)
+â”‚   â”‚           â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚   â”‚           â”œâ”€â”€ quote feature "default" (*)
+â”‚   â”‚           â””â”€â”€ syn feature "default"
+â”‚   â”‚               â”œâ”€â”€ syn v1.0.109
+â”‚   â”‚               â”‚   â”œâ”€â”€ proc-macro2 v1.0.106 (*)
+â”‚   â”‚               â”‚   â”œâ”€â”€ quote v1.0.45 (*)
+â”‚   â”‚               â”‚   â””â”€â”€ unicode-ident feature "default" (*)
+â”‚   â”‚               â”œâ”€â”€ syn feature "clone-impls"
+â”‚   â”‚               â”‚   â””â”€â”€ syn v1.0.109 (*)
+â”‚   â”‚               â”œâ”€â”€ syn feature "derive"
+â”‚   â”‚               â”‚   â””â”€â”€ syn v1.0.109 (*)
+â”‚   â”‚               â”œâ”€â”€ syn feature "parsing"
+â”‚   â”‚               â”‚   â””â”€â”€ syn v1.0.109 (*)
+â”‚   â”‚               â”œâ”€â”€ syn feature "printing"
+â”‚   â”‚               â”‚   â”œâ”€â”€ syn v1.0.109 (*)
+â”‚   â”‚               â”‚   â””â”€â”€ syn feature "quote"
+â”‚   â”‚               â”‚       â””â”€â”€ syn v1.0.109 (*)
+â”‚   â”‚               â””â”€â”€ syn feature "proc-macro"
+â”‚   â”‚                   â”œâ”€â”€ syn v1.0.109 (*)
+â”‚   â”‚                   â”œâ”€â”€ proc-macro2 feature "proc-macro" (*)
+â”‚   â”‚                   â”œâ”€â”€ quote feature "proc-macro" (*)
+â”‚   â”‚                   â””â”€â”€ syn feature "quote" (*)
+â”‚   â”‚   [build-dependencies]
+â”‚   â”‚   â”œâ”€â”€ proc-macro2 feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ quote feature "default" (*)
+â”‚   â”‚   â”œâ”€â”€ regex feature "default"
+â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ aho-corasick v1.1.4
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ memchr v2.8.2
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ memchr v2.8.2
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "alloc"
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata v0.4.14
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ aho-corasick v1.1.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ memchr v2.8.2
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "meta"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "nfa-pikevm"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "nfa-thompson"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata feature "alloc" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "syntax"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata feature "alloc" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "nfa-pikevm" (*)
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "syntax" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "perf"
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "perf-backtrack"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "nfa-backtrack"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata feature "nfa-thompson" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "perf-cache"
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "perf-dfa"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "hybrid"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata feature "alloc" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata feature "nfa-thompson" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "perf-inline"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "perf-inline"
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "perf-literal"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata feature "perf-literal"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-automata feature "perf-literal-multisubstring"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”‚   â””â”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata feature "perf-literal-substring"
+â”‚   â”‚   â”‚   â”‚   â”‚           â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚           â””â”€â”€ aho-corasick feature "perf-literal"
+â”‚   â”‚   â”‚   â”‚   â”‚               â””â”€â”€ aho-corasick v1.1.4 (*)
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex feature "perf-onepass"
+â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-automata feature "dfa-onepass"
+â”‚   â”‚   â”‚   â”‚           â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚           â””â”€â”€ regex-automata feature "nfa-thompson" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "std"
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ aho-corasick feature "std"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ aho-corasick v1.1.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ memchr feature "std"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ memchr v2.8.2
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ memchr feature "alloc"
+â”‚   â”‚   â”‚   â”‚   â”‚           â””â”€â”€ memchr v2.8.2
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ memchr feature "std" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "std"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ aho-corasick feature "std" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ memchr feature "std" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "alloc" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "std"
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "std" (*)
+â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode"
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-age"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-age"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-age"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-age" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-bool"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-bool"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-bool"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-bool" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-case"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-case"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-case"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-case" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-gencat"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-gencat"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-gencat"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-gencat" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-perl"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-perl"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-perl"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-word-boundary"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-perl" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-script"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-script"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-script"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-script" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex feature "unicode-segment"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex v1.12.4 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-segment"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-segment"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode-segment" (*)
+â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode"
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata v0.4.14 (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-age" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-bool" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-case" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-gencat" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-perl" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-script" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-segment" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â”œâ”€â”€ regex-automata feature "unicode-word-boundary" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode"
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "unicode-age" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "unicode-bool" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "unicode-case" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "unicode-gencat" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "unicode-perl" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "unicode-script" (*)
+â”‚   â”‚   â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax feature "unicode-segment" (*)
+â”‚   â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "unicode" (*)
+â”‚   â”‚   â”‚   â””â”€â”€ regex-syntax feature "default"
+â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax v0.8.11
+â”‚   â”‚   â”‚       â”œâ”€â”€ regex-syntax feature "std" (*)
+â”‚   â”‚   â”‚       â””â”€â”€ regex-syntax feature "unicode" (*)
+â”‚   â”‚   â””â”€â”€ stm32-metapac feature "metadata"
+â”‚   â”‚       â””â”€â”€ stm32-metapac v21.0.0
+â”‚   â”‚           â”œâ”€â”€ cortex-m feature "default"
+â”‚   â”‚           â”‚   â””â”€â”€ cortex-m v0.7.7
+â”‚   â”‚           â”‚       â”œâ”€â”€ bare-metal feature "const-fn"
+â”‚   â”‚           â”‚       â”‚   â””â”€â”€ bare-metal v0.2.5
+â”‚   â”‚           â”‚       â”‚       [build-dependencies]
+â”‚   â”‚           â”‚       â”‚       â””â”€â”€ rustc_version feature "default" (*)
+â”‚   â”‚           â”‚       â”œâ”€â”€ bare-metal feature "default"
+â”‚   â”‚           â”‚       â”‚   â””â”€â”€ bare-metal v0.2.5 (*)
+â”‚   â”‚           â”‚       â”œâ”€â”€ bitfield feature "default"
+â”‚   â”‚           â”‚       â”‚   â””â”€â”€ bitfield v0.13.2
+â”‚   â”‚           â”‚       â”œâ”€â”€ embedded-hal feature "default"
+â”‚   â”‚           â”‚       â”‚   â””â”€â”€ embedded-hal v0.2.7
+â”‚   â”‚           â”‚       â”‚       â”œâ”€â”€ void v1.0.2
+â”‚   â”‚           â”‚       â”‚       â””â”€â”€ nb feature "default"
+â”‚   â”‚           â”‚       â”‚           â””â”€â”€ nb v0.1.3
+â”‚   â”‚           â”‚       â”‚               â””â”€â”€ nb feature "default"
+â”‚   â”‚           â”‚       â”‚                   â””â”€â”€ nb v1.1.0
+â”‚   â”‚           â”‚       â””â”€â”€ volatile-register feature "default"
+â”‚   â”‚           â”‚           â””â”€â”€ volatile-register v0.2.2
+â”‚   â”‚           â”‚               â””â”€â”€ vcell feature "default"
+â”‚   â”‚           â”‚                   â””â”€â”€ vcell v0.1.3
+â”‚   â”‚           â”œâ”€â”€ cortex-m-rt feature "default"
+â”‚   â”‚           â”‚   â””â”€â”€ cortex-m-rt v0.7.5
+â”‚   â”‚           â”‚       â””â”€â”€ cortex-m-rt-macros feature "default" (*)
+â”‚   â”‚           â””â”€â”€ defmt feature "default"
+â”‚   â”‚               â””â”€â”€ defmt v0.3.100
+â”‚   â”‚                   â””â”€â”€ defmt feature "default"
+â”‚   â”‚                       â””â”€â”€ defmt v1.1.0
+â”‚   â”‚                           â”œâ”€â”€ defmt-macros feature "default" (*)
+â”‚   â”‚                           â””â”€â”€ bitflags feature "default"
+â”‚   â”‚                               â””â”€â”€ bitflags v1.3.2
+â”‚   â””â”€â”€ embassy-stm32 feature "rt"
+â”‚       â”œâ”€â”€ embassy-stm32 v0.6.0 (*)
+â”‚       â”œâ”€â”€ stm32-metapac feature "rt"
+â”‚       â”‚   â”œâ”€â”€ stm32-metapac v21.0.0 (*)
+â”‚       â”‚   â”œâ”€â”€ cortex-m-rt feature "device"
+â”‚       â”‚   â”‚   â””â”€â”€ cortex-m-rt v0.7.5 (*)
+â”‚       â”‚   â””â”€â”€ stm32-metapac feature "cortex-m-rt"
+â”‚       â”‚       â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”‚       â””â”€â”€ stm32-metapac feature "rt"
+â”‚           â”œâ”€â”€ stm32-metapac v21.0.0 (*)
+â”‚           â”œâ”€â”€ stm32-metapac feature "cortex-m-rt"
+â”‚           â”‚   â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”‚           â””â”€â”€ cortex-m-rt feature "device"
+â”‚               â””â”€â”€ cortex-m-rt v0.7.5 (*)
+â”œâ”€â”€ embassy-stm32 feature "defmt"
+â”‚   â”œâ”€â”€ embassy-stm32 v0.6.0 (*)
+â”‚   â”œâ”€â”€ embassy-embedded-hal feature "defmt"
+â”‚   â”‚   â””â”€â”€ embassy-embedded-hal v0.6.0 (*)
+â”‚   â”œâ”€â”€ embassy-sync feature "defmt"
+â”‚   â”‚   â””â”€â”€ embassy-sync v0.8.0 (*)
+â”‚   â”œâ”€â”€ embedded-io-async feature "defmt"
+â”‚   â”‚   â”œâ”€â”€ embedded-io-async v0.7.0 (*)
+â”‚   â”‚   â””â”€â”€ embedded-io feature "defmt"
+â”‚   â”‚       â””â”€â”€ embedded-io v0.7.1 (*)
+â”‚   â”œâ”€â”€ embassy-time feature "defmt"
+â”‚   â”‚   â””â”€â”€ embassy-time v0.5.1 (*)
+â”‚   â”œâ”€â”€ embassy-hal-internal feature "defmt"
+â”‚   â”‚   â””â”€â”€ embassy-hal-internal v0.5.0 (*)
+â”‚   â”œâ”€â”€ embassy-net-driver feature "defmt"
+â”‚   â”‚   â””â”€â”€ embassy-net-driver v0.2.0 (*)
+â”‚   â”œâ”€â”€ embassy-usb-driver feature "defmt"
+â”‚   â”‚   â””â”€â”€ embassy-usb-driver v0.2.2 (*)
+â”‚   â”œâ”€â”€ embassy-usb-synopsys-otg feature "defmt"
+â”‚   â”‚   â”œâ”€â”€ embassy-usb-synopsys-otg v0.3.3 (*)
+â”‚   â”‚   â””â”€â”€ embassy-usb-driver feature "defmt" (*)
+â”‚   â”œâ”€â”€ stm32-metapac feature "defmt"
+â”‚   â”‚   â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”‚   â””â”€â”€ stm32-metapac feature "defmt"
+â”‚       â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”œâ”€â”€ embassy-stm32 feature "exti"
+â”‚   â””â”€â”€ embassy-stm32 v0.6.0 (*)
+â”œâ”€â”€ embassy-stm32 feature "memory-x"
+â”‚   â””â”€â”€ embassy-stm32 v0.6.0 (*)
+â”œâ”€â”€ embassy-stm32 feature "stm32l476rg"
+â”‚   â”œâ”€â”€ embassy-stm32 v0.6.0 (*)
+â”‚   â”œâ”€â”€ stm32-metapac feature "stm32l476rg"
+â”‚   â”‚   â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”‚   â””â”€â”€ stm32-metapac feature "stm32l476rg"
+â”‚       â””â”€â”€ stm32-metapac v21.0.0 (*)
+â”œâ”€â”€ embassy-stm32 feature "time-driver-tim5"
+â”‚   â”œâ”€â”€ embassy-stm32 v0.6.0 (*)
+â”‚   â””â”€â”€ embassy-stm32 feature "_time-driver"
+â”‚       â”œâ”€â”€ embassy-stm32 v0.6.0 (*)
+â”‚       â””â”€â”€ embassy-stm32 feature "time"
+â”‚           â”œâ”€â”€ embassy-stm32 v0.6.0 (*)
+â”‚           â””â”€â”€ embassy-embedded-hal feature "time"
+â”‚               â””â”€â”€ embassy-embedded-hal v0.6.0 (*)
+â”œâ”€â”€ embassy-stm32 feature "unstable-pac"
+â”‚   â””â”€â”€ embassy-stm32 v0.6.0 (*)
+â”œâ”€â”€ embedded-io-async feature "default" (*)
+â”œâ”€â”€ embassy-time feature "default" (*)
+â”œâ”€â”€ embassy-time feature "defmt" (*)
+â”œâ”€â”€ embassy-time feature "defmt-timestamp-uptime"
+â”‚   â”œâ”€â”€ embassy-time v0.5.1 (*)
+â”‚   â””â”€â”€ embassy-time feature "defmt" (*)
+â”œâ”€â”€ embassy-time feature "tick-hz-1_000_000"
+â”‚   â”œâ”€â”€ embassy-time v0.5.1 (*)
+â”‚   â””â”€â”€ embassy-time-driver feature "tick-hz-1_000_000"
+â”‚       â””â”€â”€ embassy-time-driver v0.2.2 (*)
+â”œâ”€â”€ panic-probe feature "default"
+â”‚   â””â”€â”€ panic-probe v1.0.0
+â”‚       â”œâ”€â”€ cortex-m feature "default" (*)
+â”‚       â””â”€â”€ defmt feature "default" (*)
+â”œâ”€â”€ panic-probe feature "print-defmt"
+â”‚   â”œâ”€â”€ panic-probe v1.0.0 (*)
+â”‚   â”œâ”€â”€ panic-probe feature "defmt"
+â”‚   â”‚   â””â”€â”€ panic-probe v1.0.0 (*)
+â”‚   â””â”€â”€ panic-probe feature "defmt-error"
+â”‚       â””â”€â”€ panic-probe v1.0.0 (*)
+â””â”€â”€ raylar-drivers feature "defmt"
+    â”œâ”€â”€ raylar-drivers v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\crates\drivers)
+    â”‚   â”œâ”€â”€ exfat-slim v0.5.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\third_party\exfat-slim)
+    â”‚   â”‚   â”œâ”€â”€ bisync v0.3.0
+    â”‚   â”‚   â”‚   â””â”€â”€ bisync_macros feature "default"
+    â”‚   â”‚   â”‚       â””â”€â”€ bisync_macros v0.2.3 (proc-macro)
+    â”‚   â”‚   â”œâ”€â”€ bitflags v2.13.0
+    â”‚   â”‚   â”œâ”€â”€ block-device-driver v0.2.0 (*)
+    â”‚   â”‚   â”œâ”€â”€ byteorder v1.5.0
+    â”‚   â”‚   â”œâ”€â”€ defmt v1.1.0 (*)
+    â”‚   â”‚   â”œâ”€â”€ heapless v0.9.3 (*)
+    â”‚   â”‚   â”œâ”€â”€ thiserror v2.0.18
+    â”‚   â”‚   â”‚   â””â”€â”€ thiserror-impl feature "default" (*)
+    â”‚   â”‚   â””â”€â”€ aligned feature "default" (*)
+    â”‚   â”œâ”€â”€ defmt feature "default" (*)
+    â”‚   â”œâ”€â”€ aligned feature "default" (*)
+    â”‚   â”œâ”€â”€ embassy-futures feature "default" (*)
+    â”‚   â”œâ”€â”€ embedded-io-async feature "default" (*)
+    â”‚   â”œâ”€â”€ embassy-time feature "default" (*)
+    â”‚   â”œâ”€â”€ embassy-time feature "defmt" (*)
+    â”‚   â”œâ”€â”€ embassy-time feature "defmt-timestamp-uptime" (*)
+    â”‚   â”œâ”€â”€ embassy-time feature "tick-hz-1_000_000" (*)
+    â”‚   â”œâ”€â”€ embedded-hal feature "default" (*)
+    â”‚   â”œâ”€â”€ embedded-hal-async feature "default" (*)
+    â”‚   â”œâ”€â”€ arbitrary-int feature "default"
+    â”‚   â”‚   â””â”€â”€ arbitrary-int v1.3.0
+    â”‚   â”œâ”€â”€ embassy-sync feature "default"
+    â”‚   â”‚   â””â”€â”€ embassy-sync v0.7.2
+    â”‚   â”‚       â”œâ”€â”€ futures-core v0.3.32
+    â”‚   â”‚       â”œâ”€â”€ futures-sink v0.3.32
+    â”‚   â”‚       â”œâ”€â”€ critical-section feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ defmt feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ cfg-if feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ embedded-io-async feature "default" (*)
+    â”‚   â”‚       â””â”€â”€ heapless feature "default"
+    â”‚   â”‚           â””â”€â”€ heapless v0.8.0
+    â”‚   â”‚               â”œâ”€â”€ stable_deref_trait v1.2.1
+    â”‚   â”‚               â””â”€â”€ hash32 feature "default" (*)
+    â”‚   â”œâ”€â”€ heapless feature "default" (*)
+    â”‚   â”œâ”€â”€ lr11xx feature "default"
+    â”‚   â”‚   â””â”€â”€ lr11xx v0.1.0
+    â”‚   â”‚       â”œâ”€â”€ thiserror v2.0.18 (*)
+    â”‚   â”‚       â”œâ”€â”€ defmt feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ embedded-hal feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ embedded-hal-async feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ arbitrary-int feature "default" (*)
+    â”‚   â”‚       â”œâ”€â”€ bitbybit feature "default"
+    â”‚   â”‚       â”‚   â””â”€â”€ bitbybit v1.4.0 (proc-macro)
+    â”‚   â”‚       â”‚       â”œâ”€â”€ proc-macro2 feature "default" (*)
+    â”‚   â”‚       â”‚       â”œâ”€â”€ quote feature "default" (*)
+    â”‚   â”‚       â”‚       â”œâ”€â”€ syn feature "default" (*)
+    â”‚   â”‚       â”‚       â”œâ”€â”€ syn feature "full" (*)
+    â”‚   â”‚       â”‚       â””â”€â”€ arbitrary-int feature "default"
+    â”‚   â”‚       â”‚           â””â”€â”€ arbitrary-int v1.3.0
+    â”‚   â”‚       â”œâ”€â”€ bytemuck feature "default"
+    â”‚   â”‚       â”‚   â””â”€â”€ bytemuck v1.25.0
+    â”‚   â”‚       â””â”€â”€ lora-phy feature "default"
+    â”‚   â”‚           â””â”€â”€ lora-phy v3.0.1
+    â”‚   â”‚               â”œâ”€â”€ num-traits v0.2.19 (*)
+    â”‚   â”‚               â”œâ”€â”€ embedded-hal feature "default" (*)
+    â”‚   â”‚               â”œâ”€â”€ embedded-hal-async feature "default" (*)
+    â”‚   â”‚               â”œâ”€â”€ defmt feature "default" (*)
+    â”‚   â”‚               â””â”€â”€ lora-modulation feature "default"
+    â”‚   â”‚                   â””â”€â”€ lora-modulation v0.1.5
+    â”‚   â””â”€â”€ raylar-stage-profiling feature "default"
+    â”‚       â””â”€â”€ raylar-stage-profiling v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\crates\profiling)
+    â”œâ”€â”€ embassy-sync feature "defmt"
+    â”‚   â””â”€â”€ embassy-sync v0.7.2 (*)
+    â””â”€â”€ exfat-slim feature "defmt"
+        â””â”€â”€ exfat-slim v0.5.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\third_party\exfat-slim) (*)
