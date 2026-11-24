@@ -1,0 +1,2 @@
+[env]
+DEFMT_LOG = { value = "info,embassy_stm32=error", force = true }

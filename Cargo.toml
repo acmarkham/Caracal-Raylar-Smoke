@@ -95,6 +95,7 @@ members = [
     "unitsmokeL4/01_helloworld",
     "unitsmokeL4/02_exfat",
     "unitsmokeL4/03_gps",
+    "unitsmokeL4/04_timing",
 ]
 
 [workspace.package]
