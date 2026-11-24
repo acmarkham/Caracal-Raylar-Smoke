@@ -1,0 +1,42 @@
+{
+  "utc": "2026-11-24T19:50:45.193115+00:00",
+  "seconds_after_reset": 87.208757,
+  "command": [
+    "probe-rs",
+    "read",
+    "b32",
+    "0x200090f8",
+    "12",
+    "--output",
+    "unitsmokeL4\\05_mono_audio\\evidence\\standalone-meta.bin",
+    "--format",
+    "binary",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "exit_code": 0,
+  "output": "",
+  "descriptor_words": [
+    1430336588,
+    1,
+    16000,
+    8192,
+    1,
+    24,
+    32,
+    1,
+    303104,
+    0,
+    1387993937,
+    0
+  ],
+  "qualification_completed_without_rtt": true,
+  "previous_descriptor_was_zero": true,
+  "snapshot_hash_changed": true,
+  "interpretation": "The descriptor was zero before reset; ready is now published after all finite qualification assertions and DMA shutdown. No RTT session or memory attachment occurred during acquisition."
+}

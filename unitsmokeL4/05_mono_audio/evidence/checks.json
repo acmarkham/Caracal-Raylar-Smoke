@@ -1,0 +1,29 @@
+{
+  "wrong_target_rejected": true,
+  "wrong_target_command": [
+    "cargo",
+    "check",
+    "-p",
+    "unit-smoke-l4-05-mono-audio",
+    "--target",
+    "thumbv8m.main-none-eabihf",
+    "--locked",
+    "--offline"
+  ],
+  "rustfmt_command": [
+    "rustfmt",
+    "--check",
+    "--edition",
+    "2021",
+    "unitsmokeL4\\05_mono_audio\\build.rs",
+    "unitsmokeL4\\05_mono_audio\\dfsdm.rs",
+    "unitsmokeL4\\05_mono_audio\\lib.rs",
+    "unitsmokeL4\\05_mono_audio\\main.rs"
+  ],
+  "rustfmt": "PASS",
+  "git_diff_check": "PASS",
+  "markdown_relative_links_fences_whitespace": "PASS",
+  "source_lockfile_and_tested_image_hashes": "PASS",
+  "firmware_zip_sha256_and_61_build_logs": "PASS",
+  "standalone_reset_without_rtt_or_midcapture_memory_attach": "PASS"
+}

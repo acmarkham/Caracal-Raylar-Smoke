@@ -1,0 +1,6 @@
+     Finished in 16.10s
+0.000016 [INFO ] L4 AUDIO boot chip=STM32L476RG sys_hz=80000000 mic_clock=PC2_AF6 data=PB12_AF6 channel=1 edge=rising pdm_hz=3200000 sinc=5 fosr=50 iosr=4 shift=8 rate_hz=16000 valid_bits=24 dma_word_bits=32
+0.100134 [INFO ] L4 AUDIO registers ch0=80180000 ch1=000000c4 ch1_shift=00000040 cr1=21240001 cr2=00000000 fcr=a0310003 rcc_ccipr=00000000
+0.100230 [INFO ] L4 AUDIO DMA configured dma=DMA1_CH4 request=0 cr=00003aaf ndtr=1024 buffer=20009a80 bytes=4096 half_samples=512 half_us=32000 snapshot=200010f8 snapshot_words=8192 meta=200090f8
+0.132952 [INFO ] L4 AUDIO first DMA words=fff86400,fff91700,fff8e200,fff98600
+0.133028 [ERROR] panicked at 'L4 AUDIO FAIL unexpected channel/pending bits'

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "utc": "2026-11-24T19:43:59.854199+00:00",
+  "source_git": "d5c51a74b59acb814890ad8246e1d4f50ef64891-dirty",
+  "package": "unit-smoke-l4-05-mono-audio",
+  "chip": "STM32L476RGTx",
+  "target": "thumbv7em-none-eabihf",
+  "profile": "release",
+  "build_command": [
+    "cargo",
+    "build",
+    "-p",
+    "unit-smoke-l4-05-mono-audio",
+    "--target",
+    "thumbv7em-none-eabihf",
+    "--release",
+    "--locked",
+    "--offline"
+  ],
+  "tool_versions": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "probe_rs": "probe-rs 0.30.0 (git commit: eab9c5e)"
+  },
+  "environment": {
+    "DEFMT_LOG": "info"
+  },
+  "source_sha256": {
+    "Cargo.toml": "1e7dc4c5ae29cfbb8291dd9465e31ef615b51e93f5ed1f418bacc0abcb657731",
+    ".cargo/config.toml": "f2eccf4e494eed37d5aa0cc49b117251920df18cd509c2d199b47b55f6a5413c",
+    "unitsmokeL4/05_mono_audio/build.rs": "450c86b5e24b7daf1f36b9271110933358c7c91ad5f6adb2d556b9a986cb2cee",
+    "unitsmokeL4/05_mono_audio/Cargo.toml": "1d09c2489be378bcbf667344c493a30025d1b209a8c7a4b14c47a0d833c2001a",
+    "unitsmokeL4/05_mono_audio/dfsdm.rs": "d9ffebc042a86373fe9259d47dd6029acb7ed55569e1de92d08083bf25b7cdbf",
+    "unitsmokeL4/05_mono_audio/export_audio.py": "fe1987424a228d779a2b586de1e37566fe57b7f73996e30405d58cbc5ccfe0c7",
+    "unitsmokeL4/05_mono_audio/lib.rs": "de01102b0ab6fdb1d6722b9f5d0430b039afb90ba2e0bb15183fa188c1b7029b",
+    "unitsmokeL4/05_mono_audio/main.rs": "69a493b7d628e0e4eb5226bc57b9beead9ecda2591026c3d01697f6ffa6bc57f",
+    "unitsmokeL4/05_mono_audio/stack-check.x": "9b6552da83c552696d3222b40035768a3cd914d315234e11a4b7e54920064e59"
+  },
+  "lockfile_sha256": "2ee5ff7570bcae55f8c55a75e851673422789c178330f6fba2eeb5f8c175f1ac",
+  "image": {
+    "elf_sha256": "1b4e3f906013bd8fd8ee29b5f17ef9a278f0f7308bc3de7ef6ae51c0b03e1451",
+    "bin_sha256": "bd06594235b6686b29cf08cfb370c907b9360a9c94f38f3a7102524192ca8a9c",
+    "flash_origin": "0x08000000",
+    "flash_bytes": 30128,
+    "sram1_static_extent_bytes": 44944,
+    "sram1_stack_and_unused_bytes": 53360,
+    "sram2_bytes_used": 0,
+    "initial_sp": "0x20018000",
+    "segments": [
+      {
+        "offset": 276,
+        "vaddr": 134217728,
+        "paddr": 134217728,
+        "filesz": 392,
+        "memsz": 392
+      },
+      {
+        "offset": 668,
+        "vaddr": 134218120,
+        "paddr": 134218120,
+        "filesz": 21892,
+        "memsz": 21892
+      },
+      {
+        "offset": 22560,
+        "vaddr": 134240012,
+        "paddr": 134240012,
+        "filesz": 3500,
+        "memsz": 3500
+      },
+      {
+        "offset": 26064,
+        "vaddr": 536870912,
+        "paddr": 134243512,
+        "filesz": 4344,
+        "memsz": 4344
+      },
+      {
+        "offset": 30432,
+        "vaddr": 536875256,
+        "paddr": 536875256,
+        "filesz": 0,
+        "memsz": 40600
+      }
+    ]
+  },
+  "scope": "16 kHz mono DFSDM/DMA, signed 24-bit PCM in i32, shared AudioSource readback and stopped RAM export; no acoustic ENOB or absolute sample frequency claim"
+}

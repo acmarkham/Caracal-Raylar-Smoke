@@ -1,0 +1,33 @@
+{
+  "utc": "2026-11-24T19:49:17.984358+00:00",
+  "command": [
+    "probe-rs",
+    "reset",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "exit_code": 0,
+  "output": "",
+  "previous_descriptor": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "reset_catch_disabled_by_previous_run": true,
+  "no_memory_attach_during_acquisition": true,
+  "elf_sha256": "1b4e3f906013bd8fd8ee29b5f17ef9a278f0f7308bc3de7ef6ae51c0b03e1451"
+}

@@ -17,6 +17,16 @@ fresh caches. The async API shares the implementation through `bisync`; the
 Aardwolf target build checks its embedded integration. These tests do not replace
 an SD-card endurance trial.
 
+RAM-limited targets can opt into `small-write-batches`, which reserves four
+sectors (2 KiB at 512 bytes/sector) for write staging. The default remains 128
+sectors (64 KiB). This changes the transaction batch size, not file contents or
+filesystem semantics. Select it only in a separately built target; Cargo merges
+features when packages are built together.
+
+```powershell
+rtk cargo test --manifest-path third_party/exfat-slim/Cargo.toml --target x86_64-pc-windows-msvc --features small-write-batches
+```
+
 ## Introduction
 
 The exfat file system is an upgrade to the FAT32 file system. 

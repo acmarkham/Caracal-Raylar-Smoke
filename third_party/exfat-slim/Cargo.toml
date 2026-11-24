@@ -32,5 +32,6 @@ default = []
 defmt = ["dep:defmt"]
 embassy = ["dep:embassy-sync", "dep:static_cell"]
 log = ["dep:log"]
+small-write-batches = [] # Opt-in 2 KiB staging for RAM-limited targets; default stays 64 KiB.
 
 [workspace]

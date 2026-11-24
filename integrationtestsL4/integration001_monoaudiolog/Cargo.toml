@@ -1,0 +1,48 @@
+[package]
+name = "integration-test-l4-001-monoaudiolog"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name = "integration-test-l4-001-monoaudiolog"
+path = "main.rs"
+required-features = ["firmware"]
+test = false
+bench = false
+
+[features]
+default = ["firmware"]
+firmware = ["dep:embassy-stm32", "dep:embassy-executor", "dep:embassy-time", "dep:embassy-sync", "dep:embassy-futures", "dep:defmt", "dep:defmt-rtt", "dep:panic-probe", "dep:cortex-m", "dep:cortex-m-rt", "dep:static_cell", "dep:aligned", "dep:embedded-alloc", "dep:heapless", "dep:exfat-slim", "dep:raylar-drivers", "dep:raylar-audiosource", "dep:raylar-audio-recorder-service", "dep:raylar-storage-service", "dep:raylar-logging-service", "dep:raylar-time-service", "dep:unit-smoke-l4-05-mono-audio"]
+bench-three-minutes = []
+
+[dependencies]
+embassy-stm32 = { version = "0.6.0", features = ["defmt", "memory-x", "stm32l476rg", "time-driver-tim5", "unstable-pac"], optional = true }
+embassy-executor = { workspace = true, optional = true }
+embassy-time = { workspace = true, optional = true }
+embassy-sync = { version = "0.7.2", optional = true }
+embassy-futures = { version = "0.1.2", optional = true }
+defmt = { workspace = true, optional = true }
+defmt-rtt = { workspace = true, features = ["disable-blocking-mode"], optional = true }
+panic-probe = { workspace = true, optional = true }
+cortex-m = { workspace = true, optional = true }
+cortex-m-rt = { workspace = true, optional = true }
+static_cell = { workspace = true, optional = true }
+aligned = { version = "0.4.2", optional = true }
+embedded-alloc = { version = "0.7.0", default-features = false, features = ["llff"], optional = true }
+heapless = { version = "0.8.0", optional = true }
+exfat-slim = { version = "0.5.0", default-features = false, features = ["defmt", "small-write-batches"], optional = true }
+raylar-drivers = { path = "../../crates/drivers", default-features = false, features = ["defmt"], optional = true }
+raylar-audiosource = { path = "../../crates/metadrivers/audiosource", features = ["defmt"], optional = true }
+raylar-audio-recorder-service = { path = "../../crates/services/audiorecorder", features = ["defmt"], optional = true }
+raylar-storage-service = { path = "../../crates/services/storage", features = ["defmt"], optional = true }
+raylar-logging-service = { path = "../../crates/services/logging", features = ["defmt"], optional = true }
+raylar-time-service = { path = "../../crates/services/time", default-features = false, features = ["defmt"], optional = true }
+unit-smoke-l4-05-mono-audio = { path = "../../unitsmokeL4/05_mono_audio", default-features = false, optional = true }
+
+[package.metadata.embassy]
+build = [{ target = "thumbv7em-none-eabihf", artifact-dir = "out/integrationtestsL4/integration001_monoaudiolog" }]

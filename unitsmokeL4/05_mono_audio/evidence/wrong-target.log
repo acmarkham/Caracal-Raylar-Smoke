@@ -1,0 +1,17 @@
+   Compiling embassy-stm32 v0.6.0
+   Compiling unit-smoke-l4-05-mono-audio v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\05_mono_audio)
+error: failed to run custom build command for `unit-smoke-l4-05-mono-audio v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\05_mono_audio)`
+
+Caused by:
+  process didn't exit successfully: `C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\target\debug\build\unit-smoke-l4-05-mono-audio-8849559f564a2337\build-script-build` (exit code: 101)
+  --- stdout
+  cargo:rerun-if-changed=stack-check.x
+
+  --- stderr
+
+  thread 'main' (5652) panicked at unitsmokeL4\05_mono_audio\build.rs:6:5:
+  assertion `left == right` failed: Evo L4 firmware requires --target thumbv7em-none-eabihf
+    left: "thumbv8m.main-none-eabihf"
+   right: "thumbv7em-none-eabihf"
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...

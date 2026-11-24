@@ -20,7 +20,7 @@ use crate::timestamp::Timestamp;
 // Match the storage service's default 64 KiB aggregation window. A full,
 // physically contiguous run is handed to the block device in one call so an
 // SDMMC implementation can use one multi-block DMA transaction.
-const WRITE_BATCH_BLOCKS: usize = 128;
+const WRITE_BATCH_BLOCKS: usize = if cfg!(feature = "small-write-batches") { 4 } else { 128 };
 
 #[derive(Clone, Debug, Default)]
 pub struct OpenOptions {
@@ -1110,8 +1110,15 @@ mod tests {
     use super::{WRITE_BATCH_BLOCKS, remaining_bytes_at_cursor};
 
     #[test]
+    #[cfg(not(feature = "small-write-batches"))]
     fn write_batch_matches_64_kib_storage_window() {
         assert_eq!(WRITE_BATCH_BLOCKS * 512, 64 * 1024);
+    }
+
+    #[test]
+    #[cfg(feature = "small-write-batches")]
+    fn small_write_batch_preserves_multiblock_io_with_two_kib_staging() {
+        assert_eq!(WRITE_BATCH_BLOCKS * 512, 2048);
     }
 
     #[test]

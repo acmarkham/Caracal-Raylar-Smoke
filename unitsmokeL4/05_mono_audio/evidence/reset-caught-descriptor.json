@@ -1,0 +1,40 @@
+{
+  "utc": "2026-11-24T19:45:16.740418+00:00",
+  "seconds_after_reset": 78.802092,
+  "command": [
+    "probe-rs",
+    "read",
+    "b32",
+    "0x200090f8",
+    "12",
+    "--output",
+    "unitsmokeL4\\05_mono_audio\\evidence\\standalone-meta.bin",
+    "--format",
+    "binary",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "exit_code": 0,
+  "output": "",
+  "descriptor_words": [
+    1430336588,
+    1,
+    16000,
+    8192,
+    1,
+    24,
+    32,
+    1,
+    301568,
+    0,
+    3469352793,
+    0
+  ],
+  "qualification_completed_without_rtt": false,
+  "interpretation": "Unconfirmed: descriptor is byte-identical to the earlier capture. Reset command success alone does not demonstrate a new boot."
+}

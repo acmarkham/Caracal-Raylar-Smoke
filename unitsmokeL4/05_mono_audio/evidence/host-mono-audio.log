@@ -1,0 +1,13 @@
+   Compiling unit-smoke-l4-05-mono-audio v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\05_mono_audio)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.81s
+     Running unittests lib.rs (target\x86_64-pc-windows-msvc\debug\deps\unit_smoke_l4_05_mono_audio-887c47c83b93b0e5.exe)
+
+running 5 tests
+test tests::dc_offset_does_not_hide_audio_variation ... ok
+test tests::exact_rate_and_internal_gain_fit_signed_widths ... ok
+test tests::full_scale_power_needs_more_than_32_bits_and_preserves_sign ... ok
+test tests::flags_and_low_pcm_bits_are_checked_independently ... ok
+test tests::pcm_boundaries_and_metadata_do_not_change_samples ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

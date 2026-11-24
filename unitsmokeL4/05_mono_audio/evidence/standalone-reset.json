@@ -1,0 +1,17 @@
+{
+  "utc": "2026-11-24T19:43:57.938326+00:00",
+  "command": [
+    "probe-rs",
+    "reset",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "exit_code": 0,
+  "output": "",
+  "purpose": "Run the verified image after reset without an RTT monitor"
+}

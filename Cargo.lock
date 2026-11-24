@@ -1139,6 +1139,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "integration-test-l4-001-monoaudiolog"
+version = "0.1.0"
+dependencies = [
+ "aligned",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-stm32",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-alloc",
+ "exfat-slim",
+ "heapless 0.8.0",
+ "panic-probe",
+ "raylar-audio-recorder-service",
+ "raylar-audiosource",
+ "raylar-drivers",
+ "raylar-logging-service",
+ "raylar-storage-service",
+ "raylar-time-service",
+ "static_cell",
+ "unit-smoke-l4-05-mono-audio",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2646,6 +2674,21 @@ dependencies = [
  "raylar-drivers",
  "raylar-time-service",
  "unit-smoke-l4-03-gps",
+]
+
+[[package]]
+name = "unit-smoke-l4-05-mono-audio"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-stm32",
+ "embassy-time",
+ "panic-probe",
+ "raylar-audiosource",
 ]
 
 [[package]]

@@ -1,0 +1,636 @@
+{
+  "source_baseline_head": "d5c51a74b59acb814890ad8246e1d4f50ef64891",
+  "u5_firmware_builds": [
+    {
+      "package": "aardwolf",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-gps",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-batterycharger",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-voltagemonitor",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-sensor-acc",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-sensor-mag",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-storage",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-mic-array",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-identity",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-buzzer",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-led",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-radio",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-button",
+      "exit_code": 0
+    },
+    {
+      "package": "metadriver-test-audiosource",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-time",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-storage",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-logging",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-audiorecorder",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-flacencoder",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-crclencoder",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-powermanagement",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-location",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-sensors",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-identity",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-001-powermonitorlog",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-002-monoaudiolog",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-003-radio-range",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-004-radio-heartbeat",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-01-helloworld",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-02-userbutton",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-03-buzzer",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-04-sensi2c",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-05-sensi2c-acc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-06-sensi2c-mag",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-07-sensi2c-bq",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-08_serial-gps",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-09_serial-gps_pps",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-10_pdm-mic1-mono",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-11_sdmmc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-12_ebyte-rf",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-13_ebyte-rx-tx",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-14_ebyte-subg-lora",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-15_ebyte-crate",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-16_ebyte-crate-rx",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-17-sleep-test",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-18-pdm-mic1-dma",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-19-pdm-micarray-dma",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-20-pdm-mic-all-dma",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-21-qwiic-oled",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-22-read-adc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-23_gps-standby",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-24-batt-charger",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-25_sd_rawspeed",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-26-tempsensors",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-27-usb-cdc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-28-gps-tim-cc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-29_exfat_read",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-30_exfat_write",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-31-sd-inspect",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-32-lightranger-i2c",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-33-power-profile",
+      "exit_code": 0
+    }
+  ],
+  "feature_comparisons": [
+    {
+      "package": "aardwolf",
+      "unchanged": true,
+      "sha256": "95b2d18c51a532a580de272f4619cd0e6b2be45d93b82b8b21e04138a4b69db6"
+    },
+    {
+      "package": "driver-test-mic-array",
+      "unchanged": true,
+      "sha256": "e94ccb23638804cc3c5207d7e7f9b44fa88cc1b67d935450de02f439796118bb"
+    },
+    {
+      "package": "metadriver-test-audiosource",
+      "unchanged": true,
+      "sha256": "4ae2794634c962a321aa984bf94c67e60624dff42fafe4d34ced339314633d11"
+    },
+    {
+      "package": "service-test-audiorecorder",
+      "unchanged": true,
+      "sha256": "8aa79cc443dcba0aeeabe9cacc1a5be09158af8365939924eef0a7f8a33cf2ff"
+    },
+    {
+      "package": "unit-smoke-18-pdm-mic1-dma",
+      "unchanged": true,
+      "sha256": "171d78919bad5b93fa69d57b630f4388c47d3857e08b0c0130be00521f960a84"
+    },
+    {
+      "package": "unit-smoke-l4-01-helloworld",
+      "unchanged": true,
+      "sha256": "2b6f16c2a3be817b14215d8689ca01b078a41870efafb02a32cbb16a011c5b2a"
+    },
+    {
+      "package": "unit-smoke-l4-02-exfat",
+      "unchanged": true,
+      "sha256": "902154ae821a57aadf6daff9045d69d00a0ea4a280b499a929c249d1e439415a"
+    },
+    {
+      "package": "unit-smoke-l4-03-gps",
+      "unchanged": true,
+      "sha256": "f1c8b0ce0729c384945299f353b07ea533289dc38f17ad220a3c9f416c341874"
+    },
+    {
+      "package": "unit-smoke-l4-04-timing",
+      "unchanged": true,
+      "sha256": "54f400ef00dcf71c95ca8c4a247dfc2a46c6841dd01781fa1982e8c81ecfa800"
+    }
+  ],
+  "u5_elf_comparisons": [
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\aardwolf",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\crcl-loop-benchmark",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-batterycharger",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-button",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-buzzer",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-gps",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-identity",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-led",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-mic-array",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-radio",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-sensor-acc",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-sensor-mag",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-storage",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\driver-test-voltagemonitor",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\flac-cpu-benchmark",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\integration-test-001-powermonitorlog",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\integration-test-002-monoaudiolog",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\integration-test-003-radio-range",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\integration-test-004-radio-heartbeat",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\metadriver-test-audiosource",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\radio-sleep-stress",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\sd-lifecycle-stress",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-audiorecorder",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-crclencoder",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-flacencoder",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-identity",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-location",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-logging",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-powermanagement",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-sensors",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-storage-audio",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-storage-log-gps",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\service-test-time",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-01-helloworld",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-02-userbutton",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-03-buzzer",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-04-sensi2c",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-05-sensi2c-acc",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-06-sensi2c-mag",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-07-sensi2c-bq",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-08_serial-gps",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-09_serial-gps_pps",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-10_pdm-mic1-mono",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-11_sdmmc",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-12_ebyte-rf",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-13_ebyte-rx-tx",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-14_ebyte-subg-lora",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-15_ebyte-crate",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-16_ebyte-crate-rx",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-17-sleep-test",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-18-pdm-mic1-dma",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-19-pdm-micarray-dma",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-20-pdm-mic-all-dma",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-21-qwiic-oled",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-22-read-adc",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-23_gps-standby",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-24-batt-charger",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-25_sd_rawspeed",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-26-tempsensors",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-27-usb-cdc",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-28-gps-tim-cc",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-29_exfat_read",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-30_exfat_write",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-31-sd-inspect",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-32-lightranger-i2c",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\unit-smoke-33-power-profile",
+      "unchanged": true
+    }
+  ],
+  "portable_host_results": {
+    "command": [
+      "cargo",
+      "test",
+      "--lib",
+      "--no-fail-fast",
+      "--no-default-features",
+      "--target",
+      "x86_64-pc-windows-msvc",
+      "--locked",
+      "--offline",
+      "-p",
+      "raylar-drivers",
+      "-p",
+      "raylar-stage-profiling",
+      "-p",
+      "raylar-audiosource",
+      "-p",
+      "raylar-time-service",
+      "-p",
+      "raylar-storage-service",
+      "-p",
+      "raylar-logging-service",
+      "-p",
+      "raylar-audio-recorder-service",
+      "-p",
+      "raylar-flac-encoder-service",
+      "-p",
+      "raylar-crcl-encoder-service",
+      "-p",
+      "raylar-power-management-service",
+      "-p",
+      "raylar-location-service",
+      "-p",
+      "raylar-radio-service",
+      "-p",
+      "raylar-sensor-service",
+      "-p",
+      "raylar-versioning-service",
+      "-p",
+      "aardwolf"
+    ],
+    "exit_code": 101,
+    "passed": 203,
+    "failed": 5,
+    "failures": [
+      "estimator::tests::estimates_frequency_error_with_long_baseline_regression",
+      "estimator::tests::frequency_regression_rejects_one_in_window_outlier",
+      "estimator::tests::hardware_scale_sample_handles_small_capture_quantization",
+      "estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted",
+      "gps::framer::tests::frames_sentence"
+    ],
+    "matches_prior_baseline": true
+  },
+  "integration004_exit": 0,
+  "mono_audio_native_exit": 0,
+  "u5_hardware": "not run; connected board is L4",
+  "u5_other_artifact_comparisons": [
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\.cargo-artifact-lock",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\.cargo-build-lock",
+      "unchanged": true
+    },
+    {
+      "path": "target\\thumbv8m.main-none-eabihf\\release\\.cargo-lock",
+      "unchanged": true
+    }
+  ],
+  "workspace_default_members_unchanged": true,
+  "integration004_passed": 13,
+  "mono_audio_native_passed": 5
+}

@@ -1,0 +1,24 @@
+{
+  "started_utc": "2026-11-24T19:36:34.566941+00:00",
+  "command": [
+    "probe-rs",
+    "run",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--verify",
+    "--preverify",
+    "--non-interactive",
+    "--disable-progressbars",
+    "--no-location",
+    "target/thumbv7em-none-eabihf/release/unit-smoke-l4-05-mono-audio"
+  ],
+  "process_id": 7036,
+  "pass": false,
+  "elf_sha256": "56ef98ac0a6d8ae7b80146b2b20fa706f243db4cc8f2ffa293b4dd619a8e6d98",
+  "host_seconds": 80.0,
+  "extra_seconds_after_pass": null
+}
