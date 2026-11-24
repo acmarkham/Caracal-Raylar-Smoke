@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Deployment overview</title>
+<style>body{font:15px system-ui;background:#101724;color:#e3ebf5;margin:0;padding:28px}main{max-width:1450px;margin:auto}h1{margin:0}h2{font-size:21px}p{line-height:1.6;color:#b7c8db}section{background:#192438;border:1px solid #30425a;border-radius:12px;padding:20px;margin:20px 0}a{color:#81c4ff}select{background:#101724;color:#e3ebf5;padding:10px;max-width:100%;border:1px solid #56708d;margin:5px}.plot{height:460px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid #30425a;white-space:nowrap}small{color:#a9bed5}.controls{display:flex;flex-wrap:wrap;gap:14px;align-items:center}</style>
+<script>/*__PLOTLY__*/</script></head><body><main>
+<h1>Deployment overview</h1><p id="intro"></p>
+<section><h2>Nodes and individual reports</h2><div id="nodes" class="scroll"></div></section>
+<section><h2>Position and radio links</h2><div class="controls"><label>Channel configuration <select id="config"></select></label><label>Link colour <select id="metric"><option value="rssi">Mean RSSI (dBm)</option><option value="snr">Mean SNR (dB)</option><option value="count">Received packet count</option></select></label></div>
+<div id="map" class="plot"></div><p>Shared offline position map: median valid GPS fixes, east/north in projected metres relative to the first node. Positions retain the individual report’s 50 km coordinate obfuscation; separations above 25 km are ambiguous. No geographic basemap or absolute coordinates are exported. Arrows point from sender to receiver; opposing directions are offset. Nodes without fixes are omitted from the map.</p><div id="links" class="scroll"></div>
+<p>Counts are observed receptions across all boots in this batch, not packet delivery rates. Missing links do not prove a failed path. RSSI/SNR averages use only available metadata; missing SNR stays unavailable. External sender IDs can appear in the table without a position.</p></section>
+<section><h2>Battery discharge</h2><div id="soc" class="plot"></div><div id="voltage" class="plot"></div><p>UTC aligns devices and boots. Runs without a UTC anchor appear only in the summary table. Charging and load changes can affect discharge; endpoint SOC change is not a battery lifetime estimate.</p></section>
+<section><h2>Tilt and magnetic heading</h2><div id="tilt" class="plot"></div><div id="heading" class="plot"></div><p>Pitch = atan2(−X, √(Y²+Z²)); roll = atan2(Y,Z), using board accelerometer axes. Magnetic XY bearing = atan2(Y,X), wrapped to 0–360°. Heading is uncalibrated, without tilt compensation or declination correction. Board mounting and antenna alignment are unknown; these readings suggest board orientation, not a verified antenna direction. Summary values are the latest valid readings; plotted values show movement during deployment.</p></section>
+</main><script>
+const D=/*__DATA__*/;
+const esc=s=>String(s??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=(v,n=1)=>v==null?'—':Number(v).toFixed(n);
+const colors=['#65aaff','#4fd1a5','#ffb454','#da93ff','#ff6b81','#8bd5ea'];
+const ids=[...new Set(D.runs.map(r=>r.node))];
+const color=id=>colors[Math.max(0,ids.indexOf(id))%colors.length];
+const name=id=>[...new Set(D.runs.filter(r=>r.node===id).map(r=>r.label))].join('/')||id;
+function configLabel(c){const parts=[];for(const [key,label] of [['ProfileId','P'],['frequency_hz','Hz '],['spreading_factor',''],['bandwidth',''],['coding_rate',''],['bitrate_bps','bps ']]){const m=c.match(new RegExp(key+(key==='ProfileId'?'\\((\\d+)':'\\s*:\\s*(\\w+)')));if(m)parts.push(label+m[1]);}if(c.includes('Gfsk'))parts.push('GFSK');return parts.join(' · ')||c;}
+function table(id,headers,rows){document.getElementById(id).innerHTML='<table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(v=>'<td>'+v+'</td>').join('')+'</tr>').join('')+'</tbody></table>';}
+function chart(id,traces,title,ytitle,extra={}){return Plotly.react(id,traces,{title:{text:title},paper_bgcolor:'#192438',plot_bgcolor:'#192438',font:{color:'#dce8f5'},margin:{l:65,r:30,t:60,b:70},xaxis:{title:{text:'UTC'},gridcolor:'#30425a'},yaxis:{title:{text:ytitle},gridcolor:'#30425a'},legend:{orientation:'h'},...extra},{responsive:true,displaylogo:false});}
+document.getElementById('intro').textContent=D.folder+' · '+ids.length+' nodes · '+D.runs.length+' boots · links and comparisons from the folder’s syslogs';
+table('nodes',['Device / boot','Node ID','UTC range','Duration (h)','SOC first → last','Change (pp)','Battery last (V)','Pitch / roll / heading (°)','Detail'],D.runs.map(r=>[esc(r.label+' / '+r.boot),esc(r.node),esc((r.start||'Unanchored')+' → '+(r.end||'Unanchored')),fmt(r.duration_h),fmt(r.power_first.soc)+' → '+fmt(r.power_last.soc),r.power_first.soc!=null&&r.power_last.soc!=null?fmt(r.power_last.soc-r.power_first.soc):'—',r.power_last.battery_mv==null?'—':fmt(r.power_last.battery_mv/1000,3),['pitch','roll','heading'].map(k=>fmt(r.orientation[k])).join(' / '),r.report_exists?'<a href="'+esc(r.report)+'">Open report</a>':'Report unavailable']));
+const configs=[...new Set(D.links.map(l=>l.config))].sort();
+const sel=document.getElementById('config');
+for(const [value,text] of [['*','All configurations'],...configs.map((c,i)=>[String(i),configLabel(c)])]){const o=document.createElement('option');o.value=value;o.textContent=text;if(value!=='*')o.title=configs[Number(value)];sel.append(o);}
+if(configs.length)sel.value='0';
+function drawLinks(){
+ const links=D.links.filter(l=>sel.value==='*'||l.config===configs[Number(sel.value)]),metric=document.getElementById('metric').value;
+ const positions={};for(const r of D.runs)if(r.position)positions[r.node]=r.position;
+ const val=l=>metric==='count'?l.count:l[metric]?.mean;
+ const values=links.map(val).filter(v=>v!=null),lo=Math.min(...values),hi=Math.max(...values);
+ const traces=[],annotations=[];
+ for(const l of links){const a=positions[l.sender],b=positions[l.receiver];if(!a||!b||l.sender===l.receiver)continue;
+ const v=val(l),q=v==null?null:(hi===lo?.5:(v-lo)/(hi-lo)),c=q==null?'#8391a5':`hsl(${Math.round(20+q*120)},75%,58%)`;
+ const dx=b[0]-a[0],dy=b[1]-a[1],len=Math.hypot(dx,dy)||1,shift=Math.min(8,len*.025),sx=-dy/len*shift,sy=dx/len*shift;
+ const x=[a[0]+sx,b[0]+sx],y=[a[1]+sy,b[1]+sy];
+ traces.push({x,y,mode:'lines',line:{color:c,width:2},showlegend:false,text:[`${esc(name(l.sender))} → ${esc(name(l.receiver))}<br>${esc(l.config)}<br>RX ${l.count}; RSSI ${fmt(l.rssi?.mean)} dBm; SNR ${fmt(l.snr?.mean)} dB`],hovertemplate:'%{text}<extra></extra>'});
+ annotations.push({x:x[0]+.7*dx,y:y[0]+.7*dy,ax:x[0]+.4*dx,ay:y[0]+.4*dy,xref:'x',yref:'y',axref:'x',ayref:'y',text:'',showarrow:true,arrowhead:3,arrowcolor:c,arrowwidth:2});
+ }
+ for(const id of ids){if(!positions[id])continue;const r=D.runs.filter(r=>r.node===id&&r.position).at(-1);traces.push({x:[positions[id][0]],y:[positions[id][1]],mode:'markers+text',text:[esc(name(id))],textposition:'top center',name:name(id),marker:{size:15,color:color(id)},hovertemplate:esc(name(id))+'<br>Node '+esc(id)+'<br>'+r.fixes+' fixes<extra></extra>'});}
+ if(values.length)traces.push({x:[null],y:[null],mode:'markers',showlegend:false,marker:{color:[lo,hi],cmin:lo,cmax:hi,colorscale:[[0,'hsl(20,75%,58%)'],[1,'hsl(140,75%,58%)']],showscale:true,colorbar:{title:{text:metric==='count'?'RX count':metric==='rssi'?'dBm':'dB'}}}});
+ chart('map',traces,'Node positions · arrows show observed receive paths','Northing offset (m)',{xaxis:{title:{text:'Easting offset (m)'}},yaxis:{title:{text:'Northing offset (m)'},scaleanchor:'x',scaleratio:1},annotations});
+ table('links',['Sender → receiver','Configuration','RX count','RSSI mean [min, max] dBm','SNR mean [min, max] dB','RSSI / SNR samples'],links.map(l=>[esc(name(l.sender)+' → '+name(l.receiver)),'<span title="'+esc(l.config)+'">'+esc(configLabel(l.config))+'</span>',l.count,...['rssi','snr'].map(k=>l[k]?fmt(l[k].mean)+' ['+fmt(l[k].min)+', '+fmt(l[k].max)+']':'—'),(l.rssi?.n||0)+' / '+(l.snr?.n||0)]));
+}
+sel.onchange=drawLinks;document.getElementById('metric').onchange=drawLinks;drawLinks();
+function series(group,key,scale=1){return D.runs.filter(r=>r.start&&r.series[group].some(p=>p[key]!=null)).map(r=>({name:r.label+' / '+r.boot+' '+key,x:r.series[group].map(p=>p.time),y:r.series[group].map(p=>p[key]==null?null:p[key]/scale),mode:'lines',connectgaps:false,line:{color:color(r.node),dash:key==='roll'?'dot':'solid'},hovertemplate:'%{x}<br>%{y}<extra>%{fullData.name}</extra>'}));}
+chart('soc',series('power','soc'),'Battery state of charge','SOC (%)');chart('voltage',series('power','battery_mv',1000),'Battery voltage','Volts');chart('tilt',[...series('tilt','pitch'),...series('tilt','roll')],'Board pitch and roll','Degrees');chart('heading',series('heading','heading'),'Magnetic XY bearing','Degrees',{yaxis:{title:{text:'Degrees'},range:[0,360]}});
+</script></body></html>

@@ -2,6 +2,7 @@ target/
 __pycache__/
 debug.log
 *.lock
+!/Cargo.lock
 !firmware-builds/**/Cargo.lock
 /.serena
 /.trialdata

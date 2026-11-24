@@ -1,5 +1,20 @@
 [workspace]
 resolver = "2"
+# Preserve the original U5 root build selection. L4 is built explicitly in a
+# separate invocation so Cargo never unifies the two HAL chip features.
+default-members = [
+    "apps/aardwolf",
+    "crates/drivers",
+    "crates/profiling",
+    "crates/board/raylar_v1p0",
+    "crates/metadrivers/*",
+    "crates/services/*",
+    "drivertests/*",
+    "metadrivertests/*",
+    "servicetests/*",
+    "integrationtests/*",
+    "unitsmoke/*",
+]
 members = [
     "apps/aardwolf",
     "crates/drivers",
@@ -77,6 +92,7 @@ members = [
     "unitsmoke/31_sd_inspect",
     "unitsmoke/32_lightranger_i2c",
     "unitsmoke/33_power_profile",
+    "unitsmokeL4/01_helloworld",
 ]
 
 [workspace.package]

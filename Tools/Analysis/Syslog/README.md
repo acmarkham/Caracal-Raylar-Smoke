@@ -1,5 +1,24 @@
 # Interactive syslog report
 
+## Folder / deployment overview
+
+```powershell
+rtk proxy python Tools/Analysis/Syslog/batch_report.py .trialdata/realworld/wytham/20261119
+```
+
+Recursively discovers `syslog.txt` and writes `batch.report.html` in the folder (override with `-o`). Existing individual `syslog.report.html` files are linked using relative paths; keep the folder structure when moving reports. Missing individual reports are identified in the overview.
+
+The offline overview compares UTC battery SOC/voltage, pitch/roll and uncalibrated magnetic XY bearing across boots. It shows median valid GPS fixes on a common obfuscated east/north coordinate map and directional radio links, selectable by full channel configuration and RSSI, SNR or receive count. The link table includes unknown/external senders. Statistics aggregate observed receptions across the batch, with separate counts for available signal metadata; they are not packet delivery rates. Runs without UTC anchors remain in the summary but are excluded from common time plots. The map uses the last positioned boot for each node; each boot's median includes all its valid fixes, so deployments that moved should be inspected in the individual reports. It unwraps 50 km coordinates around a common origin; distances above 25 km per axis are ambiguous. Orientation follows board axes and does not establish antenna alignment or true-north heading.
+
+This tool streams the source logs and does not regenerate individual reports or audit recordings. Source files are read only.
+
+Verify the batch parser and an actual generated overview with:
+
+```powershell
+rtk proxy python -m unittest discover -s Tools/Analysis/Syslog -p test_batch_report.py -v
+rtk proxy node Tools/Analysis/Syslog/browser_batch_smoke.mjs .trialdata/realworld/wytham/20261119/batch.report.html
+```
+
 Generate one self-contained HTML file from an Aardwolf syslog. Plotly is embedded: opening the result needs no Python, internet connection, CDN, map service or local server.
 
 ```powershell

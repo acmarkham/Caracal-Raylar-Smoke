@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "utc": "2026-11-24T07:58:57.862929+00:00",
+  "package": "unit-smoke-l4-01-helloworld",
+  "board": "Caracal Evo; published schematic pin map, physical revision not independently identified",
+  "chip": "STM32L476RGTx",
+  "device_id": "0x10076415",
+  "flash_kib": 1024,
+  "target": "thumbv7em-none-eabihf",
+  "profile": "release",
+  "security": "no TrustZone",
+  "source_git": "4647a55c014d40fde13a7a3e9b09b37bd277fabb-dirty",
+  "build_command": [
+    "cargo",
+    "build",
+    "-p",
+    "unit-smoke-l4-01-helloworld",
+    "--target",
+    "thumbv7em-none-eabihf",
+    "--release",
+    "--locked",
+    "--offline"
+  ],
+  "environment": {
+    "DEFMT_LOG": "info"
+  },
+  "tool_versions": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "probe_rs": "probe-rs 0.30.0 (git commit: eab9c5e)"
+  },
+  "lockfile_sha256": "889481bd464de2de0b6847203eb6e1d07ef530a4e05fb2f8850c58675d7fe05f",
+  "source_sha256": {
+    "Cargo.toml": "818fb08258f0c8e39a87ba6a2650bd10296a61cc9383c3c65469cfb4f4265503",
+    ".cargo/config.toml": "f2eccf4e494eed37d5aa0cc49b117251920df18cd509c2d199b47b55f6a5413c",
+    "unitsmokeL4/01_helloworld/Cargo.toml": "107b99dcc2a742cf32b84945c8d745a09b1deffe723c8e3f9f5787ed92da2121",
+    "unitsmokeL4/01_helloworld/build.rs": "e9e2290dfa500eab37a064b9c3c04e113d4a5256ff40f9861292d6f7609e0cb6",
+    "unitsmokeL4/01_helloworld/main.rs": "e96bbf8b5284c51ea8d01cbdcc92e8fe08fc8c3f0178e94908231afb81343620"
+  },
+  "image": {
+    "elf_sha256": "0630cfcf9edc53b8a9fe9e90a4e98fe4907bbcf8dd3045a0758bbf8f0f2c9774",
+    "elf_bytes": 3736524,
+    "bin_sha256": "e6542512424a52a96631f3c7541f088a17a9d08425303b5e034450cee90eab7d",
+    "flash_origin": "0x8000000",
+    "flash_load_bytes": 17016,
+    "static_ram_bytes": 1316,
+    "sram1_limit_bytes": 98304,
+    "flash_limit_bytes": 1048576,
+    "segments": [
+      {
+        "offset": 276,
+        "vaddr": 134217728,
+        "paddr": 134217728,
+        "filesz": 392,
+        "memsz": 392,
+        "flags": 4
+      },
+      {
+        "offset": 668,
+        "vaddr": 134218120,
+        "paddr": 134218120,
+        "filesz": 14496,
+        "memsz": 14496,
+        "flags": 5
+      },
+      {
+        "offset": 15164,
+        "vaddr": 134232616,
+        "paddr": 134232616,
+        "filesz": 2048,
+        "memsz": 2048,
+        "flags": 4
+      },
+      {
+        "offset": 17216,
+        "vaddr": 536870912,
+        "paddr": 134234664,
+        "filesz": 80,
+        "memsz": 80,
+        "flags": 6
+      },
+      {
+        "offset": 17312,
+        "vaddr": 536870992,
+        "paddr": 536870992,
+        "filesz": 0,
+        "memsz": 1236,
+        "flags": 6
+      }
+    ]
+  },
+  "optical_observation": "Confirmed by the user on 2026-11-24: blue LED is blinking. Electrical latch/pad and timing checks are recorded separately."
+}

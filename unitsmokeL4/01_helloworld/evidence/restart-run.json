@@ -1,0 +1,114 @@
+{
+  "utc": "2026-11-24T07:54:41.420591+00:00",
+  "command": [
+    "rtk",
+    "proxy",
+    "probe-rs",
+    "run",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive",
+    "--verify",
+    "--preverify",
+    "--disable-progressbars",
+    "--no-location",
+    "target/thumbv7em-none-eabihf/release/unit-smoke-l4-01-helloworld"
+  ],
+  "boot_seen": true,
+  "clock_pass": true,
+  "target_pass": true,
+  "edges": [
+    {
+      "edge": 1,
+      "host_s": 3.516
+    },
+    {
+      "edge": 2,
+      "host_s": 3.953
+    },
+    {
+      "edge": 3,
+      "host_s": 4.516
+    },
+    {
+      "edge": 4,
+      "host_s": 4.953
+    },
+    {
+      "edge": 5,
+      "host_s": 5.594
+    },
+    {
+      "edge": 6,
+      "host_s": 5.922
+    },
+    {
+      "edge": 7,
+      "host_s": 6.469
+    },
+    {
+      "edge": 8,
+      "host_s": 7.016
+    },
+    {
+      "edge": 9,
+      "host_s": 7.469
+    },
+    {
+      "edge": 10,
+      "host_s": 8.016
+    },
+    {
+      "edge": 11,
+      "host_s": 8.453
+    },
+    {
+      "edge": 12,
+      "host_s": 9.0
+    },
+    {
+      "edge": 13,
+      "host_s": 9.453
+    },
+    {
+      "edge": 14,
+      "host_s": 10.0
+    },
+    {
+      "edge": 15,
+      "host_s": 10.437
+    },
+    {
+      "edge": 16,
+      "host_s": 10.984
+    },
+    {
+      "edge": 17,
+      "host_s": 11.437
+    },
+    {
+      "edge": 18,
+      "host_s": 11.984
+    },
+    {
+      "edge": 19,
+      "host_s": 12.437
+    },
+    {
+      "edge": 20,
+      "host_s": 12.984
+    },
+    {
+      "edge": 21,
+      "host_s": 13.437
+    },
+    {
+      "edge": 22,
+      "host_s": 13.984
+    }
+  ]
+}

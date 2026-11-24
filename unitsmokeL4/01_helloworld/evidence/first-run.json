@@ -1,0 +1,118 @@
+{
+  "utc": "2026-11-24T07:52:49.925844+00:00",
+  "command": [
+    "rtk",
+    "proxy",
+    "probe-rs",
+    "run",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--protocol",
+    "swd",
+    "--speed",
+    "100",
+    "--verify",
+    "--non-interactive",
+    "--disable-progressbars",
+    "--no-location",
+    "target\\thumbv7em-none-eabihf\\release\\unit-smoke-l4-01-helloworld"
+  ],
+  "clock_pass": true,
+  "target_pass": true,
+  "edges": [
+    {
+      "edge": 1,
+      "host_s": 10.234
+    },
+    {
+      "edge": 2,
+      "host_s": 10.688
+    },
+    {
+      "edge": 3,
+      "host_s": 11.219
+    },
+    {
+      "edge": 4,
+      "host_s": 11.672
+    },
+    {
+      "edge": 5,
+      "host_s": 12.219
+    },
+    {
+      "edge": 6,
+      "host_s": 12.656
+    },
+    {
+      "edge": 7,
+      "host_s": 13.203
+    },
+    {
+      "edge": 8,
+      "host_s": 13.656
+    },
+    {
+      "edge": 9,
+      "host_s": 14.203
+    },
+    {
+      "edge": 10,
+      "host_s": 14.641
+    },
+    {
+      "edge": 11,
+      "host_s": 15.188
+    },
+    {
+      "edge": 12,
+      "host_s": 15.734
+    },
+    {
+      "edge": 13,
+      "host_s": 16.188
+    },
+    {
+      "edge": 14,
+      "host_s": 16.734
+    },
+    {
+      "edge": 15,
+      "host_s": 17.172
+    },
+    {
+      "edge": 16,
+      "host_s": 17.719
+    },
+    {
+      "edge": 17,
+      "host_s": 18.156
+    },
+    {
+      "edge": 18,
+      "host_s": 18.703
+    },
+    {
+      "edge": 19,
+      "host_s": 19.141
+    },
+    {
+      "edge": 20,
+      "host_s": 19.703
+    },
+    {
+      "edge": 21,
+      "host_s": 20.141
+    },
+    {
+      "edge": 22,
+      "host_s": 20.688
+    }
+  ],
+  "host_span_edges_1_to_20_s": 9.469,
+  "expected_span_s": 9.5,
+  "host_cadence_pass": true,
+  "monitor_stopped_after_pass": true
+}

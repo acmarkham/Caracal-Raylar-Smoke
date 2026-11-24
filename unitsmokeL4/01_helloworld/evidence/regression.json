@@ -1,0 +1,484 @@
+{
+  "baseline_source": "4647a55c014d40fde13a7a3e9b09b37bd277fabb",
+  "u5_default_members_unchanged": 76,
+  "u5_firmware_build_command": [
+    "cargo",
+    "build",
+    "-p",
+    "<each package>",
+    "--bins",
+    "--release",
+    "--locked",
+    "--offline"
+  ],
+  "u5_firmware_builds": [
+    {
+      "package": "aardwolf",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-gps",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-batterycharger",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-voltagemonitor",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-sensor-acc",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-sensor-mag",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-storage",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-mic-array",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-identity",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-buzzer",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-led",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-radio",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "driver-test-button",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "metadriver-test-audiosource",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-time",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-storage",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-logging",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-audiorecorder",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-flacencoder",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-crclencoder",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-powermanagement",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-location",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-sensors",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "service-test-identity",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "integration-test-001-powermonitorlog",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "integration-test-002-monoaudiolog",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "integration-test-003-radio-range",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "integration-test-004-radio-heartbeat",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-01-helloworld",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-02-userbutton",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-03-buzzer",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-04-sensi2c",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-05-sensi2c-acc",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-06-sensi2c-mag",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-07-sensi2c-bq",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-08_serial-gps",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-09_serial-gps_pps",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-10_pdm-mic1-mono",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-11_sdmmc",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-12_ebyte-rf",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-13_ebyte-rx-tx",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-14_ebyte-subg-lora",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-15_ebyte-crate",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-16_ebyte-crate-rx",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-17-sleep-test",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-18-pdm-mic1-dma",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-19-pdm-micarray-dma",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-20-pdm-mic-all-dma",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-21-qwiic-oled",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-22-read-adc",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-23_gps-standby",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-24-batt-charger",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-25_sd_rawspeed",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-26-tempsensors",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-27-usb-cdc",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-28-gps-tim-cc",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-29_exfat_read",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-30_exfat_write",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-31-sd-inspect",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-32-lightranger-i2c",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    },
+    {
+      "package": "unit-smoke-33-power-profile",
+      "before_exit_code": 0,
+      "after_exit_code": 0
+    }
+  ],
+  "feature_graphs": {
+    "unit-smoke-01-helloworld": {
+      "identical": true,
+      "sha256": "0da87e3fe33eb1ecf29b11c772e3deeb7f770abbd80969775ed39faa9c6b8c1a"
+    },
+    "aardwolf": {
+      "identical": true,
+      "sha256": "4e129d1701346f1b47975ac635b48a2d43ae09c67b04078f240caea531bd360b"
+    }
+  },
+  "portable_host_tests": {
+    "pre_change": {
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "--lib",
+        "--no-fail-fast",
+        "--no-default-features",
+        "--target",
+        "x86_64-pc-windows-msvc",
+        "--locked",
+        "--offline",
+        "-p",
+        "raylar-drivers",
+        "-p",
+        "raylar-stage-profiling",
+        "-p",
+        "raylar-audiosource",
+        "-p",
+        "raylar-time-service",
+        "-p",
+        "raylar-storage-service",
+        "-p",
+        "raylar-logging-service",
+        "-p",
+        "raylar-audio-recorder-service",
+        "-p",
+        "raylar-flac-encoder-service",
+        "-p",
+        "raylar-crcl-encoder-service",
+        "-p",
+        "raylar-power-management-service",
+        "-p",
+        "raylar-location-service",
+        "-p",
+        "raylar-radio-service",
+        "-p",
+        "raylar-sensor-service",
+        "-p",
+        "raylar-versioning-service",
+        "-p",
+        "aardwolf",
+        "--target-dir",
+        "C:\\CloudProjects\\2026\\Research\\Projects\\CaracalRaylarSmoke\\Caracal-Raylar-Smoke\\target\\l4-bringup-baseline\\pre-change-target"
+      ],
+      "exit_code": 101,
+      "passed": 203,
+      "failed": 5,
+      "failures": [
+        "gps::framer::tests::frames_sentence",
+        "estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted",
+        "estimator::tests::frequency_regression_rejects_one_in_window_outlier",
+        "estimator::tests::hardware_scale_sample_handles_small_capture_quantization",
+        "estimator::tests::estimates_frequency_error_with_long_baseline_regression"
+      ],
+      "matches_current_failures": true
+    },
+    "current": {
+      "command": [
+        "rtk",
+        "proxy",
+        "cargo",
+        "test",
+        "--lib",
+        "--no-fail-fast",
+        "--no-default-features",
+        "--target",
+        "x86_64-pc-windows-msvc",
+        "--locked",
+        "--offline",
+        "-p",
+        "raylar-drivers",
+        "-p",
+        "raylar-stage-profiling",
+        "-p",
+        "raylar-audiosource",
+        "-p",
+        "raylar-time-service",
+        "-p",
+        "raylar-storage-service",
+        "-p",
+        "raylar-logging-service",
+        "-p",
+        "raylar-audio-recorder-service",
+        "-p",
+        "raylar-flac-encoder-service",
+        "-p",
+        "raylar-crcl-encoder-service",
+        "-p",
+        "raylar-power-management-service",
+        "-p",
+        "raylar-location-service",
+        "-p",
+        "raylar-radio-service",
+        "-p",
+        "raylar-sensor-service",
+        "-p",
+        "raylar-versioning-service",
+        "-p",
+        "aardwolf"
+      ],
+      "exit_code": 101,
+      "passed": 203,
+      "failed": 5,
+      "summary": [
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s",
+        "test result: FAILED. 65 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: FAILED. 21 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "error: test failed, to rerun pass `-p raylar-drivers --lib`",
+        "error: test failed, to rerun pass `-p raylar-time-service --lib`",
+        "error: 2 targets failed:"
+      ]
+    }
+  },
+  "integration004_host_tests": {
+    "name": "integration004",
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "-p",
+      "integration-test-004-radio-heartbeat",
+      "--lib",
+      "--target",
+      "x86_64-pc-windows-msvc",
+      "--locked",
+      "--offline"
+    ],
+    "exit_code": 0,
+    "passed": 13,
+    "summary": [
+      "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  "wrong_target_rejected": true,
+  "dependency_resolution_changes": "Only unit-smoke-l4-01-helloworld added; every existing package entry unchanged",
+  "u5_hardware": "Not run; connected probe targets the L4 board",
+  "cross_host": "Windows x86_64 only validated; Linux/macOS not run"
+}

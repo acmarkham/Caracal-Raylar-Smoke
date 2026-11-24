@@ -1,0 +1,27 @@
+     Finished in 9.14s
+0.000015 [INFO ] L4 HELLOWORLD boot board=CaracalEvo chip=STM32L476RG device_id=10076415 flash_kib=1024
+0.000061 [INFO ] L4 clocks cr=0303006b cfgr=0000000f pllcfgr=01001413 sys_hz=80000000 tim5_psc=79
+0.000140 [INFO ] L4 CLOCK PASS hse_hz=16000000 sys_hz=80000000 tick_hz=1000000
+0.500198 [INFO ] L4 LED edge=1 on=true elapsed_us=500008 odr_high=false idr_high=false
+1.000198 [INFO ] L4 LED edge=2 on=false elapsed_us=500000 odr_high=true idr_high=true
+1.500198 [INFO ] L4 LED edge=3 on=true elapsed_us=500000 odr_high=false idr_high=false
+2.000198 [INFO ] L4 LED edge=4 on=false elapsed_us=500000 odr_high=true idr_high=true
+2.500198 [INFO ] L4 LED edge=5 on=true elapsed_us=500000 odr_high=false idr_high=false
+3.000198 [INFO ] L4 LED edge=6 on=false elapsed_us=500000 odr_high=true idr_high=true
+3.500198 [INFO ] L4 LED edge=7 on=true elapsed_us=500000 odr_high=false idr_high=false
+4.000198 [INFO ] L4 LED edge=8 on=false elapsed_us=500000 odr_high=true idr_high=true
+4.500198 [INFO ] L4 LED edge=9 on=true elapsed_us=500000 odr_high=false idr_high=false
+5.000198 [INFO ] L4 LED edge=10 on=false elapsed_us=500000 odr_high=true idr_high=true
+5.500198 [INFO ] L4 LED edge=11 on=true elapsed_us=500000 odr_high=false idr_high=false
+6.000198 [INFO ] L4 LED edge=12 on=false elapsed_us=500000 odr_high=true idr_high=true
+6.500198 [INFO ] L4 LED edge=13 on=true elapsed_us=500000 odr_high=false idr_high=false
+7.000198 [INFO ] L4 LED edge=14 on=false elapsed_us=500000 odr_high=true idr_high=true
+7.500198 [INFO ] L4 LED edge=15 on=true elapsed_us=500000 odr_high=false idr_high=false
+8.000198 [INFO ] L4 LED edge=16 on=false elapsed_us=500000 odr_high=true idr_high=true
+8.500198 [INFO ] L4 LED edge=17 on=true elapsed_us=500000 odr_high=false idr_high=false
+9.000198 [INFO ] L4 LED edge=18 on=false elapsed_us=500000 odr_high=true idr_high=true
+9.500198 [INFO ] L4 LED edge=19 on=true elapsed_us=500000 odr_high=false idr_high=false
+10.000198 [INFO ] L4 LED edge=20 on=false elapsed_us=500000 odr_high=true idr_high=true
+10.000273 [INFO ] L4 HELLOWORLD PASS edges=20 elapsed_ms=10000 (GPIO readback; optical check separate)
+10.500198 [INFO ] L4 LED edge=21 on=true elapsed_us=500000 odr_high=false idr_high=false
+11.000198 [INFO ] L4 LED edge=22 on=false elapsed_us=500000 odr_high=true idr_high=true

@@ -1,0 +1,52 @@
+{
+  "elf_sha256": "0630cfcf9edc53b8a9fe9e90a4e98fe4907bbcf8dd3045a0758bbf8f0f2c9774",
+  "elf_bytes": 3736524,
+  "bin_sha256": "e6542512424a52a96631f3c7541f088a17a9d08425303b5e034450cee90eab7d",
+  "flash_origin": "0x8000000",
+  "flash_load_bytes": 17016,
+  "static_ram_bytes": 1316,
+  "sram1_limit_bytes": 98304,
+  "flash_limit_bytes": 1048576,
+  "segments": [
+    {
+      "offset": 276,
+      "vaddr": 134217728,
+      "paddr": 134217728,
+      "filesz": 392,
+      "memsz": 392,
+      "flags": 4
+    },
+    {
+      "offset": 668,
+      "vaddr": 134218120,
+      "paddr": 134218120,
+      "filesz": 14496,
+      "memsz": 14496,
+      "flags": 5
+    },
+    {
+      "offset": 15164,
+      "vaddr": 134232616,
+      "paddr": 134232616,
+      "filesz": 2048,
+      "memsz": 2048,
+      "flags": 4
+    },
+    {
+      "offset": 17216,
+      "vaddr": 536870912,
+      "paddr": 134234664,
+      "filesz": 80,
+      "memsz": 80,
+      "flags": 6
+    },
+    {
+      "offset": 17312,
+      "vaddr": 536870992,
+      "paddr": 536870992,
+      "filesz": 0,
+      "memsz": 1236,
+      "flags": 6
+    }
+  ]
+}

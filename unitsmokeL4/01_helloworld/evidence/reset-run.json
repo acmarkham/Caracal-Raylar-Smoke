@@ -1,0 +1,39 @@
+{
+  "utc": "2026-11-24T07:53:48.896111+00:00",
+  "reset_command": [
+    "probe-rs",
+    "reset",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "attach_command": [
+    "rtk",
+    "proxy",
+    "probe-rs",
+    "attach",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive",
+    "--no-location",
+    "target/thumbv7em-none-eabihf/release/unit-smoke-l4-01-helloworld"
+  ],
+  "reset_exit_code": 0,
+  "boot_seen": true,
+  "clock_pass": true,
+  "target_pass": false,
+  "edges": [
+    {
+      "edge": 1,
+      "host_s": 0.875
+    }
+  ]
+}

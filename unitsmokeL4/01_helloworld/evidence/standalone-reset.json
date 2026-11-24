@@ -1,0 +1,20 @@
+{
+  "utc": "2026-11-24T07:59:21.790859+00:00",
+  "command": [
+    "rtk",
+    "proxy",
+    "probe-rs",
+    "reset",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "subsequent_debug_attach": false
+}
