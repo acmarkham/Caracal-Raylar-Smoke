@@ -1,0 +1,378 @@
+
+running 6 tests
+test tests::calibrated_utc_mapping_survives_quality_loss_without_changing_status ... ok
+test tests::gps_green_pulses_only_for_new_admitted_gps_anchors ... ok
+test tests::gps_green_searches_without_pps_and_clears_when_inactive ... ok
+test tests::reserve_accounts_for_cluster_rounding_and_pending_log ... ok
+test tests::hysteresis_latches_across_boundaries_missing_data_and_rebound ... ok
+test tests::each_profile_permutation_visits_every_legal_slot ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test service::tests::flac_buffers_packets_and_flushes_the_tail_on_stop ... ok
+test service::tests::flac_does_not_materialize_an_empty_file_and_rejects_invalid_pcm ... ok
+test service::tests::first_recording_is_shortened_then_successors_start_on_the_boundary ... ok
+test multichannel::tests::source_loss_finishes_only_the_common_prefix ... ok
+test service::tests::flac_append_and_finalization_errors_close_without_replaying_samples ... ok
+test service::tests::flac_loss_closes_only_the_continuous_prefix ... ok
+test multichannel::tests::utc_boundaries_skip_pre_start_and_split_at_shared_end ... ok
+test wav::tests::header_is_one_block_and_describes_mono_16khz_pcm ... ok
+test service::tests::recorder_owns_rotation_at_an_exact_sample_boundary ... ok
+test service::tests::read_is_split_instead_of_crossing_the_recording_boundary ... ok
+test service::tests::wav_is_default_and_early_stop_updates_sizes_in_the_recorder ... ok
+test multichannel::tests::initial_alignment_can_skip_multiple_packets_without_consuming_reference_frames ... ok
+test multichannel::tests::slow_open_overrun_closes_prefix_and_capture_restart_recovers_without_stale_time ... ok
+test multichannel::tests::failures_close_both_handles_without_replaying_or_emitting_a_successful_end ... ok
+test service::tests::flac_minute_rotation_is_exact_and_preserves_the_next_packet ... ok
+test multichannel::tests::paired_rotation_and_tail_preserve_every_reference_sample ... ok
+test multichannel::tests::repeated_minute_restart_preserves_utc_when_capture_continues_during_wait ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+
+running 6 tests
+test tests::invalid_alignment_is_rejected ... ok
+test tests::hardware_gap_reports_loss_to_all_readers_and_restarts_timestamps ... ok
+test tests::slow_reader_is_advanced_and_observes_overrun ... ok
+test tests::timestamps_follow_interleaved_frames ... ok
+test tests::readers_advance_independently_across_wrap ... ok
+test tests::seeking_to_latest_starts_a_clean_session ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 13 tests
+test tests::capacity_and_input_bounds_are_explicit ... ok
+test tests::cheap_noise_floor_rounds_once_in_pcm_units_and_preserves_mic1 ... ok
+test tests::header_time_and_end_lengths_and_checksums ... ok
+test tests::cheap_rice_estimate_and_rounding_bounds_cover_boundary_values ... ok
+test bits::tests::exact_capacity_partial_words_and_failures_preserve_bounds ... ok
+test bits::tests::fields_match_legacy_at_every_bit_offset_and_width ... ok
+test cheap::tests::chunked_peak_failure_preserves_previous_progress_at_chunk_edges ... ok
+test tests::quantization_matches_wide_host_reference_at_all_precisions ... ok
+test bits::tests::rice_matches_legacy_for_all_k_and_short_long_code_boundaries ... ok
+test tests::sha256_and_crc_known_vectors ... ok
+test tests::cheap_temporal_roundtrip_scales_channels_independently_and_ignores_reference ... ok
+test tests::all_modes_roundtrip_quantized_values_and_preserve_reference_in_place ... ok
+test cheap::tests::chunked_transform_matches_previous_state_and_bytes_across_budgets ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.40s
+
+
+running 66 tests
+test batterycharger::tests::charge_current_encoding_matches_datasheet_formula ... ok
+test gps::capture_counter::tests::ignores_delayed_executor_wake ... ok
+test batterycharger::tests::input_current_limit_uses_supported_steps ... ok
+test batterycharger::tests::status_decoding_maps_charging_states ... ok
+test gps::capture_counter::tests::extends_a_full_32_bit_tim4_wrap ... ok
+test batterycharger::tests::invalid_charge_current_is_rejected ... ok
+test gps::capture_counter::tests::preserves_power_cycle_gap_without_a_32_bit_wrap ... ok
+test gps::framer::tests::validates_checksum ... ok
+test gps::nmea::tests::parses_gga_fix ... ok
+test batterycharger::tests::status_decoding_prioritizes_faults ... ok
+test gps::capture_counter::tests::preserves_counter_measured_drift ... ok
+test gps::framer::tests::frames_sentence ... FAILED
+test gps::nmea::tests::parses_rmc_fix_with_date ... ok
+test gps::tests::phase_quality_requires_residual_uncertainty_and_open_gate ... ok
+test gps::tests::pps_after_nmea_does_not_match ... ok
+test gps::tests::pps_matches_nmea_inside_same_second_window ... ok
+test identity::tests::crc32_matches_standard_check_value ... ok
+test identity::tests::decimal_free_build_crc_parser_accepts_hex ... ok
+test identity::tests::invalid_firmware_range_is_rejected ... ok
+test identity::tests::serial32_matches_legacy_avalanche_construction ... ok
+test identity::tests::serials_are_deterministic_and_nested ... ok
+test identity::tests::uid_words_keep_canonical_order ... ok
+test mic_array::tests::cic_width_matches_table_376_boundaries ... ok
+test mic_array::tests::defaults_match_the_adr ... ok
+test mic_array::tests::scale_table_has_expected_reference_entries ... ok
+test mic_array::tests::sinc5_hiperf_reference_preset_is_exactly_16khz ... ok
+test mic_array::tests::sinc5_reference_preset_is_exactly_16khz ... ok
+test radio::ebyte_e80::tests::lr1121_2_4_ghz_lora_bandwidths_have_the_documented_command_values ... ok
+test radio::sleep_tests::initialization_selects_internal_lf_clock ... ok
+test radio::tests::automatic_ldro_uses_sixteen_millisecond_symbol_threshold ... ok
+test radio::tests::counters_saturate ... ok
+test radio::tests::gfsk_rejects_an_impossible_receiver_bandwidth ... ok
+test radio::tests::frequency_band_boundaries_are_validated ... ok
+test radio::tests::gfsk_table_3_9_filter_settings_are_accepted_without_broadening_the_exception ... ok
+test radio::tests::implicit_lora_requires_a_payload_length ... ok
+test radio::tests::lora_bandwidths_match_the_selected_rf_path ... ok
+test radio::tests::long_interleaver_enforces_documented_payload_bounds ... ok
+test radio::tests::rtc_conversion_never_uses_reserved_continuous_value ... ok
+test radio::sleep_tests::nss_pulse_releases_chip_select_on_completion_and_cancellation ... ok
+test radio::tests::tx_power_limits_depend_on_the_rf_path ... ok
+test sensor_acc::tests::acceleration_is_decoded_and_converted_without_floating_point ... ok
+test sensor_acc::tests::all_full_scale_encodings_are_applied ... ok
+test sensor_acc::tests::all_odr_encodings_are_applied ... ok
+test sensor_acc::tests::configure_applies_changes_immediately_while_enabled ... ok
+test sensor_acc::tests::data_ready_reads_status_register ... ok
+test sensor_acc::tests::defaults_to_two_g_and_ten_hz_and_starts_off ... ok
+test sensor_acc::tests::identity_mismatch_is_distinct_from_bus_error ... ok
+test sensor_acc::tests::die_temperature_uses_signed_eleven_bit_value ... ok
+test radio::sleep_tests::cancelled_standby_cleanup_can_be_retried_before_sleep ... ok
+test sensor_acc::tests::turn_off_powers_down_and_blocks_reads ... ok
+test sensor_mag::tests::all_odr_encodings_are_applied_with_fixed_defaults ... ok
+test sensor_mag::tests::configure_applies_new_odr_immediately_while_enabled ... ok
+test radio::sleep_tests::retained_sleep_and_wake_with_busy_high_and_no_reset ... ok
+test radio::sleep_tests::wake_timeout_does_not_send_standby_or_report_awake ... ok
+test sensor_mag::tests::data_ready_reads_status_register ... ok
+test sensor_mag::tests::defaults_to_ten_hz_high_resolution_and_starts_off ... ok
+test sensor_mag::tests::die_temperature_sign_extends_twelve_bit_value ... ok
+test sensor_mag::tests::identity_mismatch_is_distinct_from_bus_error ... ok
+test sensor_mag::tests::magnetic_field_is_decoded_and_converted_without_floating_point ... ok
+test sensor_mag::tests::turn_off_powers_down_and_blocks_reads ... ok
+test stm32_core::tests::ldo_is_the_safe_library_default ... ok
+test voltagemonitor::calibration::tests::factory_vref_calibration_converts_adc4_raw_to_adc_reference ... ok
+test voltagemonitor::calibration::tests::factory_vref_calibration_falls_back_when_raw_is_zero ... ok
+test voltagemonitor::tests::divider_scales_source_voltage_with_rounding ... ok
+test voltagemonitor::tests::raw_to_mv_maps_full_scale_to_reference ... ok
+test mic_array::tests::completion_guard_tolerates_long_term_clock_drift_but_rejects_collapsed_dma ... ok
+
+failures:
+
+---- gps::framer::tests::frames_sentence stdout ----
+
+thread 'gps::framer::tests::frames_sentence' (36992) panicked at crates\drivers\src\gps\framer.rs:122:9:
+assertion failed: matches!(event, Some(FramerEvent::Sentence(_)))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    gps::framer::tests::frames_sentence
+
+test result: FAILED. 65 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 5 tests
+test tests::known_crc_vectors_and_capacity_errors ... ok
+test tests::transactional_frames_and_partial_termination ... ok
+test predict::tests::quotient_recurrence_matches_direct_sums_including_full_blocks ... ok
+test tests::selects_all_fixed_orders_and_safe_verbatim ... ok
+test tests::fixed_prediction_is_incremental_exact_and_keeps_safe_fallbacks ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test filter::tests::median_suppresses_single_outlier ... ok
+test filter::tests::publishes_median_after_minimum_accepted_fixes ... ok
+test filter::tests::rejects_poor_fixes_before_history ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test service::tests::full_queue_drops_newest_and_records_statistics ... ok
+test service::tests::long_utf8_message_is_safely_truncated_and_enqueued ... ok
+test service::tests::startup_drain_propagates_storage_failure ... ok
+test service::tests::public_macros_accept_core_format_arguments ... ok
+test service::tests::three_components_log_ordered_formatted_records ... ok
+test service::tests::startup_identity_survives_a_full_production_sized_queue ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test policy::tests::battery_percent_interpolates_table ... ok
+test policy::tests::external_dc_and_solar_are_detected_from_voltage ... ok
+test policy::tests::low_and_critical_thresholds_follow_config ... ok
+test policy::tests::missing_battery_has_no_percent_and_unknown_source ... ok
+test policy::tests::usb_takes_priority_over_other_sources ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 31 tests
+test tests::epoch_boundaries_and_slots_are_exact ... ok
+test rendezvous::tests::permutation_visits_every_slot_once_per_block ... ok
+test tests::built_in_common_profile_is_interoperable_and_static ... ok
+test rendezvous::tests::permutation_is_deterministic_and_changes_between_blocks ... ok
+test tests::boot_change_resets_volatile_sequence_and_duplicate_key_includes_boot ... ok
+test heartbeat_v4::tests::wire_vector_and_rejection_boundaries ... ok
+test tests::frame_codec_accepts_maximum_packet_and_rejects_one_byte_more ... ok
+test tests::frame_codec_rejects_unknown_and_malformed_input_without_panicking ... ok
+test tests::frame_round_trip_uses_compact_broadcast_header ... ok
+test tests::directed_data_has_only_four_bytes_of_optional_addressing ... ok
+test tests::epoch_rejects_fractional_slot_windows ... ok
+test tests::gfsk_presence_observation_retains_packet_status_without_lora_snr ... ok
+test tests::handle_enqueues_explicit_best_effort_cancellation ... ok
+test tests::heartbeat_payload_round_trips_with_and_without_location ... ok
+test tests::heartbeat_slots_are_deterministic_and_respect_minimum_separation ... ok
+test tests::neighbour_count_is_published_through_latest_state ... ok
+test tests::higher_priority_reservation_evicts_lower_priority ... ok
+test tests::neighbour_expiry_and_prediction_are_derived ... ok
+test tests::neighbour_table_updates_boot_and_replaces_oldest_at_capacity ... ok
+test tests::presence_payload_is_three_bytes ... ok
+test tests::received_presence_refreshes_neighbour_and_passive_link_state ... ok
+test tests::rendezvous_vectors_are_stable ... ok
+test tests::scheduler_accepts_non_overlapping_and_rejects_equal_priority_conflicts ... ok
+test tests::scheduler_detects_missed_preparation_and_capacity ... ok
+test tests::service_preserves_table_3_9_gfsk_profiles_and_selects_one_for_data ... ok
+test tests::service_resolves_all_2_4_ghz_lora_bandwidths_and_rejects_sub_ghz_bandwidth ... ok
+test tests::service_retains_long_interleaver_coding_rate_and_payload_contract ... ok
+test tests::static_link_estimator_selects_profiles_and_honours_band_constraints ... ok
+test tests::uncertainty_guard_sums_all_sources ... ok
+test tests::sequence_wrap_is_explicit ... ok
+test tests::utc_receive_window_consumes_time_service_uncertainty ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 17 tests
+test composites::heading::tests::cardinal_headings_and_declination_wrap ... ok
+test tests::dynamic_acceleration_rejects_a_slow_source ... ok
+test composites::ecompass::tests::level_compass_preserves_cardinal_heading ... ok
+test composites::odba::tests::odba_sums_absolute_dynamic_axes ... ok
+test composites::vedba::tests::vedba_uses_vector_magnitude_after_static_filter ... ok
+test composites::ecompass::tests::roll_is_removed_from_magnetic_vector ... ok
+test tests::duplicate_and_capacity_errors_are_explicit ... ok
+test tests::failures_keep_last_good_value_and_progress_to_fault ... ok
+test tests::multiple_temperature_sources_are_retained_by_id ... ok
+test tests::raw_update_and_tilt_are_published_together ... ok
+test composites::tilt::tests::known_gravity_vectors_produce_expected_tilt ... ok
+test math::tests::integer_square_root_and_heading_are_stable ... ok
+test tests::threshold_events_are_returned_for_ordered_delivery ... ok
+test thresholds::tests::delta_discards_a_stale_baseline ... ok
+test thresholds::tests::absolute_threshold_hysteresis_rearms ... ok
+test thresholds::tests::angular_delta_uses_shortest_distance ... ok
+test tests::sources_keep_independent_schedules_and_publish_generations ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test policy::tests::interval_layout_is_configurable_without_owning_stream_duration ... ok
+test policy::tests::producer_suffix_keeps_storage_generic_and_cannot_change_directories ... ok
+test policy::tests::daily_audio_layout_keeps_naming_inside_storage ... ok
+test policy::tests::flat_log_preserves_the_restart_safe_system_log ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 25 tests
+test estimator::tests::default_reacquisition_discards_five_edges_then_qualifies_cadence ... ok
+test estimator::tests::corrects_adjacent_utc_second_without_poisoning_phase ... ok
+test estimator::tests::estimates_frequency_error_with_long_baseline_regression ... FAILED
+test estimator::tests::frequency_baseline_spans_frequent_anchors ... ok
+test estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted ... FAILED
+test estimator::tests::phase_slew_rebases_without_a_clock_step_and_covers_residual ... ok
+test estimator::tests::mapping_is_bidirectional ... ok
+test estimator::tests::holdover_removes_phase_slew_without_stepping_utc ... ok
+test estimator::tests::out_of_tolerance_edge_pair_rearms_reacquisition_gate ... ok
+test estimator::tests::pps_interval_gate_uses_configured_ppm_tolerance ... ok
+test estimator::tests::frequency_regression_rejects_one_in_window_outlier ... FAILED
+test estimator::tests::one_later_sample_does_not_change_locked_frequency ... ok
+test estimator::tests::invalid_before_first_anchor ... ok
+test estimator::tests::hardware_scale_sample_handles_small_capture_quantization ... FAILED
+test estimator::tests::pps_interval_gate_uses_inclusive_twenty_ppm_boundary ... ok
+test estimator::tests::pps_sequence_rearms_gate_across_a_power_cycle ... ok
+test estimator::tests::reacquisition_requires_three_clean_pps_intervals ... ok
+test estimator::tests::rejects_large_discontinuity ... ok
+test estimator::tests::uncertainty_degrades_during_holdover_but_mapping_remains_available ... ok
+test estimator::tests::reacquisition_uses_raw_pps_intervals_when_correlations_are_skipped ... ok
+test gps::tests::converts_known_date ... ok
+test gps::tests::converts_unix_epoch ... ok
+test gps::tests::hardware_capture_retains_cross_clock_phase_bound ... ok
+test gps::tests::ignores_nmea_without_a_matched_pps_edge ... ok
+test gps::tests::uses_only_the_matched_pps_timestamp_as_an_anchor ... ok
+
+failures:
+
+---- estimator::tests::estimates_frequency_error_with_long_baseline_regression stdout ----
+
+thread 'estimator::tests::estimates_frequency_error_with_long_baseline_regression' (7240) panicked at crates\services\time\src\estimator.rs:744:9:
+assertion failed: estimator.ingest(second)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted stdout ----
+
+thread 'estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted' (17844) panicked at crates\services\time\src\estimator.rs:1023:9:
+assertion failed: estimator.ingest(anchor(90, 1_700_000_090, 10))
+
+---- estimator::tests::frequency_regression_rejects_one_in_window_outlier stdout ----
+
+thread 'estimator::tests::frequency_regression_rejects_one_in_window_outlier' (35348) panicked at crates\services\time\src\estimator.rs:775:13:
+assertion failed: estimator.ingest(sample)
+
+---- estimator::tests::hardware_scale_sample_handles_small_capture_quantization stdout ----
+
+thread 'estimator::tests::hardware_scale_sample_handles_small_capture_quantization' (40364) panicked at crates\services\time\src\estimator.rs:803:9:
+assertion failed: estimator.ingest(noisy)
+
+
+failures:
+    estimator::tests::estimates_frequency_error_with_long_baseline_regression
+    estimator::tests::frequency_regression_rejects_one_in_window_outlier
+    estimator::tests::hardware_scale_sample_handles_small_capture_quantization
+    estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted
+
+test result: FAILED. 21 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test types::tests::invalid_card_text_is_explicitly_unavailable ... ok
+test types::tests::storage_identity_maps_into_versioning_fields ... ok
+test snapshot::tests::config_can_supply_stm32_device_code ... ok
+test snapshot::tests::non_stm32_snapshot_marks_uid_unavailable ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: function `resolve_periodic_capture_delta` is never used
+ --> crates\drivers\src\gps\capture_counter.rs:7:15
+  |
+7 | pub(crate) fn resolve_periodic_capture_delta(
+  |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `VREFINT_CAL_ADDR` is never used
+ --> crates\drivers\src\voltagemonitor\calibration.rs:7:7
+  |
+7 | const VREFINT_CAL_ADDR: usize = 0x0BFA_07A5;
+  |       ^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `read` is never used
+  --> crates\drivers\src\voltagemonitor\calibration.rs:15:19
+   |
+14 | impl Stm32AdcCalibration {
+   | ------------------------ associated function in this implementation
+15 |     pub(super) fn read() -> Self {
+   |                   ^^^^
+
+warning: function `read_u16_system_memory` is never used
+  --> crates\drivers\src\voltagemonitor\calibration.rs:35:4
+   |
+35 | fn read_u16_system_memory(addr: usize) -> u16 {
+   |    ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `raylar-drivers` (lib) generated 1 warning
+warning: `raylar-drivers` (lib test) generated 3 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.01s
+     Running unittests lib.rs (target\x86_64-pc-windows-msvc\debug\deps\aardwolf-dfe0ac5e2d9f072f.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_audio_recorder_service-f9ec160ee627d006.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_audiosource-8ff42c3fa2dc9399.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_crcl_encoder_service-98df2cc2917bcaa4.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_drivers-d9360837e0b33a6d.exe)
+error: test failed, to rerun pass `-p raylar-drivers --lib`
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_flac_encoder_service-e0323e7b2fae466b.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_location_service-84605ec50c1935e6.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_logging_service-308c87e964d7289d.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_power_management_service-7747f0d0def164ab.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_radio_service-be93a01488e371fe.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_sensor_service-91c1f155805af585.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_stage_profiling-517c9c690ea2a7bb.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_storage_service-8a200b8f914aeda0.exe)
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_time_service-3635856ab71ff63c.exe)
+error: test failed, to rerun pass `-p raylar-time-service --lib`
+     Running unittests src\lib.rs (target\x86_64-pc-windows-msvc\debug\deps\raylar_versioning_service-62d0791120dad454.exe)
+error: 2 targets failed:
+    `-p raylar-drivers --lib`
+    `-p raylar-time-service --lib`

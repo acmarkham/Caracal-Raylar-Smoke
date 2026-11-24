@@ -1,0 +1,104 @@
+{
+  "read-only": {
+    "elf_sha256": "8556a0df0f59b75419b7f8ccdf331f10f10b15c960f0f8362f8001eb72b12cc9",
+    "bin_sha256": "b37fd8e17eaf0d9196d166375c04df9def25442fbee55563539bc96ec232eaa0",
+    "flash_origin": "0x08000000",
+    "flash_bytes": 86328,
+    "sram1_static_extent_bytes": 28664,
+    "sram1_unused_bytes": 69640,
+    "stack_region": {
+      "start": "0x10000000",
+      "end": "0x10008000",
+      "bytes": 32768
+    },
+    "initial_sp": "0x10008000",
+    "segments": [
+      {
+        "offset": 276,
+        "vaddr": 134217728,
+        "paddr": 134217728,
+        "filesz": 392,
+        "memsz": 392
+      },
+      {
+        "offset": 668,
+        "vaddr": 134218120,
+        "paddr": 134218120,
+        "filesz": 73568,
+        "memsz": 73568
+      },
+      {
+        "offset": 74236,
+        "vaddr": 134291688,
+        "paddr": 134291688,
+        "filesz": 12288,
+        "memsz": 12288
+      },
+      {
+        "offset": 86528,
+        "vaddr": 536870912,
+        "paddr": 134303976,
+        "filesz": 80,
+        "memsz": 80
+      },
+      {
+        "offset": 86624,
+        "vaddr": 536870992,
+        "paddr": 536870992,
+        "filesz": 0,
+        "memsz": 28584
+      }
+    ]
+  },
+  "write-test": {
+    "elf_sha256": "2bccfbcd1f83be33a2a627b8e973111b32592925a8cbb5fd9920b51e176e23ff",
+    "bin_sha256": "4f8c7e6887cd2e10788f909c21d2a88b7539880f65cd0c6c4735d128c518f379",
+    "flash_origin": "0x08000000",
+    "flash_bytes": 96384,
+    "sram1_static_extent_bytes": 78764,
+    "sram1_unused_bytes": 19540,
+    "stack_region": {
+      "start": "0x10000000",
+      "end": "0x10008000",
+      "bytes": 32768
+    },
+    "initial_sp": "0x10008000",
+    "segments": [
+      {
+        "offset": 276,
+        "vaddr": 134217728,
+        "paddr": 134217728,
+        "filesz": 392,
+        "memsz": 392
+      },
+      {
+        "offset": 668,
+        "vaddr": 134218120,
+        "paddr": 134218120,
+        "filesz": 83044,
+        "memsz": 83044
+      },
+      {
+        "offset": 83712,
+        "vaddr": 134301164,
+        "paddr": 134301164,
+        "filesz": 12868,
+        "memsz": 12868
+      },
+      {
+        "offset": 96584,
+        "vaddr": 536870912,
+        "paddr": 134314032,
+        "filesz": 80,
+        "memsz": 80
+      },
+      {
+        "offset": 96672,
+        "vaddr": 536870992,
+        "paddr": 536870992,
+        "filesz": 0,
+        "memsz": 78684
+      }
+    ]
+  }
+}

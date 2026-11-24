@@ -1,0 +1,25 @@
+     Finished in 45.14s
+0.100026 [INFO ] L4 EXFAT boot write_test=false sd_sw_high=false
+0.100064 [INFO ] L4 SD clocks sys_hz=80000000 kernel_hz=48000000 dma=DMA2_CH5 request=7
+0.376855 [INFO ] L4 SD card sectors=250347520 serial=7cb05359 manufacturer=27 clkcr=00000900
+0.377898 [INFO ] L4 exFAT volume lba=0 sectors=250347520
+0.614737 [INFO ] L4 exFAT free_bytes=1179648 cluster_bytes=131072
+0.679261 [ERROR] panicked at 'Root listing exceeds bounded smoke limit; no further writes'
+0.679286 [ERROR] panicked at C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\defmt-1.1.0\src\lib.rs:385:5:
+explicit panic
+Firmware exited unexpectedly: Multiple
+ WARN probe_rs_debug::debug_info: No reliable return address is available, so we cannot determine the program counter to unwind the previous frame.
+Core 0
+    Frame 0: HardFault_ @ 0x08012c00
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cortex-m-rt-0.7.5\src\lib.rs:1103:1
+    Frame 1: HardFault <Cause: Escalated UsageFault <Cause: Undefined instruction>> @ 0x0800b3ca
+
+    Frame 2: __udf @ 0x0800b3ca inline
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cortex-m-0.7.7\asm\inline.rs:181:5
+    Frame 3: udf @ 0x000000000800b3ca inline
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cortex-m-0.7.7\src\call_asm.rs:11:43
+    Frame 4: hard_fault @ 0x000000000800b3ca inline
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\panic-probe-1.0.0\src\lib.rs:86:5
+    Frame 5: panic @ 0x000000000800b3c2
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\panic-probe-1.0.0\src\lib.rs:54:9
+Error: Multiple

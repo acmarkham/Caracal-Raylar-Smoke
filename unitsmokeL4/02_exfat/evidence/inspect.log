@@ -1,0 +1,9 @@
+     Finished in 44.79s
+0.100026 [INFO ] L4 EXFAT boot write_test=false sd_sw_high=false
+0.100066 [INFO ] L4 SD clocks sys_hz=80000000 kernel_hz=48000000 dma=DMA2_CH5 request=7
+0.105707 [INFO ] L4 SD card sectors=250347520 serial=7cb05359 manufacturer=27 clkcr=00000900
+0.106743 [INFO ] L4 exFAT volume lba=0 sectors=250347520
+0.343051 [INFO ] L4 exFAT free_bytes=1179648 cluster_bytes=131072
+0.484995 [INFO ] L4 EXFAT READ PASS root_entries=573 fingerprint=6936b47aa8c4eba5 cluster_bytes=131072
+0.485070 [INFO ] L4 SD stats reads=351 read_sectors=351 max_read=1 writes=0 write_sectors=0 max_write=0 dma_irqs=353 sd_irqs=353
+0.485183 [INFO ] L4 EXFAT PASS write_test=false

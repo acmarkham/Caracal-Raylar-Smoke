@@ -1,0 +1,22 @@
+{
+  "utc": "2026-11-24T08:20:01.892093+00:00",
+  "command": [
+    "rtk",
+    "proxy",
+    "probe-rs",
+    "run",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--verify",
+    "--non-interactive",
+    "--disable-progressbars",
+    "--no-location",
+    "target\\l4-exfat\\read-only.elf"
+  ],
+  "pass": false,
+  "host_seconds": 47.34400000004098
+}

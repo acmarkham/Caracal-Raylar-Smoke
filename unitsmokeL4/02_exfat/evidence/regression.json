@@ -1,0 +1,350 @@
+{
+  "u5_firmware_builds": [
+    {
+      "package": "aardwolf",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-gps",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-batterycharger",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-voltagemonitor",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-sensor-acc",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-sensor-mag",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-storage",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-mic-array",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-identity",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-buzzer",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-led",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-radio",
+      "exit_code": 0
+    },
+    {
+      "package": "driver-test-button",
+      "exit_code": 0
+    },
+    {
+      "package": "metadriver-test-audiosource",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-time",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-storage",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-logging",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-audiorecorder",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-flacencoder",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-crclencoder",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-powermanagement",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-location",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-sensors",
+      "exit_code": 0
+    },
+    {
+      "package": "service-test-identity",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-001-powermonitorlog",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-002-monoaudiolog",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-003-radio-range",
+      "exit_code": 0
+    },
+    {
+      "package": "integration-test-004-radio-heartbeat",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-01-helloworld",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-02-userbutton",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-03-buzzer",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-04-sensi2c",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-05-sensi2c-acc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-06-sensi2c-mag",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-07-sensi2c-bq",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-08_serial-gps",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-09_serial-gps_pps",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-10_pdm-mic1-mono",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-11_sdmmc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-12_ebyte-rf",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-13_ebyte-rx-tx",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-14_ebyte-subg-lora",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-15_ebyte-crate",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-16_ebyte-crate-rx",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-17-sleep-test",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-18-pdm-mic1-dma",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-19-pdm-micarray-dma",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-20-pdm-mic-all-dma",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-21-qwiic-oled",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-22-read-adc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-23_gps-standby",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-24-batt-charger",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-25_sd_rawspeed",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-26-tempsensors",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-27-usb-cdc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-28-gps-tim-cc",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-29_exfat_read",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-30_exfat_write",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-31-sd-inspect",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-32-lightranger-i2c",
+      "exit_code": 0
+    },
+    {
+      "package": "unit-smoke-33-power-profile",
+      "exit_code": 0
+    }
+  ],
+  "u5_default_members": 76,
+  "leaf_graphs_unchanged": [
+    {
+      "package": "aardwolf",
+      "sha256": "4e129d1701346f1b47975ac635b48a2d43ae09c67b04078f240caea531bd360b"
+    },
+    {
+      "package": "driver-test-storage",
+      "sha256": "1ba75629e5cbe404466e59c8149d9c993d8beafc78ff174d7b71aa7a0e62da8c"
+    },
+    {
+      "package": "integration-test-002-monoaudiolog",
+      "sha256": "8f6a2847572c8ed497e1783b0676054911fdf99c644edcfe1996b9a15fa00c32"
+    },
+    {
+      "package": "service-test-storage",
+      "sha256": "6ceb33ca6cd10ad704e297050ba6a45e9b72b3fb73ce5907ce11f11a435aae3a"
+    },
+    {
+      "package": "unit-smoke-01-helloworld",
+      "sha256": "0da87e3fe33eb1ecf29b11c772e3deeb7f770abbd80969775ed39faa9c6b8c1a"
+    },
+    {
+      "package": "unit-smoke-11_sdmmc",
+      "sha256": "fa669ec55a7c1bd9b30f3520c3e34d2dc8c5ee208213e863ed2392e1d6d07b46"
+    },
+    {
+      "package": "unit-smoke-29_exfat_read",
+      "sha256": "b66391889e968a1dc73fef4dcff50b1a535eaee362475a60d1fc3f37323c0563"
+    },
+    {
+      "package": "unit-smoke-30_exfat_write",
+      "sha256": "27d2f997bbc8099ca0a05462dd79e7833ddfafb6c0814965ee2ae79440af5c30"
+    },
+    {
+      "package": "unit-smoke-31-sd-inspect",
+      "sha256": "2ca3471b35b12c09e08ffb5b60e05065c1d537913d1353850f9f641e66a44377"
+    },
+    {
+      "package": "unit-smoke-l4-01-helloworld",
+      "sha256": "f48dc69b3358975356ae2faf245c125db10b2d560c0fc55fb7e1aa014e20b749"
+    }
+  ],
+  "portable_host_results": {
+    "command": [
+      "rtk",
+      "proxy",
+      "cargo",
+      "test",
+      "--lib",
+      "--no-fail-fast",
+      "--no-default-features",
+      "--target",
+      "x86_64-pc-windows-msvc",
+      "--locked",
+      "--offline",
+      "-p",
+      "raylar-drivers",
+      "-p",
+      "raylar-stage-profiling",
+      "-p",
+      "raylar-audiosource",
+      "-p",
+      "raylar-time-service",
+      "-p",
+      "raylar-storage-service",
+      "-p",
+      "raylar-logging-service",
+      "-p",
+      "raylar-audio-recorder-service",
+      "-p",
+      "raylar-flac-encoder-service",
+      "-p",
+      "raylar-crcl-encoder-service",
+      "-p",
+      "raylar-power-management-service",
+      "-p",
+      "raylar-location-service",
+      "-p",
+      "raylar-radio-service",
+      "-p",
+      "raylar-sensor-service",
+      "-p",
+      "raylar-versioning-service",
+      "-p",
+      "aardwolf"
+    ],
+    "exit_code": 101,
+    "passed": 203,
+    "failed": 5,
+    "failures": [
+      "estimator::tests::estimates_frequency_error_with_long_baseline_regression",
+      "estimator::tests::frequency_regression_rejects_one_in_window_outlier",
+      "estimator::tests::hardware_scale_sample_handles_small_capture_quantization",
+      "estimator::tests::holdover_warning_is_one_way_until_an_anchor_is_accepted",
+      "gps::framer::tests::frames_sentence"
+    ],
+    "matches_known_baseline": true
+  },
+  "integration004_host_passed": 13,
+  "u5_hardware": "not run; connected board is L4",
+  "cross_host": "Windows only validated"
+}

@@ -1,0 +1,13 @@
+     Finished in 43.69s
+0.100025 [INFO ] L4 EXFAT boot write_test=false sd_sw_high=false
+0.100065 [INFO ] L4 SD clocks sys_hz=80000000 kernel_hz=48000000 dma=DMA2_CH5 request=7
+0.105724 [INFO ] L4 SD card sectors=250347520 serial=7cb1530c manufacturer=27 clkcr=00000900
+0.107080 [INFO ] L4 exFAT volume lba=32768 sectors=250314752
+0.348092 [INFO ] L4 exFAT free_bytes=64809730048 cluster_bytes=131072
+0.395126 [INFO ] L4 stack phase=inspected headroom=32768 high_water_upper_bound=10812 unused=21956 guard=ok
+0.395218 [INFO ] L4 EXFAT READ PASS root_entries=167 fingerprint=759ce78a7282fe16 cluster_bytes=131072
+0.754863 [INFO ] L4 EXFAT VERIFY PASS path=/L4E00000.BIN bytes=262317 hash=7c76907847852d9d elapsed_ms=346
+0.754985 [INFO ] L4 EXFAT PERSISTENCE PASS path=/L4E00000.BIN writes=0
+0.755355 [INFO ] L4 stack phase=complete headroom=32768 high_water_upper_bound=21956 unused=10812 guard=ok
+0.755445 [INFO ] L4 SD stats reads=821 read_sectors=821 max_read=1 writes=0 write_sectors=0 max_write=0 dma_irqs=823 sd_irqs=823
+0.755555 [INFO ] L4 EXFAT PASS write_test=false

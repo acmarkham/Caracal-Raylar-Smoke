@@ -1,0 +1,26 @@
+     Finished in 46.10s
+0.100025 [INFO ] L4 EXFAT boot write_test=true sd_sw_high=false
+0.100065 [INFO ] L4 SD clocks sys_hz=80000000 kernel_hz=48000000 dma=DMA2_CH5 request=7
+0.105724 [INFO ] L4 SD card sectors=250347520 serial=7cb1530c manufacturer=27 clkcr=00000900
+0.107028 [INFO ] L4 exFAT volume lba=32768 sectors=250314752
+0.348686 [INFO ] L4 exFAT free_bytes=64810123264 cluster_bytes=131072
+0.395136 [INFO ] L4 EXFAT READ PASS root_entries=166 fingerprint=eb30e8ae62c27814 cluster_bytes=131072
+0.431650 [ERROR] panicked at 'L4 EXFAT FAIL phase=create_exclusive error=Io(Inner(StackGuard))'
+0.431750 [ERROR] panicked at C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\defmt-1.1.0\src\lib.rs:385:5:
+explicit panic
+Firmware exited unexpectedly: Multiple
+ WARN probe_rs_debug::debug_info: No reliable return address is available, so we cannot determine the program counter to unwind the previous frame.
+Core 0
+    Frame 0: HardFault_ @ 0x080144d4
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cortex-m-rt-0.7.5\src\lib.rs:1103:1
+    Frame 1: HardFault <Cause: Escalated UsageFault <Cause: Undefined instruction>> @ 0x0800cb2c
+
+    Frame 2: __udf @ 0x0800cb2c inline
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cortex-m-0.7.7\asm\inline.rs:181:5
+    Frame 3: udf @ 0x000000000800cb2c inline
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\cortex-m-0.7.7\src\call_asm.rs:11:43
+    Frame 4: hard_fault @ 0x000000000800cb2c inline
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\panic-probe-1.0.0\src\lib.rs:86:5
+    Frame 5: panic @ 0x000000000800cb24
+       C:\Users\markh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\panic-probe-1.0.0\src\lib.rs:54:9
+Error: Multiple

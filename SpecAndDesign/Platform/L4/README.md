@@ -19,6 +19,7 @@ Read these decisions in order:
 | [L4-004: U5 regression and staged bring-up](ADR-L4-004-regression-and-bring-up.md) | Unchanged U5 acceptance suite, build matrix, milestones and rollback |
 | [L4-005: Schematic and legacy reference](ADR-L4-005-schematic-and-legacy-reference.md) | Initial pin map, conflicting evidence and hardware verification gates |
 | [L4-006: First LED bring-up](ADR-L4-006-first-led-bring-up.md) | Implemented L4 HSE/PLL, Embassy time, GPIO and ST-Link smoke target |
+| [L4-007: SDMMC/DMA and exFAT](ADR-L4-007-sdmmc-dma-exfat.md) | L4 card inspection, exclusive file I/O, fresh-mount readback and reset persistence |
 
 The most consequential correction to the initial brief is **128 KiB physical
 SRAM, not 192 KiB**, for the STM32L476RGT6. The flash limit is 1 MiB.

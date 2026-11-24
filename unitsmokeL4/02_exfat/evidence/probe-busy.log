@@ -1,0 +1,6 @@
+Error: Failed to open probe: Failed to open the debug probe.
+
+Caused by:
+    0: The debug probe could not be created.
+    1: A USB error occurred.
+    2: Access is denied. (os error 5)

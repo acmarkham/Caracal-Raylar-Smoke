@@ -93,6 +93,7 @@ members = [
     "unitsmoke/32_lightranger_i2c",
     "unitsmoke/33_power_profile",
     "unitsmokeL4/01_helloworld",
+    "unitsmokeL4/02_exfat",
 ]
 
 [workspace.package]

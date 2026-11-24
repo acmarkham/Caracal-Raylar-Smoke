@@ -1,0 +1,21 @@
+{
+  "utc": "2026-11-24T08:56:52.751118+00:00",
+  "command": [
+    "rtk",
+    "probe-rs",
+    "reset",
+    "--chip",
+    "STM32L476RGTx",
+    "--probe",
+    "0483:3748",
+    "--speed",
+    "100",
+    "--non-interactive"
+  ],
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "",
+  "profile": "read-only",
+  "elf_sha256": "8556a0df0f59b75419b7f8ccdf331f10f10b15c960f0f8362f8001eb72b12cc9",
+  "subsequent_debug_attach": false
+}

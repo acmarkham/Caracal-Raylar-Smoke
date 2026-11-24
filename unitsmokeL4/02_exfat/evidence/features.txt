@@ -1,0 +1,705 @@
+unit-smoke-l4-02-exfat v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\unitsmokeL4\02_exfat)
+├── aligned feature "default"
+│   └── aligned v0.4.3
+│       └── as-slice feature "default"
+│           └── as-slice v0.2.1
+│               └── stable_deref_trait v1.2.1
+├── cortex-m feature "critical-section-single-core"
+│   ├── cortex-m v0.7.7
+│   │   ├── bare-metal feature "const-fn"
+│   │   │   └── bare-metal v0.2.5
+│   │   │       [build-dependencies]
+│   │   │       └── rustc_version feature "default"
+│   │   │           └── rustc_version v0.2.3
+│   │   │               └── semver feature "default"
+│   │   │                   └── semver v0.9.0
+│   │   │                       └── semver-parser feature "default"
+│   │   │                           └── semver-parser v0.7.0
+│   │   ├── bare-metal feature "default"
+│   │   │   └── bare-metal v0.2.5 (*)
+│   │   ├── bitfield feature "default"
+│   │   │   └── bitfield v0.13.2
+│   │   ├── critical-section feature "default"
+│   │   │   └── critical-section v1.2.0
+│   │   ├── embedded-hal feature "default"
+│   │   │   └── embedded-hal v0.2.7
+│   │   │       ├── void v1.0.2
+│   │   │       └── nb feature "default"
+│   │   │           └── nb v0.1.3
+│   │   │               └── nb feature "default"
+│   │   │                   └── nb v1.1.0
+│   │   └── volatile-register feature "default"
+│   │       └── volatile-register v0.2.2
+│   │           └── vcell feature "default"
+│   │               └── vcell v0.1.3
+│   ├── cortex-m feature "critical-section"
+│   │   └── cortex-m v0.7.7 (*)
+│   └── critical-section feature "restore-state-bool"
+│       └── critical-section v1.2.0
+├── cortex-m feature "default"
+│   └── cortex-m v0.7.7 (*)
+├── cortex-m feature "inline-asm"
+│   └── cortex-m v0.7.7 (*)
+├── cortex-m-rt feature "default"
+│   └── cortex-m-rt v0.7.5
+│       └── cortex-m-rt-macros feature "default"
+│           └── cortex-m-rt-macros v0.7.5 (proc-macro)
+│               ├── proc-macro2 feature "default"
+│               │   ├── proc-macro2 v1.0.106
+│               │   │   └── unicode-ident feature "default"
+│               │   │       └── unicode-ident v1.0.24
+│               │   └── proc-macro2 feature "proc-macro"
+│               │       └── proc-macro2 v1.0.106 (*)
+│               ├── quote feature "default"
+│               │   ├── quote v1.0.45
+│               │   │   └── proc-macro2 v1.0.106 (*)
+│               │   └── quote feature "proc-macro"
+│               │       ├── quote v1.0.45 (*)
+│               │       └── proc-macro2 feature "proc-macro" (*)
+│               ├── syn feature "default"
+│               │   ├── syn v2.0.118
+│               │   │   ├── proc-macro2 v1.0.106 (*)
+│               │   │   ├── quote v1.0.45 (*)
+│               │   │   └── unicode-ident feature "default" (*)
+│               │   ├── syn feature "clone-impls"
+│               │   │   └── syn v2.0.118 (*)
+│               │   ├── syn feature "derive"
+│               │   │   └── syn v2.0.118 (*)
+│               │   ├── syn feature "parsing"
+│               │   │   └── syn v2.0.118 (*)
+│               │   ├── syn feature "printing"
+│               │   │   └── syn v2.0.118 (*)
+│               │   └── syn feature "proc-macro"
+│               │       ├── syn v2.0.118 (*)
+│               │       ├── proc-macro2 feature "proc-macro" (*)
+│               │       └── quote feature "proc-macro" (*)
+│               ├── syn feature "extra-traits"
+│               │   └── syn v2.0.118 (*)
+│               └── syn feature "full"
+│                   └── syn v2.0.118 (*)
+├── defmt feature "default"
+│   └── defmt v1.1.0
+│       ├── bitflags feature "default"
+│       │   └── bitflags v1.3.2
+│       └── defmt-macros feature "default"
+│           └── defmt-macros v1.1.0 (proc-macro)
+│               ├── proc-macro2 feature "default" (*)
+│               ├── quote feature "default" (*)
+│               ├── syn feature "default" (*)
+│               ├── syn feature "extra-traits" (*)
+│               ├── syn feature "full" (*)
+│               ├── defmt-parser feature "default"
+│               │   └── defmt-parser v1.0.0
+│               │       └── thiserror feature "default"
+│               │           ├── thiserror v2.0.18
+│               │           │   └── thiserror-impl feature "default"
+│               │           │       └── thiserror-impl v2.0.18 (proc-macro)
+│               │           │           ├── proc-macro2 feature "default" (*)
+│               │           │           ├── quote feature "default" (*)
+│               │           │           └── syn feature "default" (*)
+│               │           └── thiserror feature "std"
+│               │               └── thiserror v2.0.18 (*)
+│               └── proc-macro-error2 feature "default"
+│                   ├── proc-macro-error2 v2.0.1
+│                   │   ├── syn v2.0.118 (*)
+│                   │   ├── proc-macro2 feature "default" (*)
+│                   │   ├── quote feature "default" (*)
+│                   │   └── proc-macro-error-attr2 feature "default"
+│                   │       └── proc-macro-error-attr2 v2.0.0 (proc-macro)
+│                   │           ├── proc-macro2 feature "default" (*)
+│                   │           └── quote feature "default" (*)
+│                   └── proc-macro-error2 feature "syn-error"
+│                       └── proc-macro-error2 v2.0.1 (*)
+├── defmt-rtt feature "default"
+│   └── defmt-rtt v1.2.0
+│       ├── critical-section feature "default" (*)
+│       └── defmt feature "default" (*)
+├── embassy-executor feature "default"
+│   └── embassy-executor v0.10.0
+│       ├── cortex-m feature "default" (*)
+│       ├── critical-section feature "default" (*)
+│       ├── defmt feature "default" (*)
+│       ├── cordyceps feature "default"
+│       │   └── cordyceps v0.3.4
+│       ├── cordyceps feature "no-cache-pad"
+│       │   └── cordyceps v0.3.4
+│       ├── document-features feature "default"
+│       │   └── document-features v0.2.12 (proc-macro)
+│       │       └── litrs feature "default"
+│       │           └── litrs v1.0.0
+│       ├── embassy-executor-macros feature "default"
+│       │   └── embassy-executor-macros v0.8.0 (proc-macro)
+│       │       ├── proc-macro2 feature "default" (*)
+│       │       ├── quote feature "default" (*)
+│       │       ├── syn feature "default" (*)
+│       │       ├── syn feature "full" (*)
+│       │       ├── syn feature "visit"
+│       │       │   └── syn v2.0.118 (*)
+│       │       └── darling feature "default"
+│       │           ├── darling v0.20.11
+│       │           │   ├── darling_core feature "default"
+│       │           │   │   └── darling_core v0.20.11
+│       │           │   │       ├── proc-macro2 feature "default" (*)
+│       │           │   │       ├── quote feature "default" (*)
+│       │           │   │       ├── syn feature "default" (*)
+│       │           │   │       ├── syn feature "extra-traits" (*)
+│       │           │   │       ├── syn feature "full" (*)
+│       │           │   │       ├── fnv feature "default"
+│       │           │   │       │   ├── fnv v1.0.7
+│       │           │   │       │   └── fnv feature "std"
+│       │           │   │       │       └── fnv v1.0.7
+│       │           │   │       ├── ident_case feature "default"
+│       │           │   │       │   └── ident_case v1.0.1
+│       │           │   │       └── strsim feature "default"
+│       │           │   │           └── strsim v0.11.1
+│       │           │   └── darling_macro feature "default"
+│       │           │       └── darling_macro v0.20.11 (proc-macro)
+│       │           │           ├── quote feature "default" (*)
+│       │           │           ├── syn feature "default" (*)
+│       │           │           └── darling_core feature "default" (*)
+│       │           └── darling feature "suggestions"
+│       │               ├── darling v0.20.11 (*)
+│       │               └── darling_core feature "suggestions"
+│       │                   ├── darling_core v0.20.11 (*)
+│       │                   └── darling_core feature "strsim"
+│       │                       └── darling_core v0.20.11 (*)
+│       └── embassy-executor-timer-queue feature "default"
+│           └── embassy-executor-timer-queue v0.1.0
+├── embassy-executor feature "defmt"
+│   └── embassy-executor v0.10.0 (*)
+├── embassy-executor feature "executor-thread"
+│   └── embassy-executor v0.10.0 (*)
+├── embassy-executor feature "platform-cortex-m"
+│   ├── embassy-executor v0.10.0 (*)
+│   └── embassy-executor feature "_platform"
+│       └── embassy-executor v0.10.0 (*)
+├── embassy-stm32 feature "default"
+│   ├── embassy-stm32 v0.6.0
+│   │   ├── embassy-embedded-hal v0.6.0
+│   │   │   ├── embedded-hal feature "default" (*)
+│   │   │   ├── embedded-hal feature "unproven"
+│   │   │   │   ├── embedded-hal v0.2.7 (*)
+│   │   │   │   └── nb feature "unstable"
+│   │   │   │       └── nb v0.1.3 (*)
+│   │   │   ├── nb feature "default" (*)
+│   │   │   ├── defmt feature "default" (*)
+│   │   │   ├── embassy-futures feature "default"
+│   │   │   │   └── embassy-futures v0.1.2
+│   │   │   ├── embassy-hal-internal feature "default"
+│   │   │   │   └── embassy-hal-internal v0.4.0
+│   │   │   │       └── num-traits v0.2.19
+│   │   │   │           [build-dependencies]
+│   │   │   │           └── autocfg feature "default"
+│   │   │   │               └── autocfg v1.5.1
+│   │   │   ├── embassy-sync feature "default"
+│   │   │   │   └── embassy-sync v0.8.0
+│   │   │   │       ├── futures-core v0.3.32
+│   │   │   │       ├── futures-sink v0.3.32
+│   │   │   │       ├── critical-section feature "default" (*)
+│   │   │   │       ├── defmt feature "default" (*)
+│   │   │   │       ├── cfg-if feature "default"
+│   │   │   │       │   └── cfg-if v1.0.4
+│   │   │   │       ├── embedded-io-async feature "default"
+│   │   │   │       │   └── embedded-io-async v0.7.0
+│   │   │   │       │       ├── defmt feature "default" (*)
+│   │   │   │       │       └── embedded-io feature "default"
+│   │   │   │       │           └── embedded-io v0.7.1
+│   │   │   │       │               └── defmt feature "default" (*)
+│   │   │   │       └── heapless feature "default"
+│   │   │   │           └── heapless v0.9.3
+│   │   │   │               ├── stable_deref_trait v1.2.1
+│   │   │   │               └── hash32 feature "default"
+│   │   │   │                   └── hash32 v0.3.1
+│   │   │   │                       └── byteorder v1.5.0
+│   │   │   ├── embassy-time feature "default"
+│   │   │   │   └── embassy-time v0.5.1
+│   │   │   │       ├── futures-core v0.3.32
+│   │   │   │       ├── critical-section feature "default" (*)
+│   │   │   │       ├── embedded-hal feature "default" (*)
+│   │   │   │       ├── defmt feature "default" (*)
+│   │   │   │       ├── document-features feature "default" (*)
+│   │   │   │       ├── cfg-if feature "default" (*)
+│   │   │   │       ├── embassy-time-driver feature "default"
+│   │   │   │       │   └── embassy-time-driver v0.2.2
+│   │   │   │       │       └── document-features feature "default" (*)
+│   │   │   │       ├── embedded-hal feature "default"
+│   │   │   │       │   └── embedded-hal v1.0.0
+│   │   │   │       └── embedded-hal-async feature "default"
+│   │   │   │           └── embedded-hal-async v1.0.0
+│   │   │   │               └── embedded-hal feature "default" (*)
+│   │   │   ├── embedded-hal feature "default" (*)
+│   │   │   ├── embedded-hal-async feature "default" (*)
+│   │   │   ├── embedded-storage feature "default"
+│   │   │   │   └── embedded-storage v0.3.1
+│   │   │   └── embedded-storage-async feature "default"
+│   │   │       └── embedded-storage-async v0.4.1
+│   │   │           └── embedded-storage feature "default" (*)
+│   │   ├── futures-util v0.3.32
+│   │   │   ├── futures-core v0.3.32
+│   │   │   ├── futures-task v0.3.32
+│   │   │   └── pin-project-lite feature "default"
+│   │   │       └── pin-project-lite v0.2.17
+│   │   ├── aligned feature "default" (*)
+│   │   ├── cortex-m feature "default" (*)
+│   │   ├── critical-section feature "default" (*)
+│   │   ├── embedded-hal feature "default" (*)
+│   │   ├── embedded-hal feature "unproven" (*)
+│   │   ├── nb feature "default" (*)
+│   │   ├── volatile-register feature "default" (*)
+│   │   ├── vcell feature "default" (*)
+│   │   ├── cortex-m-rt feature "default" (*)
+│   │   ├── defmt feature "default" (*)
+│   │   ├── document-features feature "default" (*)
+│   │   ├── bit_field feature "default"
+│   │   │   └── bit_field v0.10.3
+│   │   ├── bitflags feature "default"
+│   │   │   └── bitflags v2.13.0
+│   │   ├── block-device-driver feature "default"
+│   │   │   └── block-device-driver v0.2.0
+│   │   │       └── aligned feature "default" (*)
+│   │   ├── cfg-if feature "default" (*)
+│   │   ├── embassy-futures feature "default" (*)
+│   │   ├── embassy-sync feature "default" (*)
+│   │   ├── embedded-io-async feature "default" (*)
+│   │   ├── embedded-io feature "default" (*)
+│   │   ├── heapless feature "default" (*)
+│   │   ├── embassy-time feature "default" (*)
+│   │   ├── embassy-time-driver feature "default" (*)
+│   │   ├── embedded-hal feature "default" (*)
+│   │   ├── embedded-hal-async feature "default" (*)
+│   │   ├── embedded-storage feature "default" (*)
+│   │   ├── embedded-storage-async feature "default" (*)
+│   │   ├── embassy-hal-internal feature "cortex-m"
+│   │   │   └── embassy-hal-internal v0.5.0
+│   │   │       ├── num-traits v0.2.19 (*)
+│   │   │       ├── cortex-m feature "default" (*)
+│   │   │       ├── critical-section feature "default" (*)
+│   │   │       └── defmt feature "default" (*)
+│   │   ├── embassy-hal-internal feature "default"
+│   │   │   └── embassy-hal-internal v0.5.0 (*)
+│   │   ├── embassy-hal-internal feature "prio-bits-4"
+│   │   │   └── embassy-hal-internal v0.5.0 (*)
+│   │   ├── embassy-net-driver feature "default"
+│   │   │   └── embassy-net-driver v0.2.0
+│   │   │       └── defmt feature "default"
+│   │   │           └── defmt v0.3.100
+│   │   │               └── defmt feature "default" (*)
+│   │   ├── embassy-time-queue-utils feature "default"
+│   │   │   └── embassy-time-queue-utils v0.3.2
+│   │   │       ├── embassy-executor-timer-queue feature "default" (*)
+│   │   │       ├── embassy-executor-timer-queue feature "timer-item-size-6-words"
+│   │   │       │   └── embassy-executor-timer-queue v0.1.0
+│   │   │       └── heapless feature "default" (*)
+│   │   ├── embassy-usb-driver feature "default"
+│   │   │   └── embassy-usb-driver v0.2.2
+│   │   │       ├── defmt feature "default" (*)
+│   │   │       ├── embedded-io-async feature "default" (*)
+│   │   │       └── embedded-io-async feature "default"
+│   │   │           └── embedded-io-async v0.6.1
+│   │   │               └── embedded-io feature "default"
+│   │   │                   └── embedded-io v0.6.1
+│   │   ├── embassy-usb-synopsys-otg feature "default"
+│   │   │   └── embassy-usb-synopsys-otg v0.3.3
+│   │   │       ├── critical-section feature "default" (*)
+│   │   │       ├── defmt feature "default" (*)
+│   │   │       ├── embassy-sync feature "default" (*)
+│   │   │       ├── embassy-time feature "default" (*)
+│   │   │       ├── embassy-usb-driver feature "default" (*)
+│   │   │       └── portable-atomic feature "default"
+│   │   │           ├── portable-atomic v1.13.1
+│   │   │           └── portable-atomic feature "fallback"
+│   │   │               └── portable-atomic v1.13.1
+│   │   ├── embedded-can feature "default"
+│   │   │   └── embedded-can v0.4.1
+│   │   │       └── nb feature "default" (*)
+│   │   ├── embedded-hal-nb feature "default"
+│   │   │   └── embedded-hal-nb v1.0.0
+│   │   │       ├── nb feature "default" (*)
+│   │   │       └── embedded-hal feature "default" (*)
+│   │   ├── rand_core feature "default"
+│   │   │   └── rand_core v0.6.4
+│   │   ├── rand_core feature "default"
+│   │   │   └── rand_core v0.9.5
+│   │   ├── sdio-host feature "default"
+│   │   │   └── sdio-host v0.9.0
+│   │   ├── static_assertions feature "default"
+│   │   │   └── static_assertions v1.1.0
+│   │   ├── stm32-fmc feature "default"
+│   │   │   ├── stm32-fmc v0.4.0
+│   │   │   │   └── embedded-hal feature "default" (*)
+│   │   │   ├── stm32-fmc feature "nand"
+│   │   │   │   └── stm32-fmc v0.4.0 (*)
+│   │   │   └── stm32-fmc feature "sdram"
+│   │   │       └── stm32-fmc v0.4.0 (*)
+│   │   ├── stm32-metapac feature "default"
+│   │   │   ├── stm32-metapac v21.0.0
+│   │   │   │   ├── cortex-m feature "default" (*)
+│   │   │   │   ├── cortex-m-rt feature "default" (*)
+│   │   │   │   └── defmt feature "default" (*)
+│   │   │   └── stm32-metapac feature "pac"
+│   │   │       └── stm32-metapac v21.0.0 (*)
+│   │   └── trait-set feature "default"
+│   │       └── trait-set v0.3.0 (proc-macro)
+│   │           ├── proc-macro2 feature "default" (*)
+│   │           ├── quote feature "default" (*)
+│   │           └── syn feature "default"
+│   │               ├── syn v1.0.109
+│   │               │   ├── proc-macro2 v1.0.106 (*)
+│   │               │   ├── quote v1.0.45 (*)
+│   │               │   └── unicode-ident feature "default" (*)
+│   │               ├── syn feature "clone-impls"
+│   │               │   └── syn v1.0.109 (*)
+│   │               ├── syn feature "derive"
+│   │               │   └── syn v1.0.109 (*)
+│   │               ├── syn feature "parsing"
+│   │               │   └── syn v1.0.109 (*)
+│   │               ├── syn feature "printing"
+│   │               │   ├── syn v1.0.109 (*)
+│   │               │   └── syn feature "quote"
+│   │               │       └── syn v1.0.109 (*)
+│   │               └── syn feature "proc-macro"
+│   │                   ├── syn v1.0.109 (*)
+│   │                   ├── proc-macro2 feature "proc-macro" (*)
+│   │                   ├── quote feature "proc-macro" (*)
+│   │                   └── syn feature "quote" (*)
+│   │   [build-dependencies]
+│   │   ├── proc-macro2 feature "default" (*)
+│   │   ├── quote feature "default" (*)
+│   │   ├── regex feature "default"
+│   │   │   ├── regex v1.12.4
+│   │   │   │   ├── aho-corasick v1.1.4
+│   │   │   │   │   └── memchr v2.8.2
+│   │   │   │   ├── memchr v2.8.2
+│   │   │   │   ├── regex-syntax v0.8.11
+│   │   │   │   ├── regex-automata feature "alloc"
+│   │   │   │   │   └── regex-automata v0.4.14
+│   │   │   │   │       ├── aho-corasick v1.1.4 (*)
+│   │   │   │   │       ├── memchr v2.8.2
+│   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   ├── regex-automata feature "meta"
+│   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   ├── regex-automata feature "nfa-pikevm"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-automata feature "nfa-thompson"
+│   │   │   │   │   │       ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │       └── regex-automata feature "alloc" (*)
+│   │   │   │   │   └── regex-automata feature "syntax"
+│   │   │   │   │       ├── regex-automata v0.4.14 (*)
+│   │   │   │   │       └── regex-automata feature "alloc" (*)
+│   │   │   │   ├── regex-automata feature "nfa-pikevm" (*)
+│   │   │   │   └── regex-automata feature "syntax" (*)
+│   │   │   ├── regex feature "perf"
+│   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   ├── regex feature "perf-backtrack"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   └── regex-automata feature "nfa-backtrack"
+│   │   │   │   │       ├── regex-automata v0.4.14 (*)
+│   │   │   │   │       └── regex-automata feature "nfa-thompson" (*)
+│   │   │   │   ├── regex feature "perf-cache"
+│   │   │   │   │   └── regex v1.12.4 (*)
+│   │   │   │   ├── regex feature "perf-dfa"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   └── regex-automata feature "hybrid"
+│   │   │   │   │       ├── regex-automata v0.4.14 (*)
+│   │   │   │   │       ├── regex-automata feature "alloc" (*)
+│   │   │   │   │       └── regex-automata feature "nfa-thompson" (*)
+│   │   │   │   ├── regex feature "perf-inline"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   └── regex-automata feature "perf-inline"
+│   │   │   │   │       └── regex-automata v0.4.14 (*)
+│   │   │   │   ├── regex feature "perf-literal"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   └── regex-automata feature "perf-literal"
+│   │   │   │   │       ├── regex-automata v0.4.14 (*)
+│   │   │   │   │       ├── regex-automata feature "perf-literal-multisubstring"
+│   │   │   │   │       │   └── regex-automata v0.4.14 (*)
+│   │   │   │   │       └── regex-automata feature "perf-literal-substring"
+│   │   │   │   │           ├── regex-automata v0.4.14 (*)
+│   │   │   │   │           └── aho-corasick feature "perf-literal"
+│   │   │   │   │               └── aho-corasick v1.1.4 (*)
+│   │   │   │   └── regex feature "perf-onepass"
+│   │   │   │       ├── regex v1.12.4 (*)
+│   │   │   │       └── regex-automata feature "dfa-onepass"
+│   │   │   │           ├── regex-automata v0.4.14 (*)
+│   │   │   │           └── regex-automata feature "nfa-thompson" (*)
+│   │   │   ├── regex feature "std"
+│   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   ├── aho-corasick feature "std"
+│   │   │   │   │   ├── aho-corasick v1.1.4 (*)
+│   │   │   │   │   └── memchr feature "std"
+│   │   │   │   │       ├── memchr v2.8.2
+│   │   │   │   │       └── memchr feature "alloc"
+│   │   │   │   │           └── memchr v2.8.2
+│   │   │   │   ├── memchr feature "std" (*)
+│   │   │   │   ├── regex-automata feature "std"
+│   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   ├── aho-corasick feature "std" (*)
+│   │   │   │   │   ├── memchr feature "std" (*)
+│   │   │   │   │   ├── regex-automata feature "alloc" (*)
+│   │   │   │   │   └── regex-syntax feature "std"
+│   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   └── regex-syntax feature "std" (*)
+│   │   │   ├── regex feature "unicode"
+│   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   ├── regex feature "unicode-age"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-age"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-age"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   └── regex-syntax feature "unicode-age" (*)
+│   │   │   │   ├── regex feature "unicode-bool"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-bool"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-bool"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   └── regex-syntax feature "unicode-bool" (*)
+│   │   │   │   ├── regex feature "unicode-case"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-case"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-case"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   └── regex-syntax feature "unicode-case" (*)
+│   │   │   │   ├── regex feature "unicode-gencat"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-gencat"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-gencat"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   └── regex-syntax feature "unicode-gencat" (*)
+│   │   │   │   ├── regex feature "unicode-perl"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-perl"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-perl"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   ├── regex-automata feature "unicode-word-boundary"
+│   │   │   │   │   │   └── regex-automata v0.4.14 (*)
+│   │   │   │   │   └── regex-syntax feature "unicode-perl" (*)
+│   │   │   │   ├── regex feature "unicode-script"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-script"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-script"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   └── regex-syntax feature "unicode-script" (*)
+│   │   │   │   ├── regex feature "unicode-segment"
+│   │   │   │   │   ├── regex v1.12.4 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-segment"
+│   │   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   │   └── regex-syntax feature "unicode-segment"
+│   │   │   │   │   │       └── regex-syntax v0.8.11
+│   │   │   │   │   └── regex-syntax feature "unicode-segment" (*)
+│   │   │   │   ├── regex-automata feature "unicode"
+│   │   │   │   │   ├── regex-automata v0.4.14 (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-age" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-bool" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-case" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-gencat" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-perl" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-script" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-segment" (*)
+│   │   │   │   │   ├── regex-automata feature "unicode-word-boundary" (*)
+│   │   │   │   │   └── regex-syntax feature "unicode"
+│   │   │   │   │       ├── regex-syntax v0.8.11
+│   │   │   │   │       ├── regex-syntax feature "unicode-age" (*)
+│   │   │   │   │       ├── regex-syntax feature "unicode-bool" (*)
+│   │   │   │   │       ├── regex-syntax feature "unicode-case" (*)
+│   │   │   │   │       ├── regex-syntax feature "unicode-gencat" (*)
+│   │   │   │   │       ├── regex-syntax feature "unicode-perl" (*)
+│   │   │   │   │       ├── regex-syntax feature "unicode-script" (*)
+│   │   │   │   │       └── regex-syntax feature "unicode-segment" (*)
+│   │   │   │   └── regex-syntax feature "unicode" (*)
+│   │   │   └── regex-syntax feature "default"
+│   │   │       ├── regex-syntax v0.8.11
+│   │   │       ├── regex-syntax feature "std" (*)
+│   │   │       └── regex-syntax feature "unicode" (*)
+│   │   └── stm32-metapac feature "metadata"
+│   │       └── stm32-metapac v21.0.0
+│   │           ├── cortex-m feature "default"
+│   │           │   └── cortex-m v0.7.7
+│   │           │       ├── bare-metal feature "const-fn"
+│   │           │       │   └── bare-metal v0.2.5
+│   │           │       │       [build-dependencies]
+│   │           │       │       └── rustc_version feature "default" (*)
+│   │           │       ├── bare-metal feature "default"
+│   │           │       │   └── bare-metal v0.2.5 (*)
+│   │           │       ├── bitfield feature "default"
+│   │           │       │   └── bitfield v0.13.2
+│   │           │       ├── embedded-hal feature "default"
+│   │           │       │   └── embedded-hal v0.2.7
+│   │           │       │       ├── void v1.0.2
+│   │           │       │       └── nb feature "default"
+│   │           │       │           └── nb v0.1.3
+│   │           │       │               └── nb feature "default"
+│   │           │       │                   └── nb v1.1.0
+│   │           │       └── volatile-register feature "default"
+│   │           │           └── volatile-register v0.2.2
+│   │           │               └── vcell feature "default"
+│   │           │                   └── vcell v0.1.3
+│   │           ├── cortex-m-rt feature "default"
+│   │           │   └── cortex-m-rt v0.7.5
+│   │           │       └── cortex-m-rt-macros feature "default" (*)
+│   │           └── defmt feature "default"
+│   │               └── defmt v0.3.100
+│   │                   └── defmt feature "default"
+│   │                       └── defmt v1.1.0
+│   │                           ├── defmt-macros feature "default" (*)
+│   │                           └── bitflags feature "default"
+│   │                               └── bitflags v1.3.2
+│   └── embassy-stm32 feature "rt"
+│       ├── embassy-stm32 v0.6.0 (*)
+│       ├── stm32-metapac feature "rt"
+│       │   ├── stm32-metapac v21.0.0 (*)
+│       │   ├── cortex-m-rt feature "device"
+│       │   │   └── cortex-m-rt v0.7.5 (*)
+│       │   └── stm32-metapac feature "cortex-m-rt"
+│       │       └── stm32-metapac v21.0.0 (*)
+│       └── stm32-metapac feature "rt"
+│           ├── stm32-metapac v21.0.0 (*)
+│           ├── stm32-metapac feature "cortex-m-rt"
+│           │   └── stm32-metapac v21.0.0 (*)
+│           └── cortex-m-rt feature "device"
+│               └── cortex-m-rt v0.7.5 (*)
+├── embassy-stm32 feature "defmt"
+│   ├── embassy-stm32 v0.6.0 (*)
+│   ├── embassy-embedded-hal feature "defmt"
+│   │   └── embassy-embedded-hal v0.6.0 (*)
+│   ├── embassy-sync feature "defmt"
+│   │   └── embassy-sync v0.8.0 (*)
+│   ├── embedded-io-async feature "defmt"
+│   │   ├── embedded-io-async v0.7.0 (*)
+│   │   └── embedded-io feature "defmt"
+│   │       └── embedded-io v0.7.1 (*)
+│   ├── embassy-time feature "defmt"
+│   │   └── embassy-time v0.5.1 (*)
+│   ├── embassy-hal-internal feature "defmt"
+│   │   └── embassy-hal-internal v0.5.0 (*)
+│   ├── embassy-net-driver feature "defmt"
+│   │   └── embassy-net-driver v0.2.0 (*)
+│   ├── embassy-usb-driver feature "defmt"
+│   │   └── embassy-usb-driver v0.2.2 (*)
+│   ├── embassy-usb-synopsys-otg feature "defmt"
+│   │   ├── embassy-usb-synopsys-otg v0.3.3 (*)
+│   │   └── embassy-usb-driver feature "defmt" (*)
+│   ├── stm32-metapac feature "defmt"
+│   │   └── stm32-metapac v21.0.0 (*)
+│   └── stm32-metapac feature "defmt"
+│       └── stm32-metapac v21.0.0 (*)
+├── embassy-stm32 feature "memory-x"
+│   └── embassy-stm32 v0.6.0 (*)
+├── embassy-stm32 feature "stm32l476rg"
+│   ├── embassy-stm32 v0.6.0 (*)
+│   ├── stm32-metapac feature "stm32l476rg"
+│   │   └── stm32-metapac v21.0.0 (*)
+│   └── stm32-metapac feature "stm32l476rg"
+│       └── stm32-metapac v21.0.0 (*)
+├── embassy-stm32 feature "time-driver-tim5"
+│   ├── embassy-stm32 v0.6.0 (*)
+│   └── embassy-stm32 feature "_time-driver"
+│       ├── embassy-stm32 v0.6.0 (*)
+│       └── embassy-stm32 feature "time"
+│           ├── embassy-stm32 v0.6.0 (*)
+│           └── embassy-embedded-hal feature "time"
+│               └── embassy-embedded-hal v0.6.0 (*)
+├── embassy-stm32 feature "unstable-pac"
+│   └── embassy-stm32 v0.6.0 (*)
+├── embassy-time feature "default" (*)
+├── embassy-time feature "defmt" (*)
+├── embassy-time feature "defmt-timestamp-uptime"
+│   ├── embassy-time v0.5.1 (*)
+│   └── embassy-time feature "defmt" (*)
+├── embassy-time feature "tick-hz-1_000_000"
+│   ├── embassy-time v0.5.1 (*)
+│   └── embassy-time-driver feature "tick-hz-1_000_000"
+│       └── embassy-time-driver v0.2.2 (*)
+├── embedded-alloc feature "llff"
+│   ├── embedded-alloc v0.7.0
+│   │   ├── linked_list_allocator v0.10.6
+│   │   └── critical-section feature "default" (*)
+│   └── embedded-alloc feature "linked_list_allocator"
+│       └── embedded-alloc v0.7.0 (*)
+├── exfat-slim feature "defmt"
+│   └── exfat-slim v0.5.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\third_party\exfat-slim)
+│       ├── bisync v0.3.0
+│       │   └── bisync_macros feature "default"
+│       │       └── bisync_macros v0.2.3 (proc-macro)
+│       ├── bitflags v2.13.0
+│       ├── block-device-driver v0.2.0 (*)
+│       ├── byteorder v1.5.0
+│       ├── defmt v1.1.0 (*)
+│       ├── heapless v0.9.3 (*)
+│       ├── thiserror v2.0.18
+│       │   └── thiserror-impl feature "default" (*)
+│       └── aligned feature "default" (*)
+├── heapless feature "default"
+│   └── heapless v0.8.0
+│       ├── stable_deref_trait v1.2.1
+│       └── hash32 feature "default" (*)
+├── panic-probe feature "default"
+│   └── panic-probe v1.0.0
+│       ├── cortex-m feature "default" (*)
+│       └── defmt feature "default" (*)
+├── panic-probe feature "print-defmt"
+│   ├── panic-probe v1.0.0 (*)
+│   ├── panic-probe feature "defmt"
+│   │   └── panic-probe v1.0.0 (*)
+│   └── panic-probe feature "defmt-error"
+│       └── panic-probe v1.0.0 (*)
+└── raylar-drivers feature "defmt"
+    ├── raylar-drivers v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\crates\drivers)
+    │   ├── exfat-slim v0.5.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\third_party\exfat-slim) (*)
+    │   ├── aligned feature "default" (*)
+    │   ├── defmt feature "default" (*)
+    │   ├── embassy-futures feature "default" (*)
+    │   ├── embedded-io-async feature "default" (*)
+    │   ├── embassy-time feature "default" (*)
+    │   ├── embassy-time feature "defmt" (*)
+    │   ├── embassy-time feature "defmt-timestamp-uptime" (*)
+    │   ├── embassy-time feature "tick-hz-1_000_000" (*)
+    │   ├── embedded-hal feature "default" (*)
+    │   ├── embedded-hal-async feature "default" (*)
+    │   ├── heapless feature "default" (*)
+    │   ├── arbitrary-int feature "default"
+    │   │   └── arbitrary-int v1.3.0
+    │   ├── embassy-sync feature "default"
+    │   │   └── embassy-sync v0.7.2
+    │   │       ├── futures-core v0.3.32
+    │   │       ├── futures-sink v0.3.32
+    │   │       ├── critical-section feature "default" (*)
+    │   │       ├── defmt feature "default" (*)
+    │   │       ├── cfg-if feature "default" (*)
+    │   │       ├── embedded-io-async feature "default" (*)
+    │   │       └── heapless feature "default" (*)
+    │   ├── lr11xx feature "default"
+    │   │   └── lr11xx v0.1.0
+    │   │       ├── thiserror v2.0.18 (*)
+    │   │       ├── defmt feature "default" (*)
+    │   │       ├── embedded-hal feature "default" (*)
+    │   │       ├── embedded-hal-async feature "default" (*)
+    │   │       ├── arbitrary-int feature "default" (*)
+    │   │       ├── bitbybit feature "default"
+    │   │       │   └── bitbybit v1.4.0 (proc-macro)
+    │   │       │       ├── proc-macro2 feature "default" (*)
+    │   │       │       ├── quote feature "default" (*)
+    │   │       │       ├── syn feature "default" (*)
+    │   │       │       ├── syn feature "full" (*)
+    │   │       │       └── arbitrary-int feature "default"
+    │   │       │           └── arbitrary-int v1.3.0
+    │   │       ├── bytemuck feature "default"
+    │   │       │   └── bytemuck v1.25.0
+    │   │       └── lora-phy feature "default"
+    │   │           └── lora-phy v3.0.1
+    │   │               ├── num-traits v0.2.19 (*)
+    │   │               ├── embedded-hal feature "default" (*)
+    │   │               ├── embedded-hal-async feature "default" (*)
+    │   │               ├── defmt feature "default" (*)
+    │   │               └── lora-modulation feature "default"
+    │   │                   └── lora-modulation v0.1.5
+    │   └── raylar-stage-profiling feature "default"
+    │       └── raylar-stage-profiling v0.1.0 (C:\CloudProjects\2026\Research\Projects\CaracalRaylarSmoke\Caracal-Raylar-Smoke\crates\profiling)
+    ├── exfat-slim feature "defmt" (*)
+    └── embassy-sync feature "defmt"
+        └── embassy-sync v0.7.2 (*)

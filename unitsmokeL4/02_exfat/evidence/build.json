@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "utc": "2026-11-24T08:52:13.762576+00:00",
+  "package": "unit-smoke-l4-02-exfat",
+  "chip": "STM32L476RGTx",
+  "board": "Caracal Evo; revision not independently identified",
+  "source_git": "4db0fbd95bf8c40769195a97385a3788b480e7dd-dirty",
+  "profile": "release",
+  "target": "thumbv7em-none-eabihf",
+  "tool_versions": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "probe_rs": "probe-rs 0.30.0 (git commit: eab9c5e)"
+  },
+  "environment": {
+    "DEFMT_LOG": "info"
+  },
+  "source_sha256": {
+    "Cargo.toml": "e27efa836eee925a2ee647a1a45c66234b6b5d7729b90bbfbc8b1e0c942289c9",
+    ".cargo/config.toml": "f2eccf4e494eed37d5aa0cc49b117251920df18cd509c2d199b47b55f6a5413c",
+    "unitsmokeL4/02_exfat/Cargo.toml": "2ae3ddce0281b7a0aecf6fd34d9088ea8cf955623e2e2dc55364f0628f5a81d2",
+    "unitsmokeL4/02_exfat/build.rs": "0902d7a216f5c203f26e3e9268aaed1d78db7be4f65bfde371976e1e3e482465",
+    "unitsmokeL4/02_exfat/main.rs": "d3dd530d43acdd0fe1c6935250a18fff558296836ee5af1dee395bc86adb6cd0",
+    "unitsmokeL4/02_exfat/sd.rs": "2758a6c3dff851c648eade555a98f2f8b4c420c9ed0aaf7eadcdb008d9448f1f",
+    "unitsmokeL4/02_exfat/stack_probe.rs": "dedc3f183ebcc9c1b3ca6547d9f3d2867cb4bb26c73a3de2352df928bc489a22",
+    "unitsmokeL4/02_exfat/stack-check.x": "8a10d25afc50a1e6cd8b776f1ee73a57713bc06dbaf1d9fe19e681b1d6308492"
+  },
+  "lockfile_sha256": "aa6268bae9a61f8652414a9c4216807a90dbbfb67ccf4e67a72c22803e2960bb",
+  "build_command": [
+    "cargo",
+    "build",
+    "-p",
+    "unit-smoke-l4-02-exfat",
+    "--target",
+    "thumbv7em-none-eabihf",
+    "--release",
+    "--locked",
+    "--offline"
+  ],
+  "profiles": {
+    "read-only": [],
+    "write-test": [
+      "write-test"
+    ]
+  },
+  "images": {
+    "read-only": {
+      "elf_sha256": "8556a0df0f59b75419b7f8ccdf331f10f10b15c960f0f8362f8001eb72b12cc9",
+      "bin_sha256": "b37fd8e17eaf0d9196d166375c04df9def25442fbee55563539bc96ec232eaa0",
+      "flash_origin": "0x08000000",
+      "flash_bytes": 86328,
+      "sram1_static_extent_bytes": 28664,
+      "sram1_unused_bytes": 69640,
+      "stack_region": {
+        "start": "0x10000000",
+        "end": "0x10008000",
+        "bytes": 32768
+      },
+      "initial_sp": "0x10008000",
+      "segments": [
+        {
+          "offset": 276,
+          "vaddr": 134217728,
+          "paddr": 134217728,
+          "filesz": 392,
+          "memsz": 392
+        },
+        {
+          "offset": 668,
+          "vaddr": 134218120,
+          "paddr": 134218120,
+          "filesz": 73568,
+          "memsz": 73568
+        },
+        {
+          "offset": 74236,
+          "vaddr": 134291688,
+          "paddr": 134291688,
+          "filesz": 12288,
+          "memsz": 12288
+        },
+        {
+          "offset": 86528,
+          "vaddr": 536870912,
+          "paddr": 134303976,
+          "filesz": 80,
+          "memsz": 80
+        },
+        {
+          "offset": 86624,
+          "vaddr": 536870992,
+          "paddr": 536870992,
+          "filesz": 0,
+          "memsz": 28584
+        }
+      ]
+    },
+    "write-test": {
+      "elf_sha256": "2bccfbcd1f83be33a2a627b8e973111b32592925a8cbb5fd9920b51e176e23ff",
+      "bin_sha256": "4f8c7e6887cd2e10788f909c21d2a88b7539880f65cd0c6c4735d128c518f379",
+      "flash_origin": "0x08000000",
+      "flash_bytes": 96384,
+      "sram1_static_extent_bytes": 78764,
+      "sram1_unused_bytes": 19540,
+      "stack_region": {
+        "start": "0x10000000",
+        "end": "0x10008000",
+        "bytes": 32768
+      },
+      "initial_sp": "0x10008000",
+      "segments": [
+        {
+          "offset": 276,
+          "vaddr": 134217728,
+          "paddr": 134217728,
+          "filesz": 392,
+          "memsz": 392
+        },
+        {
+          "offset": 668,
+          "vaddr": 134218120,
+          "paddr": 134218120,
+          "filesz": 83044,
+          "memsz": 83044
+        },
+        {
+          "offset": 83712,
+          "vaddr": 134301164,
+          "paddr": 134301164,
+          "filesz": 12868,
+          "memsz": 12868
+        },
+        {
+          "offset": 96584,
+          "vaddr": 536870912,
+          "paddr": 134314032,
+          "filesz": 80,
+          "memsz": 80
+        },
+        {
+          "offset": 96672,
+          "vaddr": 536870992,
+          "paddr": 536870992,
+          "filesz": 0,
+          "memsz": 78684
+        }
+      ]
+    }
+  },
+  "card": {
+    "serial": "7cb1530c",
+    "sectors": 250347520,
+    "volume_start_lba": 32768,
+    "volume_sectors": 250314752,
+    "cluster_bytes": 131072
+  },
+  "test_file": {
+    "path": "/L4E00000.BIN",
+    "bytes": 262317,
+    "fnv64": "7c76907847852d9d"
+  },
+  "scope": "Standalone SD/exFAT qualification; no recorder latency, removal or power-loss claim"
+}

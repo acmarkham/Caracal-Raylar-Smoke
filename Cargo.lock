@@ -2592,6 +2592,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "unit-smoke-l4-02-exfat"
+version = "0.1.0"
+dependencies = [
+ "aligned",
+ "cortex-m",
+ "cortex-m-rt",
+ "defmt 1.1.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-stm32",
+ "embassy-time",
+ "embedded-alloc",
+ "exfat-slim",
+ "heapless 0.8.0",
+ "panic-probe",
+ "raylar-drivers",
+ "static_cell",
+]
+
+[[package]]
 name = "usb-device"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
