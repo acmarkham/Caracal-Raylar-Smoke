@@ -1,0 +1,19 @@
+[package]
+name = "caracal-evo"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+firmware = ["dep:embassy-stm32", "dep:embassy-time", "dep:embassy-sync", "dep:critical-section", "dep:cortex-m", "dep:defmt", "dep:aligned", "dep:raylar-drivers"]
+
+[dependencies]
+embassy-stm32 = { version = "0.6.0", features = ["defmt", "memory-x", "stm32l476rg", "time-driver-tim5", "unstable-pac"], optional = true }
+embassy-time = { workspace = true, optional = true }
+embassy-sync = { version = "0.7.2", optional = true }
+critical-section = { version = "1.2.0", optional = true }
+cortex-m = { workspace = true, optional = true }
+defmt = { workspace = true, optional = true }
+aligned = { version = "0.4.2", optional = true }
+raylar-drivers = { path = "../../drivers", default-features = false, features = ["defmt"], optional = true }

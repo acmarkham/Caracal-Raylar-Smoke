@@ -1,0 +1,493 @@
+//! M10 transport adapter. Shared GpsDriver retains ownership of duty cycling.
+use crate::{streams, GPS, LOCATION, TIME};
+use caracal_evo::capture;
+use core::convert::Infallible;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use core::{cell::RefCell, fmt::Write as _};
+use embassy_stm32::{
+    bind_interrupts,
+    usart::{self, BufferedUart},
+};
+use embassy_time::{with_timeout, Duration, Instant, Timer};
+use embedded_io_async::{ErrorType, Read, Write};
+use raylar_drivers::gps::{
+    self,
+    ublox::{self, Frame, Framer},
+};
+
+pub static RX_BYTES: AtomicU32 = AtomicU32::new(0);
+pub static UART_ERRORS: AtomicU32 = AtomicU32::new(0);
+pub static FRAME_ERRORS: AtomicU32 = AtomicU32::new(0);
+pub static VERSIONS: AtomicU32 = AtomicU32::new(0);
+pub static PVT_FIXES: AtomicU32 = AtomicU32::new(0);
+pub static SLEEPS: AtomicU32 = AtomicU32::new(0);
+pub static WAKES: AtomicU32 = AtomicU32::new(0);
+pub static ASLEEP: AtomicBool = AtomicBool::new(false);
+pub static PROFILE_VALID: AtomicBool = AtomicBool::new(false);
+pub static BENCH_FINISH: AtomicBool = AtomicBool::new(false);
+pub static VERSION: embassy_sync::blocking_mutex::Mutex<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    RefCell<heapless::String<64>>,
+> = embassy_sync::blocking_mutex::Mutex::new(RefCell::new(heapless::String::new()));
+bind_interrupts!(pub struct Irqs {
+    USART2 => usart::BufferedInterruptHandler<embassy_stm32::peripherals::USART2>;
+    TIM3 => capture::Handler;
+});
+
+/// The rail is externally supplied; PB4's harness behavior is unverified.
+/// Module commands implement standby. Never drive EN or assert hardware reset.
+pub struct RetainedPower;
+impl gps::GpsPowerControl for RetainedPower {
+    type Error = Infallible;
+    fn set_enabled(&mut self, enabled: bool) -> Result<(), Infallible> {
+        defmt::assert!(enabled);
+        Ok(())
+    }
+    fn set_reset_asserted(&mut self, asserted: bool) -> Result<(), Infallible> {
+        defmt::assert!(!asserted);
+        Ok(())
+    }
+}
+pub struct Pps {
+    pub _chain: capture::Chain,
+}
+impl gps::PpsSource for Pps {
+    type Error = Infallible;
+    async fn wait_for_pps(&mut self) -> Result<gps::PpsCapture, Infallible> {
+        let edge = capture::EDGES.receive().await;
+        defmt::assert!(capture::FAULTS.load(Relaxed) == 0 && edge.age_us < 10_000);
+        Ok(gps::PpsCapture {
+            timing_source: gps::PpsTimingSource::ChainedTimerCapture,
+            timestamp: edge.timestamp,
+            capture_ticks: Some(edge.ticks),
+            capture_frequency_hz: Some(1_000_000),
+        })
+    }
+}
+
+pub struct Serial {
+    uart: BufferedUart<'static>,
+    framer: Framer,
+    raw: [u8; 64],
+    position: usize,
+    length: usize,
+    nmea: [u8; 128],
+    nmea_pos: usize,
+    nmea_len: usize,
+    next_poll: Instant,
+    next_identity_poll: Instant,
+    wake_versions: u32,
+    fresh_fix: Option<Instant>,
+    ack: bool,
+    nak: bool,
+    ram: bool,
+    bbr: bool,
+}
+impl Serial {
+    pub fn new(uart: BufferedUart<'static>) -> Self {
+        Self {
+            uart,
+            framer: Framer::default(),
+            raw: [0; 64],
+            position: 0,
+            length: 0,
+            nmea: [0; 128],
+            nmea_pos: 0,
+            nmea_len: 0,
+            next_poll: Instant::now(),
+            next_identity_poll: Instant::now(),
+            wake_versions: 0,
+            fresh_fix: None,
+            ack: false,
+            nak: false,
+            ram: false,
+            bbr: false,
+        }
+    }
+    async fn send(&mut self, bytes: &[u8]) -> Result<(), usart::Error> {
+        self.uart.write_all(bytes).await?;
+        self.uart.flush().await
+    }
+    /// Initialization preserves the running navigation engine and its BBR.
+    pub async fn initialize(&mut self) {
+        self.send(&ublox::WAKE).await.unwrap();
+        Timer::after_millis(500).await;
+        self.send(&ublox::MON_VER).await.unwrap();
+        self.next_identity_poll = Instant::now() + Duration::from_secs(1);
+        self.until(0).await;
+        self.send(&ublox::UART_PROFILE).await.unwrap();
+        self.until(1).await;
+        defmt::assert!(
+            self.ack && !self.nak,
+            "M10 RAM+BBR UART profile not acknowledged"
+        );
+        for layer in [0, 1] {
+            self.send(&ublox::uart_profile_poll(layer)).await.unwrap();
+            self.until(2 + layer).await;
+        }
+        defmt::assert!(self.ram && self.bbr, "M10 UART profile readback failed");
+        PROFILE_VALID.store(true, Relaxed);
+        defmt::info!("AARDWOLF L4 M10 PROFILE PASS baud=38400 ram=true bbr=true flash=false");
+    }
+    async fn until(&mut self, condition: u8) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let done = match condition {
+                0 => VERSIONS.load(Relaxed) > 0,
+                1 => self.ack || self.nak,
+                2 => self.ram,
+                _ => self.bbr,
+            };
+            if done {
+                return;
+            }
+            defmt::assert!(
+                Instant::now() < deadline,
+                "M10 initialization response timeout"
+            );
+            if condition == 0 && Instant::now() >= self.next_identity_poll {
+                self.send(&ublox::MON_VER).await.unwrap();
+                self.next_identity_poll = Instant::now() + Duration::from_secs(1);
+            }
+            // Read keeps all framing state in self, including across cancellation.
+            let _ = with_timeout(Duration::from_millis(200), self.pump()).await;
+        }
+    }
+    async fn pump(&mut self) -> Result<(), usart::Error> {
+        if self.position == self.length {
+            match self.uart.read(&mut self.raw).await {
+                Ok(n) => {
+                    self.position = 0;
+                    self.length = n;
+                    RX_BYTES.fetch_add(n as u32, Relaxed);
+                }
+                Err(e) => {
+                    UART_ERRORS.fetch_add(1, Relaxed);
+                    self.framer.reset();
+                    return Err(e);
+                }
+            }
+        }
+        while self.position < self.length {
+            let b = self.raw[self.position];
+            self.position += 1;
+            if let Some(frame) = self.framer.push(b) {
+                match frame {
+                    Frame::Nmea(bytes) => {
+                        // Only feed the shared parser after fully resolved UBX UTC/fix.
+                        if !ASLEEP.load(Relaxed)
+                            && self
+                                .fresh_fix
+                                .is_some_and(|t| Instant::now() - t < Duration::from_secs(3))
+                            && bytes.len() <= self.nmea.len()
+                        {
+                            self.nmea[..bytes.len()].copy_from_slice(bytes);
+                            self.nmea_pos = 0;
+                            self.nmea_len = bytes.len();
+                            return Ok(());
+                        }
+                    }
+                    Frame::Ubx {
+                        class: 10,
+                        id: 4,
+                        payload,
+                    } => {
+                        if let Some(v) = ublox::version(payload) {
+                            VERSION.lock(|s| {
+                                let mut text = s.borrow_mut();
+                                text.clear();
+                                let _ = write!(text, "sw={} hw={}", v.software, v.hardware);
+                            });
+                            defmt::info!(
+                                "AARDWOLF L4 M10 version sw={} hw={}",
+                                v.software,
+                                v.hardware
+                            );
+                            for ext in v.extensions.chunks_exact(30) {
+                                if let Some(s) = ublox::ascii_field(ext) {
+                                    defmt::info!("AARDWOLF L4 M10 extension {}", s);
+                                }
+                            }
+                            VERSIONS.fetch_add(1, Relaxed);
+                        }
+                    }
+                    Frame::Ubx {
+                        class: 1,
+                        id: 7,
+                        payload,
+                    } => {
+                        if let Some(p) = ublox::nav_pvt(payload) {
+                            if p.qualified() {
+                                self.fresh_fix = Some(Instant::now());
+                                PVT_FIXES.fetch_add(1, Relaxed);
+                            } else {
+                                self.fresh_fix = None;
+                            }
+                        }
+                    }
+                    Frame::Ubx {
+                        class: 5,
+                        id,
+                        payload,
+                    } if payload == [6, 0x8a] => {
+                        if id == 1 {
+                            self.ack = true;
+                        } else if id == 0 {
+                            self.nak = true;
+                        }
+                    }
+                    Frame::Ubx {
+                        class: 6,
+                        id: 0x8b,
+                        payload,
+                    } => {
+                        if ublox::uart_profile_matches(payload, 0) {
+                            self.ram = true;
+                        }
+                        if ublox::uart_profile_matches(payload, 1) {
+                            self.bbr = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            FRAME_ERRORS.store(self.framer.rejected, Relaxed);
+        }
+        Ok(())
+    }
+}
+impl ErrorType for Serial {
+    type Error = usart::Error;
+}
+impl Read for Serial {
+    async fn read(&mut self, out: &mut [u8]) -> Result<usize, Self::Error> {
+        if out.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if self.nmea_pos < self.nmea_len {
+                let n = out.len().min(self.nmea_len - self.nmea_pos);
+                out[..n].copy_from_slice(&self.nmea[self.nmea_pos..self.nmea_pos + n]);
+                self.nmea_pos += n;
+                return Ok(n);
+            }
+            if !ASLEEP.load(Relaxed) && Instant::now() >= self.next_poll {
+                self.send(&ublox::NAV_PVT).await?;
+                self.next_poll = Instant::now() + Duration::from_secs(1);
+            }
+            if !ASLEEP.load(Relaxed)
+                && VERSIONS.load(Relaxed) <= self.wake_versions
+                && Instant::now() >= self.next_identity_poll
+            {
+                self.send(&ublox::MON_VER).await?;
+                self.next_identity_poll = Instant::now() + Duration::from_secs(1);
+            }
+            self.pump().await?;
+        }
+    }
+}
+impl Write for Serial {
+    async fn write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
+        if bytes == ublox::STANDBY {
+            defmt::assert!(PROFILE_VALID.load(Relaxed));
+            self.send(bytes).await?;
+            ASLEEP.store(true, Relaxed);
+            self.fresh_fix = None;
+            self.nmea_len = 0;
+            self.nmea_pos = 0;
+            SLEEPS.fetch_add(1, Relaxed);
+            defmt::info!(
+                "AARDWOLF L4 M10 standby sent duration=indefinite wake=UART_RX rail=retained"
+            );
+        } else if bytes == ublox::WAKE {
+            // End the silence interval before the first UART wake transition.
+            ASLEEP.store(false, Relaxed);
+            self.wake_versions = VERSIONS.load(Relaxed);
+            self.send(bytes).await?;
+            Timer::after_millis(500).await;
+            self.fresh_fix = None;
+            self.framer.reset();
+            self.nmea_len = 0;
+            self.nmea_pos = 0;
+            self.send(&ublox::MON_VER).await?;
+            self.next_identity_poll = Instant::now() + Duration::from_secs(1);
+            self.next_poll = Instant::now();
+            WAKES.fetch_add(1, Relaxed);
+            defmt::info!("AARDWOLF L4 M10 UART wake sent reset=false aiding=retained");
+        } else {
+            self.send(bytes).await?;
+        }
+        Ok(bytes.len())
+    }
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        self.uart.flush().await
+    }
+}
+
+#[embassy_executor::task]
+pub async fn time_task() {
+    raylar_time_service::TimeService::new(&TIME, Default::default())
+        .run()
+        .await;
+}
+#[embassy_executor::task]
+pub async fn anchors_task() {
+    raylar_time_service::gps::run_gps_time_source(
+        GPS.time_receiver().unwrap().as_dyn(),
+        TIME.anchor_sender(),
+    )
+    .await;
+}
+#[embassy_executor::task]
+pub async fn location_task() {
+    raylar_location_service::LocationService::<2, 9>::new(
+        &LOCATION,
+        GPS.fix_receiver().unwrap().as_dyn(),
+        Default::default(),
+    )
+    .run()
+    .await;
+}
+#[embassy_executor::task]
+pub async fn driver_task(
+    mut serial: Serial,
+    pps: Pps,
+    enable: embassy_stm32::gpio::Input<'static>,
+) {
+    let _enable = enable; // Pin remains input throughout all states.
+    serial.initialize().await;
+    let config = aardwolf_l4::config::gps();
+    gps::GpsDriver::new(serial, pps, RetainedPower, &GPS, config)
+        .run()
+        .await;
+}
+
+/// Same calibration/phase feedback contract as U5 common time composition.
+#[embassy_executor::task]
+pub async fn quality_task() {
+    use gps::{GpsCommand, OperatingState};
+    let mut watch = TIME.state_receiver().unwrap();
+    let mut locked = false;
+    let mut observed_accepted = 0;
+    let mut observed_rejected = 0;
+    loop {
+        let state = watch.changed().await;
+        if state.frequency_calibration_locked && !locked {
+            GPS.command_sender()
+                .send(GpsCommand::FrequencyCalibrationLocked)
+                .await;
+            locked = true;
+            defmt::info!(
+                "AARDWOLF L4 CALIBRATION LOCK samples={} correction_ppb={}",
+                state.frequency_calibration_samples,
+                state.calibrated_frequency_error_ppb
+            );
+        }
+        let accepted = state.accepted_anchors != observed_accepted;
+        let rejected = state.rejected_anchors != observed_rejected;
+        let observation = u64::from(state.accepted_anchors) + u64::from(state.rejected_anchors);
+        if locked
+            && (accepted || rejected)
+            && GPS.stats().operating_state == OperatingState::Acquired
+        {
+            GPS.command_sender()
+                .send(GpsCommand::PhaseQuality {
+                    observation_sequence: observation,
+                    accepted: accepted && !rejected,
+                    residual_us: state.last_anchor_residual_us,
+                    uncertainty_us: state.uncertainty_us,
+                    pps_gate_active: state.pps_reacquisition_active,
+                })
+                .await;
+        }
+        observed_accepted = state.accepted_anchors;
+        observed_rejected = state.rejected_anchors;
+    }
+}
+
+/// Observe physical silence and resumed anchors; manager state alone is not proof.
+pub struct CycleCheck {
+    previous_sleep: bool,
+    since: Instant,
+    quiet: Option<((u32, u32), Instant)>,
+    slept: bool,
+    quiet_sleeps: u32,
+    sleep_versions: u32,
+    anchors_at_wake: u32,
+    pub verified: bool,
+}
+impl CycleCheck {
+    pub fn new() -> Self {
+        Self {
+            previous_sleep: false,
+            since: Instant::now(),
+            quiet: None,
+            slept: false,
+            quiet_sleeps: 0,
+            sleep_versions: 0,
+            anchors_at_wake: 0,
+            verified: false,
+        }
+    }
+    pub fn update(&mut self) {
+        let sleeping = ASLEEP.load(Relaxed);
+        if sleeping != self.previous_sleep {
+            self.since = Instant::now();
+            self.quiet = None;
+            if sleeping {
+                self.sleep_versions = VERSIONS.load(Relaxed);
+            }
+            if !sleeping && self.slept {
+                self.anchors_at_wake = TIME.time_state().accepted_anchors;
+            }
+            self.previous_sleep = sleeping;
+        }
+        let age = Instant::now() - self.since;
+        let counters = (RX_BYTES.load(Relaxed), capture::IRQS.load(Relaxed));
+        if sleeping && age >= Duration::from_secs(3) {
+            if let Some((previous, quiet_since)) = self.quiet {
+                defmt::assert!(
+                    previous == counters,
+                    "M10 failed standby: UART or PPS still active"
+                );
+                let sleeps = SLEEPS.load(Relaxed);
+                if Instant::now() - quiet_since >= Duration::from_secs(7)
+                    && self.quiet_sleeps != sleeps
+                {
+                    self.slept = true;
+                    self.quiet_sleeps = sleeps;
+                    streams::log(format_args!(
+                        "gps_standby_verified uart_quiet=true pps_quiet=true rails=retained"
+                    ));
+                    defmt::info!("AARDWOLF L4 M10 STANDBY PASS uart_quiet=true pps_quiet=true");
+                    if cfg!(feature = "bench-gps-cycle")
+                        && self.verified
+                        && GPS.stats().num_phase_qualified_shutdowns > 0
+                    {
+                        BENCH_FINISH.store(true, Relaxed);
+                    }
+                }
+            } else {
+                self.quiet = Some((counters, Instant::now()));
+            }
+        }
+        let time = TIME.time_state();
+        if !sleeping
+            && self.slept
+            && !self.verified
+            && time.accepted_anchors >= self.anchors_at_wake + 20
+            && !time.pps_reacquisition_active
+            && GPS.stats().num_reacquisition_successes > 0
+            && VERSIONS.load(Relaxed) > self.sleep_versions
+        {
+            self.verified = true;
+            streams::log(format_args!(
+                "gps_wake_verified fixes={} accepted={} calibrated_ppb={} reset=false",
+                GPS.stats().num_reacquisition_successes,
+                time.accepted_anchors,
+                time.calibrated_frequency_error_ppb
+            ));
+            defmt::info!("AARDWOLF L4 M10 WAKE PASS elapsed_ms={} accepted_since_wake={} reacquired={} correction_ppb={}",age.as_millis(),time.accepted_anchors-self.anchors_at_wake,GPS.stats().num_reacquisition_successes,time.calibrated_frequency_error_ppb);
+        }
+    }
+}

@@ -15,6 +15,9 @@ stm32 = ["dep:embassy-stm32", "dep:cortex-m"]
 trustzone-secure = ["stm32", "embassy-stm32/trustzone-secure"]
 storage-diagnostics = []
 radio-diagnostics = []
+# Receiver protocol and generic timer-capture identity, opt-in at platform leaves.
+ublox-m10 = []
+pps-chained-capture = []
 
 [dependencies]
 raylar-stage-profiling = { path = "../profiling" }

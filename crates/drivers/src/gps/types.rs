@@ -49,9 +49,9 @@ pub enum PpsTimingSource {
     /// Edge timing uses the Embassy monotonic clock sampled after EXTI wake-up.
     #[default]
     EmbassyInstant,
-    /// Edge timing uses the STM32U59xxx 32-bit TIM4_CH4 capture register at
-    /// 1 MHz (DS13633 Rev 3, section 3.44, table 19).
-    Tim4Capture,
+    #[cfg(feature = "pps-chained-capture")]
+    ChainedTimerCapture,
+    Tim4Capture, // STM32U595 32-bit TIM4_CH4, 1 MHz (DS13633 table 19).
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

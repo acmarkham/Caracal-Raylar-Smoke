@@ -1304,3 +1304,6 @@ where
         }
     }
 }
+
+#[cfg(feature = "ublox-m10")]
+pub mod ublox;

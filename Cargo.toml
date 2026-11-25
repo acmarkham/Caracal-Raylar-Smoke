@@ -17,6 +17,8 @@ default-members = [
 ]
 members = [
     "apps/aardwolf",
+    "apps/aardwolf_l4",
+    "crates/board/caracal_evo",
     "crates/drivers",
     "crates/profiling",
     "crates/metadrivers/audiosource",

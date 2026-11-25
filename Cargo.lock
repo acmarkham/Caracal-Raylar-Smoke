@@ -36,6 +36,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "aardwolf-l4"
+version = "0.1.0"
+dependencies = [
+ "aligned",
+ "caracal-evo",
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "defmt 1.1.0",
+ "defmt-rtt",
+ "embassy-executor",
+ "embassy-futures",
+ "embassy-stm32",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "embedded-alloc",
+ "embedded-io-async 0.7.0",
+ "exfat-slim",
+ "heapless 0.8.0",
+ "panic-probe",
+ "raylar-audio-recorder-service",
+ "raylar-audiosource",
+ "raylar-drivers",
+ "raylar-location-service",
+ "raylar-logging-service",
+ "raylar-storage-service",
+ "raylar-time-service",
+ "static_cell",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -172,6 +203,20 @@ name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
+name = "caracal-evo"
+version = "0.1.0"
+dependencies = [
+ "aligned",
+ "cortex-m",
+ "critical-section",
+ "defmt 1.1.0",
+ "embassy-stm32",
+ "embassy-sync 0.7.2",
+ "embassy-time",
+ "raylar-drivers",
+]
 
 [[package]]
 name = "cc"
