@@ -1,0 +1,13 @@
+diff --git a/apps/aardwolf/config.rs b/apps/aardwolf/config.rs
+index c07a6cc..3da46e2 100644
+--- a/apps/aardwolf/config.rs
++++ b/apps/aardwolf/config.rs
+@@ -94,7 +94,7 @@ pub fn profile(index: usize) -> Result<ChannelProfile, LinkError> {
+         _ => return Err(LinkError::InvalidProfile),
+     };
+     let (hz, bw, dbm) = if index < 4 {
+-        (868_100_000, 125_000, 14)
++        (868_100_000, 125_000, 22)
+     } else {
+         (
+             2_441_000_000,

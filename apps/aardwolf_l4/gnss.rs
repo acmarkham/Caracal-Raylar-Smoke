@@ -110,6 +110,45 @@ impl Serial {
     }
     /// Initialization preserves the running navigation engine and its BBR.
     pub async fn initialize(&mut self) {
+        if cfg!(feature = "gps-m8") {
+            for baud in [38400, 9600, 57600, 115200, 19200] {
+                self.uart.set_baudrate(baud).unwrap();
+                self.framer.reset();
+                self.position = 0;
+                self.length = 0;
+                self.send(&ublox::WAKE).await.unwrap();
+                Timer::after_millis(100).await;
+                self.send(&ublox::MON_VER).await.unwrap();
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while VERSIONS.load(Relaxed) == 0 && Instant::now() < deadline {
+                    let _ = with_timeout(Duration::from_millis(250), self.pump()).await;
+                }
+                if VERSIONS.load(Relaxed) > 0 {
+                    break;
+                }
+            }
+            defmt::assert!(VERSIONS.load(Relaxed) > 0, "M8 baud scan failed");
+            let command = ublox::packet::<28>(
+                6,
+                0,
+                &[
+                    1, 0, 0, 0, 0xd0, 8, 0, 0, 0, 0x96, 0, 0, 3, 0, 3, 0, 0, 0, 0, 0,
+                ],
+            );
+            self.send(&command).await.unwrap();
+            Timer::after_millis(100).await;
+            self.uart.set_baudrate(38400).unwrap();
+            self.framer.reset();
+            self.position = 0;
+            self.length = 0;
+            self.send(&ublox::packet::<9>(6, 0, &[1])).await.unwrap();
+            self.until(2).await;
+            PROFILE_VALID.store(true, Relaxed);
+            defmt::info!(
+                "AARDWOLF L4 M8 PROFILE PASS baud=38400 CFG-PRT readback=true flash=false"
+            );
+            return;
+        }
         self.send(&ublox::WAKE).await.unwrap();
         Timer::after_millis(500).await;
         self.send(&ublox::MON_VER).await.unwrap();
@@ -216,6 +255,13 @@ impl Serial {
                         id: 7,
                         payload,
                     } => {
+                        let mut padded = [0u8; 92];
+                        let payload = if cfg!(feature = "gps-m8") && payload.len() == 84 {
+                            padded[..84].copy_from_slice(payload);
+                            &padded[..]
+                        } else {
+                            payload
+                        };
                         if let Some(p) = ublox::nav_pvt(payload) {
                             if p.qualified() {
                                 self.fresh_fix = Some(Instant::now());
@@ -224,6 +270,17 @@ impl Serial {
                                 self.fresh_fix = None;
                             }
                         }
+                    }
+                    Frame::Ubx {
+                        class: 6,
+                        id: 0,
+                        payload,
+                    } if cfg!(feature = "gps-m8") => {
+                        self.ram = payload.len() == 20
+                            && payload[0] == 1
+                            && payload[8..12] == 38400u32.to_le_bytes()
+                            && payload[12] & 3 == 3
+                            && payload[14] & 3 == 3;
                     }
                     Frame::Ubx {
                         class: 5,

@@ -24,6 +24,7 @@ bench-audio-ui = []
 bench-codec = []
 # Explicit reference mode; production L4 now records FLAC.
 wav = []
+gps-m8 = []
 
 [dependencies]
 aligned = "0.4.2"

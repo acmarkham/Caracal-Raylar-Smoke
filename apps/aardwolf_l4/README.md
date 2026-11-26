@@ -109,3 +109,5 @@ Portable checks:
 rtk cargo test --lib -p caracal-evo -p aardwolf-l4 --no-default-features --target x86_64-pc-windows-msvc --locked --offline
 rtk cargo test --lib -p raylar-drivers --no-default-features --features ublox-m10 --target x86_64-pc-windows-msvc gps::ublox --locked --offline
 ```
+
+For an Evo fitted with u-blox M8, build with --features gps-m8. This selects legacy CFG-PRT with baud discovery and the M8 backup command; it does not send M10 VALSET/VALGET configuration or write GPS flash.

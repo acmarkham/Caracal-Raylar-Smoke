@@ -103,7 +103,15 @@ mod tests {
             ),
             (250, 500, 5)
         );
-        assert_eq!(gps.module_commands.standby, Some(ublox::STANDBY.as_slice()));
+        let m8_standby = ublox::packet::<16>(2, 0x41, &[0, 0, 0, 0, 2, 0, 0, 0]);
+        assert_eq!(
+            gps.module_commands.standby,
+            Some(if cfg!(feature = "gps-m8") {
+                m8_standby.as_slice()
+            } else {
+                ublox::STANDBY.as_slice()
+            })
+        );
         assert_eq!(gps.module_commands.wake, Some(ublox::WAKE.as_slice()));
         assert!(
             gps.module_commands.hot_start.is_none()

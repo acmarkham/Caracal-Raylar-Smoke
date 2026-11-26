@@ -29,7 +29,11 @@ pub fn gps() -> raylar_drivers::gps::GpsConfig {
         }),
         pps_timing_source: PpsTimingSource::ChainedTimerCapture,
         module_commands: GpsModuleCommands {
-            standby: Some(&ublox::STANDBY),
+            standby: Some(if cfg!(feature = "gps-m8") {
+                &M8_STANDBY
+            } else {
+                &ublox::STANDBY
+            }),
             wake: Some(&ublox::WAKE),
             hot_start: None,
             warm_start: None,
@@ -38,3 +42,5 @@ pub fn gps() -> raylar_drivers::gps::GpsConfig {
         ..Default::default()
     }
 }
+
+const M8_STANDBY: [u8; 16] = raylar_drivers::gps::ublox::packet(2, 0x41, &[0, 0, 0, 0, 2, 0, 0, 0]);
