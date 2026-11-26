@@ -11,7 +11,7 @@ pub const GPS_OFF_SECONDS: u64 = if cfg!(feature = "bench-gps-cycle") {
 pub const GPS_ON_SECONDS: u64 = 60;
 
 #[inline]
-pub fn gps() -> raylar_drivers::gps::GpsConfig {
+pub fn gps(receiver: crate::gnss_profile::Receiver) -> raylar_drivers::gps::GpsConfig {
     use embassy_time::Duration;
     use raylar_drivers::gps::{
         ublox, GpsConfig, GpsModuleCommands, PhaseQualifiedShutdownConfig, PpsTimingSource,
@@ -29,11 +29,7 @@ pub fn gps() -> raylar_drivers::gps::GpsConfig {
         }),
         pps_timing_source: PpsTimingSource::ChainedTimerCapture,
         module_commands: GpsModuleCommands {
-            standby: Some(if cfg!(feature = "gps-m8") {
-                &M8_STANDBY
-            } else {
-                &ublox::STANDBY
-            }),
+            standby: Some(receiver.standby()),
             wake: Some(&ublox::WAKE),
             hot_start: None,
             warm_start: None,
@@ -42,5 +38,3 @@ pub fn gps() -> raylar_drivers::gps::GpsConfig {
         ..Default::default()
     }
 }
-
-const M8_STANDBY: [u8; 16] = raylar_drivers::gps::ublox::packet(2, 0x41, &[0, 0, 0, 0, 2, 0, 0, 0]);

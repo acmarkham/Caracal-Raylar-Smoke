@@ -5,6 +5,7 @@ mod audio;
 mod diagnostics;
 mod fault;
 mod gnss;
+mod gnss_diagnostics;
 mod setup;
 mod streams;
 mod ui;
@@ -192,7 +193,7 @@ async fn main(spawner: Spawner) -> ! {
         "device node_id={:08x}",
         caracal_evo::identity::uid().serials().serial_32
     ));
-    streams::log(format_args!("identity uid={} sd_serial={:08x} gps=Quescan_G10A-F30 radio=absent battery=absent button=absent",embassy_stm32::uid::uid_hex(),serial));
+    streams::log(format_args!("identity uid={} sd_serial={:08x} gps=ublox_autodetect radio=absent battery=absent button=absent",embassy_stm32::uid::uid_hex(),serial));
     let version = gnss::VERSION.lock(|s| s.borrow().clone());
     streams::log(format_args!(
         "gps_version {}",
@@ -402,9 +403,10 @@ async fn logging_session(
                 versions = current_versions;
                 let identity = gnss::VERSION.lock(|s| s.borrow().clone());
                 streams::log(format_args!(
-                    "gps_identity_verified count={} {} uart_profile_ram_bbr={}",
+                    "gps_identity_verified count={} {} detected_baud={} uart_profile_verified={}",
                     versions,
                     identity.as_str(),
+                    gnss::DETECTED_BAUD.load(Relaxed),
                     gnss::PROFILE_VALID.load(Relaxed)
                 ));
             }

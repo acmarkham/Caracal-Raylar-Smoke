@@ -1,5 +1,6 @@
-//! M10 transport adapter. Shared GpsDriver retains ownership of duty cycling.
-use crate::{streams, GPS, LOCATION, TIME};
+//! Autodetected u-blox transport. Shared GpsDriver owns duty cycling.
+use crate::{gnss_diagnostics, streams, GPS, LOCATION, TIME};
+use aardwolf_l4::gnss_profile::{self, Receiver};
 use caracal_evo::capture;
 use core::convert::Infallible;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
@@ -24,6 +25,7 @@ pub static SLEEPS: AtomicU32 = AtomicU32::new(0);
 pub static WAKES: AtomicU32 = AtomicU32::new(0);
 pub static ASLEEP: AtomicBool = AtomicBool::new(false);
 pub static PROFILE_VALID: AtomicBool = AtomicBool::new(false);
+pub static DETECTED_BAUD: AtomicU32 = AtomicU32::new(0);
 pub static BENCH_FINISH: AtomicBool = AtomicBool::new(false);
 pub static VERSION: embassy_sync::blocking_mutex::Mutex<
     embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
@@ -82,6 +84,10 @@ pub struct Serial {
     nak: bool,
     ram: bool,
     bbr: bool,
+    receiver: Option<Receiver>,
+    next_diagnostics: Instant,
+    diagnostics_until: Instant,
+    config_poll: usize,
 }
 impl Serial {
     pub fn new(uart: BufferedUart<'static>) -> Self {
@@ -102,6 +108,10 @@ impl Serial {
             nak: false,
             ram: false,
             bbr: false,
+            receiver: None,
+            next_diagnostics: Instant::now(),
+            diagnostics_until: Instant::now(),
+            config_poll: 0,
         }
     }
     async fn send(&mut self, bytes: &[u8]) -> Result<(), usart::Error> {
@@ -109,71 +119,84 @@ impl Serial {
         self.uart.flush().await
     }
     /// Initialization preserves the running navigation engine and its BBR.
-    pub async fn initialize(&mut self) {
-        if cfg!(feature = "gps-m8") {
-            for baud in [38400, 9600, 57600, 115200, 19200] {
+    pub async fn initialize(&mut self) -> Receiver {
+        // Only wake and identity polls precede detection. Two bounded sweeps
+        // tolerate a receiver still booting during the first visit to its baud.
+        let mut detected_baud = None;
+        'scan: for sweep in 1..=2 {
+            for baud in gnss_profile::BAUD_RATES {
+                defmt::info!("AARDWOLF L4 GNSS scan sweep={} baud={}", sweep, baud);
                 self.uart.set_baudrate(baud).unwrap();
-                self.framer.reset();
-                self.position = 0;
-                self.length = 0;
+                self.reset_rx();
                 self.send(&ublox::WAKE).await.unwrap();
-                Timer::after_millis(100).await;
-                self.send(&ublox::MON_VER).await.unwrap();
+                Timer::after_millis(500).await;
+                self.next_identity_poll = Instant::now();
                 let deadline = Instant::now() + Duration::from_secs(2);
                 while VERSIONS.load(Relaxed) == 0 && Instant::now() < deadline {
-                    let _ = with_timeout(Duration::from_millis(250), self.pump()).await;
+                    if Instant::now() >= self.next_identity_poll {
+                        self.send(&ublox::MON_VER).await.unwrap();
+                        self.next_identity_poll = Instant::now() + Duration::from_millis(500);
+                    }
+                    let _ = with_timeout(Duration::from_millis(100), self.pump()).await;
                 }
                 if VERSIONS.load(Relaxed) > 0 {
-                    break;
+                    detected_baud = Some(baud);
+                    break 'scan;
                 }
             }
-            defmt::assert!(VERSIONS.load(Relaxed) > 0, "M8 baud scan failed");
-            let command = ublox::packet::<28>(
-                6,
-                0,
-                &[
-                    1, 0, 0, 0, 0xd0, 8, 0, 0, 0, 0x96, 0, 0, 3, 0, 3, 0, 0, 0, 0, 0,
-                ],
-            );
-            self.send(&command).await.unwrap();
-            Timer::after_millis(100).await;
-            self.uart.set_baudrate(38400).unwrap();
-            self.framer.reset();
-            self.position = 0;
-            self.length = 0;
-            self.send(&ublox::packet::<9>(6, 0, &[1])).await.unwrap();
-            self.until(2).await;
-            PROFILE_VALID.store(true, Relaxed);
-            defmt::info!(
-                "AARDWOLF L4 M8 PROFILE PASS baud=38400 CFG-PRT readback=true flash=false"
-            );
-            return;
         }
-        self.send(&ublox::WAKE).await.unwrap();
-        Timer::after_millis(500).await;
-        self.send(&ublox::MON_VER).await.unwrap();
-        self.next_identity_poll = Instant::now() + Duration::from_secs(1);
-        self.until(0).await;
-        self.send(&ublox::UART_PROFILE).await.unwrap();
-        self.until(1).await;
-        defmt::assert!(
-            self.ack && !self.nak,
-            "M10 RAM+BBR UART profile not acknowledged"
+        defmt::assert!(detected_baud.is_some(), "GNSS baud/identity scan failed");
+        defmt::assert!(self.receiver.is_some(), "Unsupported GNSS MON-VER identity");
+        let receiver = self.receiver.unwrap();
+        DETECTED_BAUD.store(detected_baud.unwrap(), Relaxed);
+        defmt::info!(
+            "AARDWOLF L4 GNSS DETECT receiver={} baud={}",
+            receiver.name(),
+            detected_baud.unwrap()
         );
-        for layer in [0, 1] {
-            self.send(&ublox::uart_profile_poll(layer)).await.unwrap();
-            self.until(2 + layer).await;
+        // Change at the discovered baud, then verify at the operational baud.
+        // A baud-change ACK can arrive at either rate; readback is the proof.
+        self.send(if receiver == Receiver::M10 {
+            &ublox::UART_PROFILE
+        } else {
+            &gnss_profile::LEGACY_UART
+        })
+        .await
+        .unwrap();
+        Timer::after_millis(100).await;
+        self.uart.set_baudrate(38400).unwrap();
+        self.reset_rx();
+        self.ram = false;
+        self.bbr = false;
+        if receiver != Receiver::M10 {
+            self.until(2).await;
+            defmt::info!("AARDWOLF L4 GNSS PROFILE PASS receiver={} baud=38400 CFG-PRT readback=true flash=false", receiver.name());
+        } else {
+            for layer in [0, 1] {
+                self.until(2 + layer).await;
+            }
+            defmt::assert!(
+                self.ram && self.bbr && !self.nak,
+                "M10 UART profile readback failed"
+            );
+            defmt::info!("AARDWOLF L4 GNSS PROFILE PASS receiver=M10 baud=38400 ram=true bbr=true flash=false");
         }
-        defmt::assert!(self.ram && self.bbr, "M10 UART profile readback failed");
         PROFILE_VALID.store(true, Relaxed);
-        defmt::info!("AARDWOLF L4 M10 PROFILE PASS baud=38400 ram=true bbr=true flash=false");
+        receiver
+    }
+    fn reset_rx(&mut self) {
+        self.framer.reset();
+        self.position = 0;
+        self.length = 0;
+        self.fresh_fix = None;
+        self.nmea_len = 0;
+        self.nmea_pos = 0;
     }
     async fn until(&mut self, condition: u8) {
         let deadline = Instant::now() + Duration::from_secs(5);
+        let mut next_request = Instant::now();
         loop {
             let done = match condition {
-                0 => VERSIONS.load(Relaxed) > 0,
-                1 => self.ack || self.nak,
                 2 => self.ram,
                 _ => self.bbr,
             };
@@ -182,11 +205,17 @@ impl Serial {
             }
             defmt::assert!(
                 Instant::now() < deadline,
-                "M10 initialization response timeout"
+                "GNSS UART profile readback timeout"
             );
-            if condition == 0 && Instant::now() >= self.next_identity_poll {
-                self.send(&ublox::MON_VER).await.unwrap();
-                self.next_identity_poll = Instant::now() + Duration::from_secs(1);
+            if Instant::now() >= next_request {
+                if self.receiver == Some(Receiver::M10) {
+                    self.send(&ublox::uart_profile_poll(condition - 2))
+                        .await
+                        .unwrap();
+                } else {
+                    self.send(&gnss_profile::LEGACY_UART_POLL).await.unwrap();
+                }
+                next_request = Instant::now() + Duration::from_millis(500);
             }
             // Read keeps all framing state in self, including across cancellation.
             let _ = with_timeout(Duration::from_millis(200), self.pump()).await;
@@ -211,8 +240,19 @@ impl Serial {
             let b = self.raw[self.position];
             self.position += 1;
             if let Some(frame) = self.framer.push(b) {
+                if let Frame::Ubx { class, id, payload } = &frame {
+                    gnss_diagnostics::frame(*class, *id, payload);
+                }
                 match frame {
                     Frame::Nmea(bytes) => {
+                        if Instant::now() < self.diagnostics_until
+                            && bytes.len() >= 8
+                            && (&bytes[3..6] == b"GSV" || &bytes[3..6] == b"GSA")
+                        {
+                            if let Ok(text) = core::str::from_utf8(&bytes[..bytes.len() - 2]) {
+                                defmt::info!("GNSS DIAG NMEA {}", text);
+                            }
+                        }
                         // Only feed the shared parser after fully resolved UBX UTC/fix.
                         if !ASLEEP.load(Relaxed)
                             && self
@@ -232,19 +272,33 @@ impl Serial {
                         payload,
                     } => {
                         if let Some(v) = ublox::version(payload) {
+                            let receiver = Receiver::detect(payload);
+                            if let Some(previous) = self.receiver {
+                                defmt::assert!(
+                                    receiver == Some(previous),
+                                    "GNSS identity changed; restart after replacing receiver"
+                                );
+                            }
+                            self.receiver = receiver;
                             VERSION.lock(|s| {
                                 let mut text = s.borrow_mut();
                                 text.clear();
-                                let _ = write!(text, "sw={} hw={}", v.software, v.hardware);
+                                let _ = write!(
+                                    text,
+                                    "{} sw={} hw={}",
+                                    receiver.map_or("Unknown", Receiver::name),
+                                    v.software,
+                                    v.hardware
+                                );
                             });
                             defmt::info!(
-                                "AARDWOLF L4 M10 version sw={} hw={}",
+                                "AARDWOLF L4 GNSS version sw={} hw={}",
                                 v.software,
                                 v.hardware
                             );
                             for ext in v.extensions.chunks_exact(30) {
                                 if let Some(s) = ublox::ascii_field(ext) {
-                                    defmt::info!("AARDWOLF L4 M10 extension {}", s);
+                                    defmt::info!("AARDWOLF L4 GNSS extension {}", s);
                                 }
                             }
                             VERSIONS.fetch_add(1, Relaxed);
@@ -255,14 +309,10 @@ impl Serial {
                         id: 7,
                         payload,
                     } => {
-                        let mut padded = [0u8; 92];
-                        let payload = if cfg!(feature = "gps-m8") && payload.len() == 84 {
-                            padded[..84].copy_from_slice(payload);
-                            &padded[..]
-                        } else {
-                            payload
-                        };
-                        if let Some(p) = ublox::nav_pvt(payload) {
+                        if let Some(p) = self.receiver.and_then(|r| r.nav_pvt(payload)) {
+                            if Instant::now() < self.diagnostics_until {
+                                defmt::info!("GNSS DIAG PVT tow_ms={} fix={} satellites={} valid={:02x} flags={:02x} year={} month={} day={} hour={} minute={} second={} qualified={} pdop_centi={} horizontal_accuracy_mm={}",p.tow_ms,p.fix_type,p.satellites,p.valid,p.flags,p.year,p.month,p.day,p.hour,p.minute,p.second,p.qualified(),p.position_dop_centi,p.horizontal_accuracy_mm);
+                            }
                             if p.qualified() {
                                 self.fresh_fix = Some(Instant::now());
                                 PVT_FIXES.fetch_add(1, Relaxed);
@@ -275,12 +325,8 @@ impl Serial {
                         class: 6,
                         id: 0,
                         payload,
-                    } if cfg!(feature = "gps-m8") => {
-                        self.ram = payload.len() == 20
-                            && payload[0] == 1
-                            && payload[8..12] == 38400u32.to_le_bytes()
-                            && payload[12] & 3 == 3
-                            && payload[14] & 3 == 3;
+                    } if self.receiver != Some(Receiver::M10) => {
+                        self.ram = gnss_profile::legacy_uart_matches(payload);
                     }
                     Frame::Ubx {
                         class: 5,
@@ -330,6 +376,26 @@ impl Read for Serial {
             }
             if !ASLEEP.load(Relaxed) && Instant::now() >= self.next_poll {
                 self.send(&ublox::NAV_PVT).await?;
+                if self.receiver != Some(Receiver::M10)
+                    && self.config_poll < gnss_diagnostics::CONFIG_POLLS.len()
+                {
+                    self.send(gnss_diagnostics::CONFIG_POLLS[self.config_poll])
+                        .await?;
+                    self.config_poll += 1;
+                }
+                if Instant::now() >= self.next_diagnostics {
+                    self.diagnostics_until = Instant::now() + Duration::from_secs(2);
+                    self.next_diagnostics = Instant::now() + Duration::from_secs(30);
+                    self.send(&gnss_diagnostics::STATUS).await?;
+                    if self.receiver != Some(Receiver::M10) {
+                        self.send(&gnss_diagnostics::SATELLITES).await?;
+                        self.send(&gnss_diagnostics::HARDWARE).await?;
+                        self.send(&gnss_diagnostics::DOP).await?;
+                        self.send(&gnss_diagnostics::GPS_TIME).await?;
+                        self.send(&gnss_diagnostics::UTC_TIME).await?;
+                        self.send(&gnss_diagnostics::AIDING).await?;
+                    }
+                }
                 self.next_poll = Instant::now() + Duration::from_secs(1);
             }
             if !ASLEEP.load(Relaxed)
@@ -345,7 +411,7 @@ impl Read for Serial {
 }
 impl Write for Serial {
     async fn write(&mut self, bytes: &[u8]) -> Result<usize, Self::Error> {
-        if bytes == ublox::STANDBY {
+        if self.receiver.is_some_and(|r| bytes == r.standby()) {
             defmt::assert!(PROFILE_VALID.load(Relaxed));
             self.send(bytes).await?;
             ASLEEP.store(true, Relaxed);
@@ -354,7 +420,7 @@ impl Write for Serial {
             self.nmea_pos = 0;
             SLEEPS.fetch_add(1, Relaxed);
             defmt::info!(
-                "AARDWOLF L4 M10 standby sent duration=indefinite wake=UART_RX rail=retained"
+                "AARDWOLF L4 GNSS standby sent duration=indefinite wake=UART_RX rail=retained"
             );
         } else if bytes == ublox::WAKE {
             // End the silence interval before the first UART wake transition.
@@ -369,8 +435,10 @@ impl Write for Serial {
             self.send(&ublox::MON_VER).await?;
             self.next_identity_poll = Instant::now() + Duration::from_secs(1);
             self.next_poll = Instant::now();
+            self.next_diagnostics = Instant::now();
+            self.config_poll = 0;
             WAKES.fetch_add(1, Relaxed);
-            defmt::info!("AARDWOLF L4 M10 UART wake sent reset=false aiding=retained");
+            defmt::info!("AARDWOLF L4 GNSS UART wake sent reset=false aiding=retained");
         } else {
             self.send(bytes).await?;
         }
@@ -412,8 +480,8 @@ pub async fn driver_task(
     enable: embassy_stm32::gpio::Input<'static>,
 ) {
     let _enable = enable; // Pin remains input throughout all states.
-    serial.initialize().await;
-    let config = aardwolf_l4::config::gps();
+    let receiver = serial.initialize().await;
+    let config = aardwolf_l4::config::gps(receiver);
     gps::GpsDriver::new(serial, pps, RetainedPower, &GPS, config)
         .run()
         .await;
@@ -505,7 +573,7 @@ impl CycleCheck {
             if let Some((previous, quiet_since)) = self.quiet {
                 defmt::assert!(
                     previous == counters,
-                    "M10 failed standby: UART or PPS still active"
+                    "GNSS failed standby: UART or PPS still active"
                 );
                 let sleeps = SLEEPS.load(Relaxed);
                 if Instant::now() - quiet_since >= Duration::from_secs(7)
@@ -516,7 +584,7 @@ impl CycleCheck {
                     streams::log(format_args!(
                         "gps_standby_verified uart_quiet=true pps_quiet=true rails=retained"
                     ));
-                    defmt::info!("AARDWOLF L4 M10 STANDBY PASS uart_quiet=true pps_quiet=true");
+                    defmt::info!("AARDWOLF L4 GNSS STANDBY PASS uart_quiet=true pps_quiet=true");
                     if cfg!(feature = "bench-gps-cycle")
                         && self.verified
                         && GPS.stats().num_phase_qualified_shutdowns > 0
@@ -544,7 +612,7 @@ impl CycleCheck {
                 time.accepted_anchors,
                 time.calibrated_frequency_error_ppb
             ));
-            defmt::info!("AARDWOLF L4 M10 WAKE PASS elapsed_ms={} accepted_since_wake={} reacquired={} correction_ppb={}",age.as_millis(),time.accepted_anchors-self.anchors_at_wake,GPS.stats().num_reacquisition_successes,time.calibrated_frequency_error_ppb);
+            defmt::info!("AARDWOLF L4 GNSS WAKE PASS elapsed_ms={} accepted_since_wake={} reacquired={} correction_ppb={}",age.as_millis(),time.accepted_anchors-self.anchors_at_wake,GPS.stats().num_reacquisition_successes,time.calibrated_frequency_error_ppb);
         }
     }
 }

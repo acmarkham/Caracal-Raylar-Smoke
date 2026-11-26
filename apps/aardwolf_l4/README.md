@@ -26,10 +26,16 @@ rtk proxy probe-rs run --chip STM32L476RGTx --probe 0483:3748 --speed 100 --veri
 Do not build the entire mixed-chip workspace at once. The root default target
 and package selection remain U5.
 
-The fitted Quescan G10A-F30 M10 uses USART2 PA2/PA3 at 38400 baud and PB5 PPS.
-PB4 stays input; there is no EN/reset pulse. UART setup is retained in RAM/BBR,
-with no GPS flash write. RXM-PMREQ requests software standby with the supply
-retained; a UART transition wakes the receiver. No cold reset is sent. The
+One image supports u-blox M7/M8/M10 through USART2 PA2/PA3 and PB5 PPS.
+At each boot it sweeps 38400, 9600, 57600, 115200, 19200, 4800 and 230400 baud,
+wakes and polls MON-VER, and detects the generation from hardware/PROTVER.
+Two bounded sweeps accommodate a receiver still booting. Unsupported identities
+or failed profile readback enter the existing red LED/buzzer fault path.
+M7/M8 use CFG-PRT and the legacy 8-byte RXM-PMREQ payload; M10 uses
+VALSET/VALGET and the 16-byte RXM-PMREQ payload. Both verify UART operation at
+38400 with UBX/NMEA enabled. M7/M8 UART settings are volatile; M10 retains its
+UART profile in RAM/BBR. Neither writes receiver flash or resets navigation.
+PB4 stays input. Software standby retains the supply and UART wakes the receiver. The
 default GPS policy is 60 seconds minimum tracking / 1800 seconds standby after
 the full initial calibration; clean-PPS phase qualification may extend tracking
 to 180 seconds. Current consumption is not inferred from UART silence.
@@ -110,4 +116,17 @@ rtk cargo test --lib -p caracal-evo -p aardwolf-l4 --no-default-features --targe
 rtk cargo test --lib -p raylar-drivers --no-default-features --features ublox-m10 --target x86_64-pc-windows-msvc gps::ublox --locked --offline
 ```
 
-For an Evo fitted with u-blox M8, build with --features gps-m8. This selects legacy CFG-PRT with baud discovery and the M8 backup command; it does not send M10 VALSET/VALGET configuration or write GPS flash.
+Receiver selection requires no build flag. Replace a GPS while the equipment is
+powered down, then boot/reset Evo to rerun detection using the same image.
+RTT shows `GNSS DETECT receiver=... baud=...`, raw version/model extensions and
+`GNSS PROFILE PASS`; syslog records the selected family and discovered baud.
+See [ADR-L4-015](../../SpecAndDesign/Platform/L4/ADR-L4-015-gnss-autodetect.md)
+for the detection contract and device-swap checks.
+
+The normal image also emits read-only acquisition diagnostics: legacy receiver
+configuration after wake, satellite/navigation/RF status every 30 seconds, and
+raw GSA/GSV/PVT in short windows before fix qualification. These logs leave the
+shared fix/time gates unchanged. For a longer cold-start capture, add
+`--timeout-seconds 1200` to `tools/capture.py`; default observation windows are
+unchanged. See the [V.KEL acquisition report](VALIDATION-GNSS-ACQUISITION-20261126.md)
+for measured TTFF, configuration readback and signal history.

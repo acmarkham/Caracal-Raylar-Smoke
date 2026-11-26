@@ -1,6 +1,7 @@
 //! L4 composition; the portable Aardwolf policy remains owned by the U5 app.
 #![no_std]
 pub mod config;
+pub mod gnss_profile;
 #[path = "../aardwolf/policy.rs"]
 pub mod policy;
 pub mod tone;
@@ -80,7 +81,7 @@ mod tests {
     fn gps_uses_full_calibration_phase_qualification_and_retained_software_wake() {
         use embassy_time::Duration;
         use raylar_drivers::gps::{ublox, StartMode};
-        let gps = config::gps();
+        let gps = config::gps(gnss_profile::Receiver::M10);
         assert!(gps.wait_for_frequency_calibration_lock);
         assert_eq!(gps.initial_start_mode, StartMode::Hot);
         assert_eq!(gps.gps_on_time, Duration::from_secs(60));
@@ -103,21 +104,22 @@ mod tests {
             ),
             (250, 500, 5)
         );
-        let m8_standby = ublox::packet::<16>(2, 0x41, &[0, 0, 0, 0, 2, 0, 0, 0]);
-        assert_eq!(
-            gps.module_commands.standby,
-            Some(if cfg!(feature = "gps-m8") {
-                m8_standby.as_slice()
-            } else {
-                ublox::STANDBY.as_slice()
-            })
-        );
+        assert_eq!(gps.module_commands.standby, Some(ublox::STANDBY.as_slice()));
         assert_eq!(gps.module_commands.wake, Some(ublox::WAKE.as_slice()));
         assert!(
             gps.module_commands.hot_start.is_none()
                 && gps.module_commands.warm_start.is_none()
                 && gps.module_commands.cold_start.is_none()
         );
+        for receiver in [gnss_profile::Receiver::M7, gnss_profile::Receiver::M8] {
+            let legacy = config::gps(receiver);
+            assert_eq!(legacy.module_commands.standby, Some(receiver.standby()));
+            assert_eq!(legacy.module_commands.wake, gps.module_commands.wake);
+            assert_eq!(legacy.gps_off_time, gps.gps_off_time);
+            assert!(legacy.module_commands.hot_start.is_none());
+            assert!(legacy.module_commands.warm_start.is_none());
+            assert!(legacy.module_commands.cold_start.is_none());
+        }
     }
     #[test]
     fn storage_gate_preserves_aardwolf_reserve_and_cluster_rounding() {
