@@ -2,7 +2,7 @@
 pub const EPOCH_US: i64 = 1_800_000_000;
 pub const LOG_RESERVE_BYTES: u64 = 100_000_000;
 pub const LOG_BUDGET_BYTES: u64 = 1_000_000_000;
-pub const AUDIO_FILE_BYTES: u64 = crate::FILE_BYTES;
+pub const AUDIO_FILE_BYTES: u64 = crate::FILE_BUDGET;
 pub const GPS_OFF_SECONDS: u64 = if cfg!(feature = "bench-gps-cycle") {
     30
 } else {

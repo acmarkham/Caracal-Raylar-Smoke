@@ -2,15 +2,18 @@
 
 Explicit STM32L476RGT6 application composition using the upstream Aardwolf
 policy and shared services. See [ADR-L4-012](../../SpecAndDesign/Platform/L4/ADR-L4-012-aardwolf-evo-port.md)
-and [ADR-L4-013](../../SpecAndDesign/Platform/L4/ADR-L4-013-fault-ui-telemetry-audio.md).
-Validation records: [initial port](evidence/README.md), [fault UI and audio](VALIDATION-20261126.md).
+and [ADR-L4-014](../../SpecAndDesign/Platform/L4/ADR-L4-014-mono-flac-and-cpu.md).
+Validation records: [initial port](evidence/README.md), [fault UI and WAV](VALIDATION-20261126.md),
+[FLAC and CPU comparison](VALIDATION-FLAC-20261126.md).
 
-The normal image records mono 16 kHz WAV in one-minute files with concurrent
+The normal image records mono 16 kHz **24-bit FLAC** in one-minute files with concurrent
 syslog on the existing exFAT SD card. It waits for real GPS UTC, uses captured
 PPS for the unchanged Time Service calibration, and continues recording through
 GPS standby/holdover. No radio, inertial sensors, battery services or button.
-The WAV holds full-scale signed PCM32: 24 significant bits, left aligned,
-with the low eight bits zero. DFSDM uses Sinc4/FOSR200/IOSR1 at 3.2 MHz.
+It uses the upstream fixed order-1 predictor, 1024-sample blocks and static
+workspaces. DFSDM uses Sinc4/FOSR200/IOSR1 at 3.2 MHz. FLAC input is signed
+24-bit PCM right-justified in `i32`; the `wav` reference feature instead writes
+PCM32 with those 24 significant bits left aligned and the low byte zero.
 
 Build each chip separately from the workspace root:
 
@@ -31,7 +34,7 @@ default GPS policy is 60 seconds minimum tracking / 1800 seconds standby after
 the full initial calibration; clean-PPS phase qualification may extend tracking
 to 180 seconds. Current consumption is not inferred from UART silence.
 
-Files use exclusive `/hour/aud_<utc>.wav` creation. `/syslog.txt` is appended.
+Files use exclusive `/hour/aud_<utc>.flac` creation. `/syslog.txt` is appended.
 Nothing is formatted or deleted. Existing-file collisions, insufficient reserve
 or I/O/acquisition errors stop the run with diagnostics. Blue indicates an open
 audio file; green indicates search or an admitted GPS anchor. Red flashes on a
@@ -49,6 +52,20 @@ measurement matches U5's executor-idle method; it does not profile individual IR
 cycles. Queue drops/truncation are counted and reported without stopping capture.
 Keep RTT attached for initial qualification; the L4
 transport is nonblocking so losing the host does not block interrupts.
+
+The short codec test records two complete minutes, closes both streams and
+checks fresh-filesystem readback and CPU records. After DMA stops it also
+exports a real encoded block for independent Xiph/FFmpeg decoding:
+
+```powershell
+rtk cargo build -p aardwolf-l4 --release --target thumbv7em-none-eabihf --features bench-codec --locked --offline
+rtk proxy python apps/aardwolf_l4/tools/capture.py flac --evidence-dir apps/aardwolf_l4/evidence/20261126-flac
+rtk proxy python apps/aardwolf_l4/tools/verify_flac_fixture.py apps/aardwolf_l4/evidence/20261126-flac/flac.log --flac target/flac-tools/flac-1.5.0-win/Win64/flac.exe
+```
+
+Use `--features wav` for the reference recording format, or `wav,bench-codec`
+for its finite check. Compare only complete CPU windows during recording;
+GPS search and waiting for the first minute are idle/preparation time.
 
 The finite hardware qualification build shortens only GPS standby to 30 seconds:
 
@@ -71,7 +88,7 @@ buzzer-to-microphone coupling has no acoustic pass/fail threshold; listen to
 the recordings to assess their sound:
 
 ```powershell
-rtk cargo build -p aardwolf-l4 --release --target thumbv7em-none-eabihf --features bench-audio-ui --locked --offline
+rtk cargo build -p aardwolf-l4 --release --target thumbv7em-none-eabihf --features wav,bench-audio-ui --locked --offline
 rtk proxy python apps/aardwolf_l4/tools/capture.py audio-ui --evidence-dir apps/aardwolf_l4/evidence/20261126
 ```
 

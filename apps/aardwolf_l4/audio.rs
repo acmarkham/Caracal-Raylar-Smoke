@@ -1,6 +1,8 @@
 //! Local composition of the verified 05 DFSDM adapter and Embassy DMA ring.
 use crate::{dfsdm, AUDIO};
-use caracal_evo::pcm::{start_offset, wav_pcm32, Stats, HALF, RING, SAMPLE_RATE, WARMUP_BLOCKS};
+use caracal_evo::pcm::{
+    pcm24, start_offset, wav_pcm32, Stats, HALF, RING, SAMPLE_RATE, WARMUP_BLOCKS,
+};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use embassy_stm32::{
     bind_interrupts,
@@ -15,6 +17,8 @@ pub static STOP: AtomicBool = AtomicBool::new(false);
 pub static START: Signal<CriticalSectionRawMutex, Instant> = Signal::new();
 pub static DONE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub static PUBLISHED_BLOCKS: AtomicU32 = AtomicU32::new(0);
+pub static PUBLISHED_SAMPLES: AtomicU32 = AtomicU32::new(0);
+pub static FIRST_PCM_HASH: AtomicU32 = AtomicU32::new(0);
 pub static DMA_ERRORS: AtomicU32 = AtomicU32::new(0);
 pub static MAX_COPY_US: AtomicU32 = AtomicU32::new(0);
 static IRQ_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -74,11 +78,23 @@ pub async fn capture(
     let mut block = 0u32;
     let mut process = [0u32; HALF];
     let mut prior_stamp = None;
+    let mut fixture_samples = 0;
+    let mut fixture_hash = aardwolf_l4::FNV_INITIAL;
     while !STOP.load(Relaxed) {
-        if !matches!(
-            with_timeout(Duration::from_secs(1), ring.read_exact(&mut process)).await,
-            Ok(Ok(_))
-        ) {
+        let failed = match with_timeout(Duration::from_secs(1), ring.read_exact(&mut process)).await
+        {
+            Ok(Ok(_)) => false,
+            Ok(Err(error)) => {
+                defmt::error!("AARDWOLF L4 DMA read error={}", error);
+                true
+            }
+            Err(_) => {
+                defmt::error!("AARDWOLF L4 DMA read timeout");
+                true
+            }
+        };
+        if failed {
+            defmt::error!("AARDWOLF L4 DMA diagnostic block={} irqs={} irq_errors={} max_poll_us={} max_poll_task={:08x} codec_us={} append_us={}",block,IRQ_COUNT.load(Relaxed),DMA_ERRORS.load(Relaxed),crate::diagnostics::MAX_POLL_US.load(Relaxed),crate::diagnostics::MAX_POLL_TASK.load(Relaxed),crate::MAX_CODEC_US.load(Relaxed),crate::streams::MAX_APPEND_US.load(Relaxed));
             DMA_ERRORS.fetch_add(1, Relaxed);
             crate::fault::latch(crate::fault::Fault::Audio);
             break;
@@ -113,6 +129,7 @@ pub async fn capture(
             }
             let mut stats = Stats::default();
             if PUBLISHED_BLOCKS.load(Relaxed) == 0 {
+                crate::diagnostics::reset_poll_peak();
                 defmt::info!(
                     "AARDWOLF L4 first PCM ticks={} publish_at={} offset={}",
                     first + offset as u64 * 1_000_000 / u64::from(SAMPLE_RATE),
@@ -124,30 +141,50 @@ pub async fn capture(
                 stats.add(*word);
             }
             defmt::assert!(stats.bad_metadata == 0);
-            // Conservatively include the recorder's current SD append in its
-            // unconsumed backlog. This proves the source ring never overwrites,
-            // including the final read whose planned bench exit returns no progress.
-            // Count a partial first packet as a whole half: conservative by
-            // at most 511 samples, never an underestimate of retained audio.
-            let lag = PUBLISHED_BLOCKS
+            // FLAC consumes partial DMA packets while filling encoder blocks.
+            // Count samples exactly, including the trimmed first packet.
+            let lag = PUBLISHED_SAMPLES
                 .load(Relaxed)
-                .wrapping_sub(crate::CONSUMED_HALVES.load(Relaxed))
-                + 1;
+                .wrapping_sub(crate::CONSUMED_SAMPLES.load(Relaxed))
+                + (HALF - offset) as u32;
             if crate::ARMED.load(Relaxed) {
                 defmt::assert!(
-                    lag as usize * HALF <= crate::AUDIO_CAPACITY,
+                    lag as usize <= crate::AUDIO_CAPACITY,
                     "AARDWOLF L4 FAIL AudioSource retention exhausted"
                 );
-                crate::MAX_BACKLOG.fetch_max(lag * HALF as u32, Relaxed);
+                crate::MAX_BACKLOG.fetch_max(lag, Relaxed);
+            }
+            if cfg!(feature = "bench-codec")
+                && !cfg!(feature = "wav")
+                && fixture_samples < aardwolf_l4::FLAC_BLOCK
+            {
+                for word in process[offset..]
+                    .iter()
+                    .take(aardwolf_l4::FLAC_BLOCK - fixture_samples)
+                {
+                    fixture_hash =
+                        aardwolf_l4::hash_bytes(fixture_hash, &pcm24(*word).to_le_bytes());
+                    fixture_samples += 1;
+                }
+                if fixture_samples == aardwolf_l4::FLAC_BLOCK {
+                    FIRST_PCM_HASH.store(fixture_hash, Relaxed);
+                }
             }
             AUDIO
                 .write_from_fn(
                     HALF - offset,
                     first + offset as u64 * 1_000_000 / u64::from(SAMPLE_RATE),
-                    |i| wav_pcm32(process[i + offset]),
+                    |i| {
+                        if cfg!(feature = "wav") {
+                            wav_pcm32(process[i + offset])
+                        } else {
+                            pcm24(process[i + offset])
+                        }
+                    },
                 )
                 .unwrap();
             PUBLISHED_BLOCKS.fetch_add(1, Relaxed);
+            PUBLISHED_SAMPLES.fetch_add((HALF - offset) as u32, Relaxed);
         }
         MAX_COPY_US.fetch_max((Instant::now() - begun).as_micros() as u32, Relaxed);
     }

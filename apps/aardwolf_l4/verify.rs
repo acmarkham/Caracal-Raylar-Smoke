@@ -7,33 +7,63 @@ use core::sync::atomic::Ordering::Relaxed;
 use exfat_slim::asynchronous::{file::OpenOptions, file_system::FileSystem};
 use heapless::String;
 use raylar_drivers::storage::PartitionedBlockDevice;
-static BUFFER: static_cell::ConstStaticCell<Aligned<A4, [u8; 4096]>> =
-    static_cell::ConstStaticCell::new(Aligned([0; 4096]));
+static BUFFER: static_cell::ConstStaticCell<Aligned<A4, [u8; VERIFY_BYTES]>> =
+    static_cell::ConstStaticCell::new(Aligned([0; VERIFY_BYTES]));
+pub fn workspace() -> &'static mut [u8; VERIFY_BYTES] {
+    BUFFER.take()
+}
 
 pub async fn files(
     device: PartitionedBlockDevice<sd::L4Sd<'static, 'static>>,
-    recording: &streams::Recording,
+    recording: &mut streams::Recording,
     log: &streams::Syslog,
 ) {
     sd::WRITE_ALLOWED.store(false, Relaxed);
     let mut fs: FileSystem<PartitionedBlockDevice<_>, 512, 1> = FileSystem::new(device);
 
     fs.mount().await.unwrap();
-    let buffer: &mut [u8; 4096] = BUFFER.take();
+    let buffer = recording.workspace.take().unwrap();
     for n in 0..recording.opened as usize {
         let start = recording.starts[n];
         let mut path = String::<96>::new();
-        write!(path, "/{}/aud_{}.wav", start.div_euclid(3600) * 3600, start).unwrap();
+        write!(
+            path,
+            "/{}/aud_{}.{}",
+            start.div_euclid(3600) * 3600,
+            start,
+            CODEC
+        )
+        .unwrap();
         let mut file = fs.open(&path, OpenOptions::new().read(true)).await.unwrap();
-        defmt::assert!(file.metadata().len() == FILE_BYTES);
-        let first = file
-            .read(&mut fs, &mut buffer[..512])
-            .await
-            .unwrap()
-            .unwrap_or(0);
-        defmt::assert!(first == 512 && valid_minute_header(&buffer[..512]));
-        let mut hash = hash_bytes(FNV_INITIAL, &buffer[..512]);
-        let mut total = 512u64;
+        defmt::assert!(file.metadata().len() == recording.lengths[n] as u64);
+        let header_size = if cfg!(feature = "wav") { 512 } else { 1024 };
+        let mut first = 0;
+        while first < header_size {
+            let count = file
+                .read(&mut fs, &mut buffer[first..header_size])
+                .await
+                .unwrap()
+                .unwrap_or(0);
+            if count == 0 {
+                break;
+            }
+            first += count;
+        }
+        defmt::assert!(first == header_size);
+        if cfg!(feature = "wav") {
+            defmt::assert!(valid_minute_header(&buffer[..512]));
+        } else {
+            defmt::assert!(
+                &buffer[..8] == b"fLaC\0\0\0\x22"
+                    && valid_streaminfo(&buffer[8..42], SEGMENT_SAMPLES as u64)
+            );
+            defmt::assert!(
+                hash_bytes(FNV_INITIAL, &buffer[8..42]) == recording.streaminfo_hashes[n]
+            );
+            defmt::assert!(buffer[..first].windows(6).any(|b| b == b"L4Evo:"));
+        }
+        let mut hash = recording_hash(FNV_INITIAL, 0, &buffer[..first]);
+        let mut total = first as u64;
         let mut minimum = i32::MAX;
         let mut maximum = i32::MIN;
         let mut low_or = 0u8;
@@ -52,13 +82,22 @@ pub async fn files(
         let mut squares = 0u128;
         let mut sample_index = 0u32;
         loop {
-            let count = file.read(&mut fs, buffer).await.unwrap().unwrap_or(0);
+            let count = file
+                .read(&mut fs, &mut buffer[..4096])
+                .await
+                .unwrap()
+                .unwrap_or(0);
             if count == 0 {
                 break;
             }
-            defmt::assert!(count % 4 == 0);
+            if cfg!(feature = "wav") {
+                defmt::assert!(count % 4 == 0);
+            }
+            hash = recording_hash(hash, total, &buffer[..count]);
             total += count as u64;
-            hash = hash_bytes(hash, &buffer[..count]);
+            if !cfg!(feature = "wav") {
+                continue;
+            }
             for bytes in buffer[..count].chunks_exact(4) {
                 let packed = i32::from_le_bytes(bytes.try_into().unwrap());
                 defmt::assert!(packed & 255 == 0);
@@ -84,7 +123,11 @@ pub async fn files(
             }
         }
         file.close(&mut fs).await.unwrap();
-        defmt::assert!(total == FILE_BYTES && hash == recording.hashes[n]);
+        defmt::assert!(total == recording.lengths[n] as u64 && hash == recording.hashes[n]);
+        if !cfg!(feature = "wav") {
+            defmt::info!("AARDWOLF L4 VERIFY FLAC PASS index={} path={} bytes={} samples=960000 normalized_hash={:08x} streaminfo_hash={:08x}",n+1,path.as_str(),total,hash,recording.streaminfo_hashes[n]);
+            continue;
+        }
         defmt::assert!(maximum as i64 - minimum as i64 > 32 && low_or ^ low_and != 0);
         let count = u128::from(sample_index);
         let ac_power = (squares * count - sum.unsigned_abs() as u128 * sum.unsigned_abs() as u128)
@@ -167,7 +210,7 @@ pub async fn files(
     defmt::assert!(line.is_empty() && total == log.bytes && hash == log.hash);
     defmt::assert!(
         heartbeats
-            >= if cfg!(feature = "bench-audio-ui") {
+            >= if cfg!(any(feature = "bench-audio-ui", feature = "bench-codec")) {
                 120
             } else {
                 175

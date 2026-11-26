@@ -1,4 +1,4 @@
-//! Aardwolf Evo L4: shared services, mono WAV and M10 PPS timing.
+//! Aardwolf Evo L4: shared services, mono FLAC and M10 PPS timing.
 #![no_std]
 #![no_main]
 mod audio;
@@ -42,7 +42,13 @@ static LOGGING: LoggingResources<192, 8> = LoggingResources::new();
 static SDMMC: StaticCell<Sdmmc<'static>> = StaticCell::new();
 static UART_RX: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0; 2048]);
 static UART_TX: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0; 128]);
-static CONSUMED_HALVES: AtomicU32 = AtomicU32::new(0);
+static CONSUMED_SAMPLES: AtomicU32 = AtomicU32::new(0);
+static MAX_CODEC_US: AtomicU32 = AtomicU32::new(0);
+#[cfg(not(feature = "wav"))]
+static ENCODED: ConstStaticCell<[u8; FLAC_ENCODE_BYTES]> =
+    ConstStaticCell::new([0; FLAC_ENCODE_BYTES]);
+#[cfg(not(feature = "wav"))]
+static PCM: ConstStaticCell<[i32; FLAC_BLOCK]> = ConstStaticCell::new([0; FLAC_BLOCK]);
 static MAX_BACKLOG: AtomicU32 = AtomicU32::new(0);
 static ARMED: AtomicBool = AtomicBool::new(false);
 #[global_allocator]
@@ -110,7 +116,15 @@ async fn main(spawner: Spawner) -> ! {
     defmt::assert!(pac::TIM5.psc().read() == 79);
     defmt::assert!(rcc::clocks(&p.RCC).sys.to_hertz().unwrap().0 == 80_000_000);
     defmt::assert!(rcc::clocks(&p.RCC).pllsai1_q.to_hertz().unwrap().0 == 48_000_000);
-    defmt::info!("AARDWOLF L4 boot uid={} git={} bench={} audio=mono_16000_wav gps=M10 off_s={} radio=false sensors=false battery=false button=false",embassy_stm32::uid::uid_hex(),env!("L4_GIT"),cfg!(feature="bench-gps-cycle"),config::GPS_OFF_SECONDS);
+    defmt::info!(
+        "AARDWOLF L4 boot uid={} git={} codec={} bits={} block={} predictor=Fixed1 gps_off_s={}",
+        embassy_stm32::uid::uid_hex(),
+        env!("L4_GIT"),
+        CODEC,
+        if cfg!(feature = "wav") { 32 } else { 24 },
+        FLAC_BLOCK,
+        config::GPS_OFF_SECONDS
+    );
     let chain = capture::start(p.TIM3, p.TIM2, p.PB5);
     defmt::info!("AARDWOLF L4 PPS uncertainty_us={}", chain.uncertainty_us);
     let mut uart_config = usart::Config::default();
@@ -188,10 +202,11 @@ async fn main(spawner: Spawner) -> ! {
             version.as_str()
         }
     ));
-    streams::log(format_args!("policy mono=16000 wav_bits=32 source_bits=24 segment_s=60 gps_on_s=60 gps_off_s={} calibration=default_600s",config::GPS_OFF_SECONDS));
+    streams::log(format_args!("policy mono=16000 codec={} source_bits=24 block={} predictor=Fixed1 segment_s=60 gps_off_s={}",CODEC,FLAC_BLOCK,config::GPS_OFF_SECONDS));
     if Phase(logging.drain()).await.is_err() || Phase(logging.flush()).await.is_err() {
         fault::park(fault::Fault::Storage).await;
     }
+    #[cfg(feature = "wav")]
     let mut recorder = AudioRecorder::<_, _, AUDIO_CAPACITY, 1, 4096>::new(
         &AUDIO,
         streams::Recording::new(),
@@ -202,6 +217,14 @@ async fn main(spawner: Spawner) -> ! {
         },
     )
     .unwrap();
+    #[cfg(not(feature = "wav"))]
+    let mut recorder = AudioRecorder::<_, _, AUDIO_CAPACITY, 1, FLAC_ENCODE_BYTES, FLAC_BLOCK>::new_flac_with_buffers(
+        &AUDIO, streams::Recording::new(), streams::metadata(),
+        AudioRecorderConfig { recording_seconds: SEGMENT_SECONDS, storage_layout: StorageLayout::HourlyFolders },
+        raylar_audio_recorder_service::FlacConfig { sample_rate_hz: SAMPLE_RATE, bits_per_sample: SOURCE_BITS,
+            block_samples: FLAC_BLOCK, prediction: raylar_audio_recorder_service::FlacPrediction::Fixed(1) },
+        ENCODED.take(), PCM.take(),
+    ).unwrap();
     spawner.spawn(diagnostics::cpu_task().unwrap());
     spawner.spawn(audio::capture(p.PC2, p.PB12, p.DMA1_CH4).unwrap());
     let (_, syslog) = Phase(embassy_futures::join::join(
@@ -211,7 +234,7 @@ async fn main(spawner: Spawner) -> ! {
     .await;
     audio::DONE.wait().await;
     defmt::assert!(
-        cfg!(feature = "bench-audio-ui")
+        cfg!(any(feature = "bench-audio-ui", feature = "bench-codec"))
             || (cfg!(feature = "bench-gps-cycle") && gnss::BENCH_FINISH.load(Relaxed))
     );
     defmt::assert!(streams::OPEN.load(Relaxed) == 0 && streams::MAX_OPEN.load(Relaxed) == 2);
@@ -219,21 +242,22 @@ async fn main(spawner: Spawner) -> ! {
     defmt::assert!(
         streams::CLOSED.load(Relaxed) == recorder.storage().opened
             && streams::CLOSED.load(Relaxed)
-                >= if cfg!(feature = "bench-audio-ui") {
+                >= if cfg!(any(feature = "bench-audio-ui", feature = "bench-codec")) {
                     2
                 } else {
                     10
                 }
     );
     defmt::assert!(
-        cfg!(feature = "bench-audio-ui")
+        cfg!(any(feature = "bench-audio-ui", feature = "bench-codec"))
             || (TIME.time_state().frequency_calibration_locked
                 && GPS.stats().num_phase_qualified_shutdowns > 0
                 && gnss::SLEEPS.load(Relaxed) >= 2
                 && gnss::VERSIONS.load(Relaxed) >= 3)
     );
+    recorder.storage_mut().export_fixture().await;
     let device = Phase(setup::unmount()).await;
-    Phase(verify::files(device, recorder.storage(), &syslog)).await;
+    Phase(verify::files(device, recorder.storage_mut(), &syslog)).await;
     stack_probe::check("verified");
     defmt::info!("AARDWOLF L4 PASS segments={} dma_errors={} backlog_max={} copy_max_us={} append_max_us={} syslog_bytes={} log_checkpoints={} gps_sleeps={} gps_wakes={} calibrated_ppb={}",streams::CLOSED.load(Relaxed),audio::DMA_ERRORS.load(Relaxed),MAX_BACKLOG.load(Relaxed),audio::MAX_COPY_US.load(Relaxed),streams::MAX_APPEND_US.load(Relaxed),syslog.bytes,streams::LOG_CHECKPOINTS_DURING_AUDIO.load(Relaxed),gnss::SLEEPS.load(Relaxed),gnss::WAKES.load(Relaxed),TIME.time_state().calibrated_frequency_error_ppb);
     loop {
@@ -241,6 +265,7 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
+#[cfg(feature = "wav")]
 type Recorder = AudioRecorder<
     'static,
     streams::Recording,
@@ -248,6 +273,17 @@ type Recorder = AudioRecorder<
     AUDIO_CAPACITY,
     1,
     4096,
+>;
+#[cfg(not(feature = "wav"))]
+type Recorder = AudioRecorder<
+    'static,
+    streams::Recording,
+    raylar_audio_recorder_service::TimeMetadataSource<'static, 2, 2>,
+    AUDIO_CAPACITY,
+    1,
+    FLAC_ENCODE_BYTES,
+    FLAC_BLOCK,
+    raylar_audio_recorder_service::BorrowedBuffers<'static, FLAC_ENCODE_BYTES, FLAC_BLOCK>,
 >;
 async fn recording_session(recorder: &mut Recorder) {
     while TIME.current_utc().is_err() {
@@ -262,9 +298,21 @@ async fn recording_session(recorder: &mut Recorder) {
     let start = time
         .utc_to_system_holdover(UtcTimestamp::from_micros(next))
         .unwrap();
-    CONSUMED_HALVES.store(0, Relaxed);
+    CONSUMED_SAMPLES.store(0, Relaxed);
     ARMED.store(true, Relaxed);
     audio::START.signal(start);
+    if !cfg!(feature = "wav") {
+        if let Err(error) = Phase(
+            recorder
+                .storage_mut()
+                .prepare_at(UtcTimestamp::from_micros(next)),
+        )
+        .await
+        {
+            defmt::error!("AARDWOLF L4 preallocate {}", error);
+            fault::park(fault::Fault::Storage).await;
+        }
+    }
     // Prepare the filesystem/cache and header before any PCM is published.
     // Large-card bitmap scans and first-directory allocation have no DMA deadline.
     if let Err(error) = Phase(recorder.start_at(UtcTimestamp::from_micros(next))).await {
@@ -288,23 +336,27 @@ async fn recording_session(recorder: &mut Recorder) {
             .await
         {
             Ok(progress) => {
-                defmt::assert!(
-                    progress.dropped_samples == 0 && progress.pcm_samples % 512 == 0,
-                    "AARDWOLF L4 dropped samples"
-                );
-                CONSUMED_HALVES.fetch_add((progress.pcm_samples / 512) as u32, Relaxed);
+                defmt::assert!(progress.dropped_samples == 0, "AARDWOLF L4 dropped samples");
+                CONSUMED_SAMPLES.fetch_add(progress.pcm_samples as u32, Relaxed);
                 MAX_BACKLOG.fetch_max(progress.backlog_samples as u32, Relaxed);
+                MAX_CODEC_US.fetch_max(progress.codec_elapsed_us as u32, Relaxed);
+                if cfg!(any(feature = "bench-codec", feature = "bench-audio-ui"))
+                    && progress.rotated
+                    && streams::CLOSED.load(Relaxed) >= 2
+                {
+                    recorder.stop().await.unwrap();
+                    finish_bench();
+                    return;
+                }
             }
             Err(AudioRecorderError::Storage(streams::RecordError::BenchComplete))
-                if cfg!(any(feature = "bench-gps-cycle", feature = "bench-audio-ui")) =>
+                if cfg!(any(
+                    feature = "bench-gps-cycle",
+                    feature = "bench-audio-ui",
+                    feature = "bench-codec"
+                )) =>
             {
-                streams::log(format_args!(
-                    "bench_complete segments={} dma_errors=0 dropped_samples=0 real_gps=true",
-                    streams::CLOSED.load(Relaxed)
-                ));
-                ARMED.store(false, Relaxed);
-                audio::STOP.store(true, Relaxed);
-                streams::STOP_LOG.store(true, Relaxed);
+                finish_bench();
                 return;
             }
             Err(error) => {
@@ -317,6 +369,16 @@ async fn recording_session(recorder: &mut Recorder) {
             }
         }
     }
+}
+
+fn finish_bench() {
+    streams::log(format_args!(
+        "bench_complete segments={} dma_errors=0 dropped_samples=0 real_gps=true",
+        streams::CLOSED.load(Relaxed)
+    ));
+    ARMED.store(false, Relaxed);
+    audio::STOP.store(true, Relaxed);
+    streams::STOP_LOG.store(true, Relaxed);
 }
 
 async fn logging_session(
@@ -347,10 +409,10 @@ async fn logging_session(
                 ));
             }
             streams::log(format_args!(
-                "heartbeat={} published={} consumed={} closed={} backlog_max={} dma_errors={}",
+                "heartbeat={} published_samples={} consumed_samples={} closed={} backlog_max={} dma_errors={}",
                 heartbeat,
-                audio::PUBLISHED_BLOCKS.load(Relaxed),
-                CONSUMED_HALVES.load(Relaxed),
+                audio::PUBLISHED_SAMPLES.load(Relaxed),
+                CONSUMED_SAMPLES.load(Relaxed),
                 streams::CLOSED.load(Relaxed),
                 MAX_BACKLOG.load(Relaxed),
                 audio::DMA_ERRORS.load(Relaxed)

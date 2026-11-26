@@ -7,6 +7,17 @@ pub mod tone;
 pub mod ui_policy;
 pub const SAMPLE_RATE: u32 = 16_000;
 pub const SEGMENT_SECONDS: u32 = 60;
+pub const SEGMENT_SAMPLES: usize = SAMPLE_RATE as usize * SEGMENT_SECONDS as usize;
+pub const FLAC_BLOCK: usize = 1024;
+pub const FLAC_ENCODE_BYTES: usize = FLAC_BLOCK * 4 + 32;
+pub const VERIFY_BYTES: usize = 1024 + FLAC_BLOCK * 3 + 32;
+pub const CODEC: &str = if cfg!(feature = "wav") { "wav" } else { "flac" };
+pub const SOURCE_BITS: u8 = 24;
+pub const FILE_BUDGET: u64 = if cfg!(feature = "wav") {
+    FILE_BYTES
+} else {
+    1024 + SEGMENT_SAMPLES as u64 * 4 + 32 * (SEGMENT_SAMPLES as u64).div_ceil(FLAC_BLOCK as u64)
+};
 pub const PAYLOAD_BYTES: u64 = SAMPLE_RATE as u64 * SEGMENT_SECONDS as u64 * 4;
 pub const FILE_BYTES: u64 = 512 + PAYLOAD_BYTES;
 pub const BENCH_SEGMENTS: usize = 20;
@@ -16,6 +27,33 @@ pub fn hash_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
         hash = (hash ^ *byte as u32).wrapping_mul(0x01000193);
     }
     hash
+}
+
+/// STREAMINFO is rewritten on close. Hash all other bytes with this region
+/// normalized to zero; its final bytes have a separate recorded checksum.
+pub fn recording_hash(mut hash: u32, offset: u64, bytes: &[u8]) -> u32 {
+    for (n, byte) in bytes.iter().enumerate() {
+        let value = if !cfg!(feature = "wav") && (8..42).contains(&(offset + n as u64)) {
+            0
+        } else {
+            *byte
+        };
+        hash = (hash ^ u32::from(value)).wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+pub fn valid_streaminfo(bytes: &[u8], samples: u64) -> bool {
+    if bytes.len() != 34 {
+        return false;
+    }
+    let properties = u64::from_be_bytes(bytes[10..18].try_into().unwrap());
+    u16::from_be_bytes(bytes[..2].try_into().unwrap()) == FLAC_BLOCK as u16
+        && u16::from_be_bytes(bytes[2..4].try_into().unwrap()) == FLAC_BLOCK as u16
+        && properties >> 44 == u64::from(SAMPLE_RATE)
+        && (properties >> 41) & 7 == 0
+        && (properties >> 36) & 31 == u64::from(SOURCE_BITS - 1)
+        && properties & ((1 << 36) - 1) == samples
 }
 
 pub fn valid_minute_header(h: &[u8]) -> bool {
@@ -76,10 +114,24 @@ mod tests {
     #[test]
     fn storage_gate_preserves_aardwolf_reserve_and_cluster_rounding() {
         let cluster = 32768;
-        let needed = config::LOG_RESERVE_BYTES + FILE_BYTES.div_ceil(cluster) * cluster + 1024;
+        let needed = config::LOG_RESERVE_BYTES + FILE_BUDGET.div_ceil(cluster) * cluster + 1024;
         assert!(!policy::can_start_audio(needed - 1, cluster as u32, 1024));
         assert!(policy::can_start_audio(needed, cluster as u32, 1024));
         assert!(!policy::can_start_audio(u64::MAX - 1, 1, u64::MAX - 1));
+    }
+    #[test]
+    fn flac_streaminfo_requires_mono_24bit_exact_minute_and_block_size() {
+        let mut info = [0u8; 34];
+        info[..2].copy_from_slice(&(FLAC_BLOCK as u16).to_be_bytes());
+        info[2..4].copy_from_slice(&(FLAC_BLOCK as u16).to_be_bytes());
+        let properties = ((SAMPLE_RATE as u64) << 44) | (23u64 << 36) | SEGMENT_SAMPLES as u64;
+        info[10..18].copy_from_slice(&properties.to_be_bytes());
+        assert!(valid_streaminfo(&info, 960000));
+        info[17] ^= 1;
+        assert!(!valid_streaminfo(&info, 960000));
+        info[17] ^= 1;
+        info[13] ^= 0x10;
+        assert!(!valid_streaminfo(&info, 960000));
     }
     #[test]
     fn utc_gate_remains_next_minute_and_full_minute_pcm() {
