@@ -25,6 +25,7 @@ Read these decisions in order:
 | [L4-010: Mono DFSDM audio](ADR-L4-010-dfsdm-mono-audio.md) | 16 kHz mono DMA, signed 24-bit PCM, shared AudioSource and RAM/WAV evidence |
 | [L4-011: Mono WAV and syslog integration](ADR-L4-011-mono-wav-and-syslog.md) | One-minute SD recordings, two concurrent streams, simulated time and L4 filesystem staging |
 | [L4-012: Aardwolf Evo port](ADR-L4-012-aardwolf-evo-port.md) | Real GPS/PPS, mono WAV/syslog, shared calibration and M10 software standby/wake |
+| [L4-013: Fault UI, telemetry and audio correction](ADR-L4-013-fault-ui-telemetry-audio.md) | Evo buzzer, latched SD-removal errors, CPU/syslog health, PCM scaling and revised decimation |
 
 The most consequential correction to the initial brief is **128 KiB physical
 SRAM, not 192 KiB**, for the STM32L476RGT6. The flash limit is 1 MiB.

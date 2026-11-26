@@ -30,11 +30,15 @@ pub fn logger() -> Logger {
     LOGGING.register("L4Record")
 }
 pub fn log(args: core::fmt::Arguments<'_>) {
-    defmt::assert!(
-        logger().log_at(Instant::now(), raylar_logging_service::LogLevel::Info, args)
-            == LogOutcome::Enqueued,
-        "AARDWOLF L4 FAIL syslog queue/truncation"
-    );
+    if crate::fault::active() {
+        return;
+    }
+    if logger().log_at(Instant::now(), raylar_logging_service::LogLevel::Info, args)
+        != LogOutcome::Enqueued
+    {
+        // The logging service counts dropped/truncated messages for telemetry.
+        defmt::warn!("AARDWOLF L4 syslog queue full or message truncated");
+    }
 }
 pub fn opened() {
     let n = OPEN.fetch_add(1, Relaxed) + 1;
@@ -49,6 +53,7 @@ pub fn closed() {
 pub enum RecordError {
     Storage(StorageError),
     BenchComplete,
+    FaultLatched,
 }
 pub struct Recording {
     pub opened: u32,
@@ -79,8 +84,13 @@ impl RecordingStorage for Recording {
     ) -> Result<StreamHandle, RecordError> {
         // The preceding segment has already been finalized by AudioRecorder.
         // Stop the bench before allocating another file, without cancelling I/O.
-        if cfg!(feature = "bench-gps-cycle") && crate::gnss::BENCH_FINISH.load(Relaxed) {
+        if (cfg!(feature = "bench-gps-cycle") && crate::gnss::BENCH_FINISH.load(Relaxed))
+            || (cfg!(feature = "bench-audio-ui") && self.opened >= 2)
+        {
             return Err(RecordError::BenchComplete);
+        }
+        if crate::fault::active() {
+            return Err(RecordError::FaultLatched);
         }
         defmt::assert!(
             !cfg!(feature = "bench-gps-cycle") || self.opened < BENCH_SEGMENTS as u32,
@@ -125,6 +135,9 @@ impl RecordingStorage for Recording {
         stream: StreamHandle,
         bytes: &[u8],
     ) -> Result<(), RecordError> {
+        if crate::fault::active() {
+            return Err(RecordError::FaultLatched);
+        }
         let start = Instant::now();
         STORAGE
             .lock()
@@ -145,6 +158,9 @@ impl RecordingStorage for Recording {
         offset: u64,
         bytes: &[u8],
     ) -> Result<(), RecordError> {
+        if crate::fault::active() {
+            return Err(RecordError::FaultLatched);
+        }
         // Every finished segment must be a complete minute, so these RIFF
         // patches equal the original header and do not change its running hash.
         defmt::assert!(
@@ -161,6 +177,9 @@ impl RecordingStorage for Recording {
             .map_err(RecordError::Storage)
     }
     async fn finish_audio(&mut self, stream: StreamHandle) -> Result<(), RecordError> {
+        if crate::fault::active() {
+            return Err(RecordError::FaultLatched);
+        }
         STORAGE
             .lock()
             .await
@@ -196,16 +215,24 @@ pub struct Syslog {
     pub hash: u32,
     pub old_length: u64,
 }
+#[derive(Debug, defmt::Format)]
+pub enum LogError {
+    Storage(StorageError),
+    FaultLatched,
+}
 impl LogSink for Syslog {
-    type Error = StorageError;
-    async fn append(&mut self, bytes: &[u8]) -> Result<(), StorageError> {
+    type Error = LogError;
+    async fn append(&mut self, bytes: &[u8]) -> Result<(), LogError> {
+        if crate::fault::active() {
+            return Err(LogError::FaultLatched);
+        }
         if self
             .old_length
             .saturating_add(self.bytes)
             .saturating_add(bytes.len() as u64)
             > aardwolf_l4::config::LOG_BUDGET_BYTES
         {
-            return Err(StorageServiceError::OutOfSpace);
+            return Err(LogError::Storage(StorageServiceError::OutOfSpace));
         }
         STORAGE
             .lock()
@@ -213,12 +240,16 @@ impl LogSink for Syslog {
             .as_mut()
             .unwrap()
             .write(self.stream, bytes)
-            .await?;
+            .await
+            .map_err(LogError::Storage)?;
         self.hash = hash_bytes(self.hash, bytes);
         self.bytes += bytes.len() as u64;
         Ok(())
     }
-    async fn flush(&mut self) -> Result<(), StorageError> {
+    async fn flush(&mut self) -> Result<(), LogError> {
+        if crate::fault::active() {
+            return Err(LogError::FaultLatched);
+        }
         STORAGE
             .lock()
             .await
@@ -226,15 +257,20 @@ impl LogSink for Syslog {
             .unwrap()
             .flush(self.stream)
             .await
+            .map_err(LogError::Storage)
     }
-    async fn checkpoint(&mut self) -> Result<(), StorageError> {
+    async fn checkpoint(&mut self) -> Result<(), LogError> {
+        if crate::fault::active() {
+            return Err(LogError::FaultLatched);
+        }
         STORAGE
             .lock()
             .await
             .as_mut()
             .unwrap()
             .checkpoint(self.stream)
-            .await?;
+            .await
+            .map_err(LogError::Storage)?;
         if AUDIO_OPEN.load(Relaxed) {
             LOG_CHECKPOINTS_DURING_AUDIO.fetch_add(1, Relaxed);
         }

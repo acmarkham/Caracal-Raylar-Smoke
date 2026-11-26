@@ -71,7 +71,7 @@ impl Dfsdm {
         write(FLT_CR1, FILTER_CONFIG | 1 | (1 << 17)); // Software regular start, self-clearing.
         defmt::assert!(read(CH0) == 0x8018_0000);
         defmt::assert!(read(CH1) == 0xc4 && read(CH1 + 4) == 0x40);
-        defmt::assert!(read(FLT_FCR) == 0xa031_0003);
+        defmt::assert!(read(FLT_FCR) == 0x80c7_0000);
         defmt::assert!(read(FLT_CR1) == (FILTER_CONFIG | 1));
         defmt::info!("L4 AUDIO registers ch0={:08x} ch1={:08x} ch1_shift={:08x} cr1={:08x} cr2={:08x} fcr={:08x} rcc_ccipr={:08x}",read(CH0),read(CH1),read(CH1+4),read(FLT_CR1),read(FLT_CR2),read(FLT_FCR),pac::RCC.ccipr().read().0);
     }

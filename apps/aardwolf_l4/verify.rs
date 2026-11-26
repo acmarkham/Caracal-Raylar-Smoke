@@ -38,6 +38,19 @@ pub async fn files(
         let mut maximum = i32::MIN;
         let mut low_or = 0u8;
         let mut low_and = 255u8;
+        let mut tones = [
+            tone::Tone::new(tone::HZ800),
+            tone::Tone::new(tone::HZ1000),
+            tone::Tone::new(tone::HZ1200),
+            tone::Tone::new(tone::HZ2000),
+            tone::Tone::new(tone::HZ2200),
+            tone::Tone::new(tone::HZ3000),
+            tone::Tone::new(tone::HZ3200),
+        ];
+        let mut dc = 0;
+        let mut sum = 0i64;
+        let mut squares = 0u128;
+        let mut sample_index = 0u32;
         loop {
             let count = file.read(&mut fs, buffer).await.unwrap().unwrap_or(0);
             if count == 0 {
@@ -47,18 +60,64 @@ pub async fn files(
             total += count as u64;
             hash = hash_bytes(hash, &buffer[..count]);
             for bytes in buffer[..count].chunks_exact(4) {
-                let sample = i32::from_le_bytes(bytes.try_into().unwrap());
-                defmt::assert!((-8_388_608..=8_388_607).contains(&sample));
+                let packed = i32::from_le_bytes(bytes.try_into().unwrap());
+                defmt::assert!(packed & 255 == 0);
+                let sample = packed >> 8;
                 minimum = minimum.min(sample);
                 maximum = maximum.max(sample);
+                sum += i64::from(sample);
+                squares += (i64::from(sample) * i64::from(sample)) as u128;
                 low_or |= sample as u8;
                 low_and &= sample as u8;
+                if cfg!(feature = "bench-audio-ui")
+                    && n == 0
+                    && (120_000..123_200).contains(&sample_index)
+                {
+                    if sample_index == 120_000 {
+                        dc = sample;
+                    }
+                    for tone in &mut tones {
+                        tone.add(sample - dc);
+                    }
+                }
+                sample_index += 1;
             }
         }
         file.close(&mut fs).await.unwrap();
         defmt::assert!(total == FILE_BYTES && hash == recording.hashes[n]);
         defmt::assert!(maximum as i64 - minimum as i64 > 32 && low_or ^ low_and != 0);
+        let count = u128::from(sample_index);
+        let ac_power = (squares * count - sum.unsigned_abs() as u128 * sum.unsigned_abs() as u128)
+            / (count * count);
         defmt::info!("AARDWOLF L4 VERIFY WAV PASS index={} path={} bytes={} samples=960000 hash={:08x} min={} max={} low_byte_var={:02x}", n + 1, path.as_str(), total, hash, minimum, maximum, low_or ^ low_and);
+        let clipped = minimum == -8_388_608 || maximum == 8_388_607;
+        defmt::assert!(!clipped);
+        defmt::info!(
+            "AARDWOLF L4 PCM24 mean={} ac_mean_power={} clipped={}",
+            sum / i64::from(sample_index),
+            ac_power as u64,
+            clipped
+        );
+        if cfg!(feature = "bench-audio-ui") && n == 0 {
+            let powers = tones.map(|tone| tone.power());
+            defmt::info!(
+                "AARDWOLF L4 ACOUSTIC 800Hz={} 1000Hz={} 1200Hz={} 2000Hz={} 2200Hz={} 3000Hz={} 3200Hz={} window_samples=3200",
+                powers[0],
+                powers[1],
+                powers[2], powers[3], powers[4], powers[5], powers[6]
+            );
+            let peak = powers[1].max(powers[3]).max(powers[5]);
+            let noise = powers[0]
+                .max(powers[2])
+                .max(powers[4])
+                .max(powers[6])
+                .max(1);
+            defmt::info!(
+                "AARDWOLF L4 ACOUSTIC strong={} peak_to_neighbor={} listening_required=true",
+                peak > 10 * noise,
+                peak / noise
+            );
+        }
     }
     let mut file = fs
         .open("/syslog.txt", OpenOptions::new().read(true))
@@ -73,6 +132,7 @@ pub async fn files(
     let mut closed = 0u32;
     let mut real_marker = false;
     let mut complete_marker = false;
+    let mut cpu = 0;
     let mut line = String::<320>::new();
     loop {
         let count = file.read(&mut fs, buffer).await.unwrap().unwrap_or(0);
@@ -95,6 +155,7 @@ pub async fn files(
                 closed += u32::from(line.contains("segment_closed"));
                 real_marker |= line.contains("REAL-GPS");
                 complete_marker |= line.contains("bench_complete");
+                cpu += u32::from(line.contains("cpu usage="));
                 line.clear();
             } else {
                 defmt::assert!(byte.is_ascii());
@@ -105,7 +166,16 @@ pub async fn files(
     file.close(&mut fs).await.unwrap();
     defmt::assert!(line.is_empty() && total == log.bytes && hash == log.hash);
     defmt::assert!(
-        heartbeats >= 175 && closed == recording.opened && real_marker && complete_marker
+        heartbeats
+            >= if cfg!(feature = "bench-audio-ui") {
+                120
+            } else {
+                175
+            }
+            && closed == recording.opened
+            && real_marker
+            && complete_marker
+            && cpu >= 2
     );
     defmt::info!("AARDWOLF L4 VERIFY SYSLOG PASS path=/syslog.txt old_bytes={} appended_bytes={} hash={:08x} lines={} heartbeats={} closed_markers={} real_gps=true", log.old_length, total, hash, lines, heartbeats, closed);
 }

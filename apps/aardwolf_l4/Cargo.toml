@@ -17,21 +17,21 @@ bench = false
 
 [features]
 default = ["firmware"]
-firmware = ["caracal-evo/firmware", "dep:embassy-stm32", "dep:embassy-executor", "dep:embassy-sync", "dep:embassy-futures", "dep:defmt", "dep:defmt-rtt", "dep:panic-probe", "dep:cortex-m", "dep:cortex-m-rt", "dep:static_cell", "dep:embedded-alloc", "dep:exfat-slim", "dep:embedded-io-async", "dep:raylar-audiosource", "dep:raylar-audio-recorder-service", "dep:raylar-storage-service", "dep:raylar-logging-service", "dep:raylar-location-service"]
+firmware = ["caracal-evo/firmware", "dep:embassy-stm32", "dep:embassy-executor", "dep:embassy-sync", "dep:embassy-futures", "dep:defmt", "dep:defmt-rtt", "dep:cortex-m", "dep:cortex-m-rt", "dep:static_cell", "dep:embedded-alloc", "dep:exfat-slim", "dep:embedded-io-async", "dep:raylar-audiosource", "dep:raylar-audio-recorder-service", "dep:raylar-storage-service", "dep:raylar-logging-service", "dep:raylar-location-service"]
 # Only the off interval is shortened to 30 s. Estimator and tracking policy match U5.
 bench-gps-cycle = []
+bench-audio-ui = []
 
 [dependencies]
 aligned = "0.4.2"
 caracal-evo = { path = "../../crates/board/caracal_evo" }
 embassy-stm32 = { version = "0.6.0", features = ["defmt", "memory-x", "stm32l476rg", "time-driver-tim5", "unstable-pac"], optional = true }
-embassy-executor = { workspace = true, optional = true }
+embassy-executor = { workspace = true, features = ["trace"], optional = true }
 embassy-time.workspace = true
 embassy-sync = { version = "0.7.2", optional = true }
 embassy-futures = { version = "0.1.2", optional = true }
 defmt = { workspace = true, optional = true }
 defmt-rtt = { workspace = true, features = ["disable-blocking-mode"], optional = true }
-panic-probe = { workspace = true, optional = true }
 cortex-m = { workspace = true, optional = true }
 cortex-m-rt = { workspace = true, optional = true }
 static_cell = { workspace = true, optional = true }

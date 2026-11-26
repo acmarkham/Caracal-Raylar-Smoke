@@ -2,13 +2,17 @@
 #![no_std]
 #![no_main]
 mod audio;
+mod diagnostics;
+mod fault;
 mod gnss;
 mod setup;
 mod streams;
+mod ui;
 mod verify;
 use aardwolf_l4::*;
 use caracal_evo::{capture, dfsdm, sd, stack_probe};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_stm32::{
     gpio::{Input, Level, Output, Pull, Speed},
@@ -27,7 +31,6 @@ use raylar_logging_service::{LoggingResources, LoggingService};
 use raylar_storage_service::StorageLayout;
 use raylar_time_service::{TimeResources, UtcTimestamp};
 use static_cell::{ConstStaticCell, StaticCell};
-use {defmt_rtt as _, panic_probe as _};
 
 const AUDIO_CAPACITY: usize = 4096;
 static AUDIO: AudioSource<AUDIO_CAPACITY, 1> =
@@ -93,13 +96,17 @@ async fn main(spawner: Spawner) -> ! {
     config.rcc.mux.clk48sel = rcc::mux::Clk48sel::PLLSAI1_Q;
     config.rcc.ls = LsConfig::off();
     let p = embassy_stm32::init(config);
-    let _red = Output::new(p.PB11, Level::High, Speed::Low);
+    let red = Output::new(p.PB11, Level::High, Speed::Low);
     let green = Output::new(p.PC3, Level::High, Speed::Low);
     let blue = Output::new(p.PC1, Level::High, Speed::Low);
     let detect = Input::new(p.PC6, Pull::Up);
     let enable = Input::new(p.PB4, Pull::None);
+    let buzzer = caracal_evo::buzzer::Buzzer::new(p.TIM8, p.PB14);
+    spawner.spawn(ui::task(red, blue, green, detect, buzzer).unwrap());
     Timer::after_millis(100).await;
-    defmt::assert!(detect.is_low(), "AARDWOLF L4 no SD card");
+    if fault::active() {
+        fault::park(fault::Fault::SdRemoved).await;
+    }
     defmt::assert!(pac::TIM5.psc().read() == 79);
     defmt::assert!(rcc::clocks(&p.RCC).sys.to_hertz().unwrap().0 == 80_000_000);
     defmt::assert!(rcc::clocks(&p.RCC).pllsai1_q.to_hertz().unwrap().0 == 48_000_000);
@@ -126,7 +133,6 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(
         gnss::driver_task(gnss::Serial::new(uart), gnss::Pps { _chain: chain }, enable).unwrap(),
     );
-    spawner.spawn(led_task(blue, green).unwrap());
     GPS.command_sender()
         .send(raylar_drivers::gps::GpsCommand::Start)
         .await;
@@ -183,8 +189,9 @@ async fn main(spawner: Spawner) -> ! {
         }
     ));
     streams::log(format_args!("policy mono=16000 wav_bits=32 source_bits=24 segment_s=60 gps_on_s=60 gps_off_s={} calibration=default_600s",config::GPS_OFF_SECONDS));
-    Phase(logging.drain()).await.unwrap();
-    Phase(logging.flush()).await.unwrap();
+    if Phase(logging.drain()).await.is_err() || Phase(logging.flush()).await.is_err() {
+        fault::park(fault::Fault::Storage).await;
+    }
     let mut recorder = AudioRecorder::<_, _, AUDIO_CAPACITY, 1, 4096>::new(
         &AUDIO,
         streams::Recording::new(),
@@ -195,6 +202,7 @@ async fn main(spawner: Spawner) -> ! {
         },
     )
     .unwrap();
+    spawner.spawn(diagnostics::cpu_task().unwrap());
     spawner.spawn(audio::capture(p.PC2, p.PB12, p.DMA1_CH4).unwrap());
     let (_, syslog) = Phase(embassy_futures::join::join(
         recording_session(&mut recorder),
@@ -202,18 +210,27 @@ async fn main(spawner: Spawner) -> ! {
     ))
     .await;
     audio::DONE.wait().await;
-    defmt::assert!(cfg!(feature = "bench-gps-cycle") && gnss::BENCH_FINISH.load(Relaxed));
+    defmt::assert!(
+        cfg!(feature = "bench-audio-ui")
+            || (cfg!(feature = "bench-gps-cycle") && gnss::BENCH_FINISH.load(Relaxed))
+    );
     defmt::assert!(streams::OPEN.load(Relaxed) == 0 && streams::MAX_OPEN.load(Relaxed) == 2);
     defmt::assert!(audio::DMA_ERRORS.load(Relaxed) == 0 && capture::FAULTS.load(Relaxed) == 0);
     defmt::assert!(
         streams::CLOSED.load(Relaxed) == recorder.storage().opened
-            && streams::CLOSED.load(Relaxed) >= 10
+            && streams::CLOSED.load(Relaxed)
+                >= if cfg!(feature = "bench-audio-ui") {
+                    2
+                } else {
+                    10
+                }
     );
     defmt::assert!(
-        TIME.time_state().frequency_calibration_locked
-            && GPS.stats().num_phase_qualified_shutdowns > 0
-            && gnss::SLEEPS.load(Relaxed) >= 2
-            && gnss::VERSIONS.load(Relaxed) >= 3
+        cfg!(feature = "bench-audio-ui")
+            || (TIME.time_state().frequency_calibration_locked
+                && GPS.stats().num_phase_qualified_shutdowns > 0
+                && gnss::SLEEPS.load(Relaxed) >= 2
+                && gnss::VERSIONS.load(Relaxed) >= 3)
     );
     let device = Phase(setup::unmount()).await;
     Phase(verify::files(device, recorder.storage(), &syslog)).await;
@@ -250,9 +267,10 @@ async fn recording_session(recorder: &mut Recorder) {
     audio::START.signal(start);
     // Prepare the filesystem/cache and header before any PCM is published.
     // Large-card bitmap scans and first-directory allocation have no DMA deadline.
-    Phase(recorder.start_at(UtcTimestamp::from_micros(next)))
-        .await
-        .unwrap();
+    if let Err(error) = Phase(recorder.start_at(UtcTimestamp::from_micros(next))).await {
+        defmt::error!("AARDWOLF L4 prepare {}", error);
+        fault::park(fault::Fault::Storage).await;
+    }
     defmt::assert!(
         Instant::now() < start,
         "AARDWOLF L4 storage preparation missed UTC start"
@@ -278,7 +296,7 @@ async fn recording_session(recorder: &mut Recorder) {
                 MAX_BACKLOG.fetch_max(progress.backlog_samples as u32, Relaxed);
             }
             Err(AudioRecorderError::Storage(streams::RecordError::BenchComplete))
-                if cfg!(feature = "bench-gps-cycle") =>
+                if cfg!(any(feature = "bench-gps-cycle", feature = "bench-audio-ui")) =>
             {
                 streams::log(format_args!(
                     "bench_complete segments={} dma_errors=0 dropped_samples=0 real_gps=true",
@@ -289,7 +307,14 @@ async fn recording_session(recorder: &mut Recorder) {
                 streams::STOP_LOG.store(true, Relaxed);
                 return;
             }
-            Err(error) => defmt::panic!("AARDWOLF L4 recorder {}", error),
+            Err(error) => {
+                defmt::error!("AARDWOLF L4 recorder {}", error);
+                fault::park(match error {
+                    AudioRecorderError::Storage(_) => fault::Fault::Storage,
+                    _ => fault::Fault::Audio,
+                })
+                .await;
+            }
         }
     }
 }
@@ -303,6 +328,9 @@ async fn logging_session(
     let mut cycle = gnss::CycleCheck::new();
     let mut versions = 0;
     loop {
+        if fault::active() {
+            core::future::pending::<()>().await;
+        }
         let now = Instant::now();
         if now >= next_heartbeat {
             heartbeat += 1;
@@ -353,9 +381,13 @@ async fn logging_session(
             }
             next_heartbeat += Duration::from_secs(1);
         }
-        logging.drain().await.unwrap();
+        if logging.drain().await.is_err() {
+            fault::park(fault::Fault::Storage).await;
+        }
         if now >= next_flush {
-            logging.checkpoint().await.unwrap();
+            if logging.checkpoint().await.is_err() {
+                fault::park(fault::Fault::Storage).await;
+            }
             next_flush += Duration::from_secs(10);
         }
         if streams::STOP_LOG.load(Relaxed) {
@@ -363,8 +395,9 @@ async fn logging_session(
         }
         Timer::after_millis(20).await;
     }
-    logging.drain().await.unwrap();
-    logging.flush().await.unwrap();
+    if logging.drain().await.is_err() || logging.flush().await.is_err() {
+        fault::park(fault::Fault::Storage).await;
+    }
     let stats = logging.stats();
     defmt::assert!(
         stats.dropped_messages == 0
@@ -373,46 +406,18 @@ async fn logging_session(
             && stats.queue_depth == 0
     );
     let syslog = logging.into_sink();
-    streams::STORAGE
+    if streams::STORAGE
         .lock()
         .await
         .as_mut()
         .unwrap()
         .finish(syslog.stream)
         .await
-        .unwrap();
+        .is_err()
+    {
+        fault::park(fault::Fault::Storage).await;
+    }
     streams::LOG_OPEN.store(false, Relaxed);
     streams::closed();
     syslog
-}
-
-#[embassy_executor::task]
-async fn led_task(mut blue: Output<'static>, mut green: Output<'static>) {
-    let mut observed = 0;
-    loop {
-        let gps = GPS.stats();
-        let searching = matches!(
-            gps.operating_state,
-            raylar_drivers::gps::OperatingState::Searching
-                | raylar_drivers::gps::OperatingState::Reacquiring
-        );
-        green.set_level(
-            if policy::gps_green_on(
-                gps.operating_state.is_tracking(),
-                searching,
-                &TIME.time_state(),
-                &mut observed,
-            ) {
-                Level::Low
-            } else {
-                Level::High
-            },
-        );
-        blue.set_level(if streams::AUDIO_OPEN.load(Relaxed) {
-            Level::Low
-        } else {
-            Level::High
-        });
-        Timer::after_millis(50).await;
-    }
 }

@@ -55,7 +55,6 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "exfat-slim",
  "heapless 0.8.0",
- "panic-probe",
  "raylar-audio-recorder-service",
  "raylar-audiosource",
  "raylar-drivers",

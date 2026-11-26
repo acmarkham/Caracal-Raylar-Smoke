@@ -1,6 +1,6 @@
 //! Local composition of the verified 05 DFSDM adapter and Embassy DMA ring.
 use crate::{dfsdm, AUDIO};
-use caracal_evo::pcm::{pcm24, start_offset, Stats, HALF, RING, SAMPLE_RATE, WARMUP_BLOCKS};
+use caracal_evo::pcm::{start_offset, wav_pcm32, Stats, HALF, RING, SAMPLE_RATE, WARMUP_BLOCKS};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use embassy_stm32::{
     bind_interrupts,
@@ -75,10 +75,14 @@ pub async fn capture(
     let mut process = [0u32; HALF];
     let mut prior_stamp = None;
     while !STOP.load(Relaxed) {
-        with_timeout(Duration::from_secs(1), ring.read_exact(&mut process))
-            .await
-            .expect("AARDWOLF L4 FAIL audio stalled")
-            .expect("AARDWOLF L4 FAIL audio DMA overwrite");
+        if !matches!(
+            with_timeout(Duration::from_secs(1), ring.read_exact(&mut process)).await,
+            Ok(Ok(_))
+        ) {
+            DMA_ERRORS.fetch_add(1, Relaxed);
+            crate::fault::latch(crate::fault::Fault::Audio);
+            break;
+        }
         let begun = Instant::now();
         block = block.wrapping_add(1);
         defmt::assert!(
@@ -108,6 +112,14 @@ pub async fn capture(
                 continue;
             }
             let mut stats = Stats::default();
+            if PUBLISHED_BLOCKS.load(Relaxed) == 0 {
+                defmt::info!(
+                    "AARDWOLF L4 first PCM ticks={} publish_at={} offset={}",
+                    first + offset as u64 * 1_000_000 / u64::from(SAMPLE_RATE),
+                    publish_at,
+                    offset
+                );
+            }
             for word in &process {
                 stats.add(*word);
             }
@@ -132,7 +144,7 @@ pub async fn capture(
                 .write_from_fn(
                     HALF - offset,
                     first + offset as u64 * 1_000_000 / u64::from(SAMPLE_RATE),
-                    |i| pcm24(process[i + offset]),
+                    |i| wav_pcm32(process[i + offset]),
                 )
                 .unwrap();
             PUBLISHED_BLOCKS.fetch_add(1, Relaxed);

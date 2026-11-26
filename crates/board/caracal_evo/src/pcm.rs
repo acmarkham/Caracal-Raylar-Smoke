@@ -3,9 +3,10 @@
 pub const SYS_HZ: u32 = 80_000_000;
 pub const CLOCK_DIVIDER: u32 = 25;
 pub const PDM_HZ: u32 = SYS_HZ / CLOCK_DIVIDER;
-pub const SINC_ORDER: u32 = 5;
-pub const FOSR: u32 = 50;
-pub const IOSR: u32 = 4;
+// Decimate directly to 16 kHz: avoid a weak boxcar-only final 64 -> 16 kHz stage.
+pub const SINC_ORDER: u32 = 4;
+pub const FOSR: u32 = 200;
+pub const IOSR: u32 = 1;
 pub const RIGHT_SHIFT: u32 = 8;
 pub const SAMPLE_RATE: u32 = PDM_HZ / FOSR / IOSR;
 pub const CIC_GAIN: u64 = (FOSR as u64).pow(SINC_ORDER) * IOSR as u64;
@@ -28,6 +29,12 @@ pub fn start_offset(first_sample_us: u64, start_us: u64) -> usize {
 /// Same conversion used by the U5 Aardwolf producer: signed 24-bit PCM in i32.
 pub const fn pcm24(word: u32) -> i32 {
     (word as i32) >> 8
+}
+
+/// Full-scale signed PCM32 for WAV. The 24 significant bits are left aligned;
+/// the low byte is zero, never DFSDM status/channel metadata.
+pub const fn wav_pcm32(word: u32) -> i32 {
+    (word & 0xffff_ff00) as i32
 }
 
 #[derive(Clone, Copy)]
@@ -134,10 +141,27 @@ mod tests {
         assert_eq!(PDM_HZ, 3_200_000);
         assert_eq!(SAMPLE_RATE, 16_000);
         assert_eq!(SYS_HZ % (CLOCK_DIVIDER * FOSR * IOSR), 0);
-        assert!(FOSR <= 73);
-        assert_eq!(CIC_GAIN, 1_250_000_000);
+        assert_eq!(SINC_ORDER, 4);
+        assert!(FOSR <= 215);
+        assert_eq!(CIC_GAIN, 1_600_000_000);
         assert!(CIC_GAIN <= i32::MAX as u64 && CIC_GAIN >> RIGHT_SHIFT < (1 << 23));
         assert_eq!(QUALIFICATION_BLOCKS as usize * HALF, 960_000);
+    }
+    #[test]
+    fn wav_full_scale_sign_and_little_endian_packing_remove_metadata() {
+        for (raw, expected) in [
+            (0x7fffffff, 0x7fffff00i32),
+            (0x80000007, i32::MIN),
+            (0xffffff01, -256),
+            (0x00000107, 256),
+            (7, 0),
+        ] {
+            let pcm = wav_pcm32(raw);
+            assert_eq!(pcm, expected);
+            assert_eq!(pcm >> 8, pcm24(raw));
+            assert_eq!(pcm.to_le_bytes()[0], 0);
+            assert_eq!(i32::from_le_bytes(pcm.to_le_bytes()), expected);
+        }
     }
     #[test]
     fn full_scale_power_needs_more_than_32_bits_and_preserves_sign() {
