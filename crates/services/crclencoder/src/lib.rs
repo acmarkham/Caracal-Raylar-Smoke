@@ -1,21 +1,25 @@
 #![no_std]
 //! Bounded CRCL v1 spatial codec. MIC1 is immutable; other channels are transformed in-place.
 
+#[cfg(feature = "loop-benchmark")]
+pub mod benchmark;
 mod bits;
 mod cheap;
 mod format;
 mod quantize;
 mod sha256;
-#[cfg(feature = "loop-benchmark")]
-pub mod benchmark;
 
 pub use cheap::{estimate_rice_k, shift_for_peak};
-pub use format::{crc32c, segment_identity, Completion, Encoder, Header, TimeAnchor};
-pub use quantize::{quantize_ratio, Transform};
+pub use format::{crc32c, segment_identity, ChannelEncoder, Completion, Header, TimeAnchor};
+pub use quantize::{quantize_ratio, ChannelTransform};
 pub use sha256::Sha256;
 
+/// Original six-channel profile, retained for U5 callers.
+pub type Encoder = ChannelEncoder<6>;
+pub type Transform<'a> = ChannelTransform<'a, 6>;
 pub const CHANNELS: usize = 6;
 pub const HEADER_CAPACITY: usize = 4096;
+pub const COMPACT_HEADER_CAPACITY: usize = 1536;
 pub const fn record_capacity(block: usize, bits: u8) -> usize {
     96 + 5 * (block * bits as usize).div_ceil(8)
 }
@@ -113,6 +117,31 @@ impl Config {
             cheap_record_capacity(frames, self.bits)
         } else {
             record_capacity(frames, self.bits)
+        }
+    }
+    pub const fn record_capacity_for_channels(self, frames: usize, channels: usize) -> usize {
+        assert!(matches!(channels, 4 | 6));
+        let side = channels - 1;
+        if self.is_cheap() {
+            28 + side * 12
+                + side
+                    * (self.bits as usize + frames.saturating_sub(1) * (self.bits as usize + 2))
+                        .div_ceil(8)
+        } else {
+            36 + side * 12 + side * (frames * self.bits as usize).div_ceil(8)
+        }
+    }
+    pub const fn workspace_capacity_for_channels(self, channels: usize) -> usize {
+        let n = self.record_capacity_for_channels(self.block_frames, channels);
+        let header = if channels == 6 {
+            HEADER_CAPACITY
+        } else {
+            COMPACT_HEADER_CAPACITY
+        };
+        if n > header {
+            n
+        } else {
+            header
         }
     }
     pub const fn workspace_capacity(self) -> usize {

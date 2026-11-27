@@ -1,7 +1,7 @@
 //! Experimental independent-channel quantization and temporal Rice profile.
 //! Only scalar state; all PCM transforms use native i32 in the existing block.
 use crate::bits::fold;
-use crate::{Channel, Error, Representation, Transform};
+use crate::{Channel, ChannelTransform, Error, Representation};
 use raylar_stage_profiling::{sample, Span, Stage};
 
 #[cfg(any(test, feature = "loop-benchmark"))]
@@ -31,10 +31,10 @@ pub fn estimate_rice_k(sum_folded: u32, residuals: usize) -> u8 {
     (31 - mean.leading_zeros()) as u8
 }
 
-impl Transform<'_> {
+impl<const N: usize> ChannelTransform<'_, N> {
     pub(crate) fn advance_cheap(&mut self, mut budget: usize) -> Result<bool, Error> {
-        let frames = self.pcm.len() / 6;
-        while budget != 0 && self.channel < 6 {
+        let frames = self.pcm.len() / N;
+        while budget != 0 && self.channel < N {
             // Bound the work once per phase/channel chunk. The slice and stride
             // skip MIC1 and avoid rebuilding/checking a scalar index each time.
             let start = self.offset;
@@ -44,9 +44,9 @@ impl Transform<'_> {
             if !self.quantizing {
                 let bound = self.config.max_abs_pcm;
                 let mut peak = self.peak;
-                for (n, &value) in self.pcm[start * 6 + channel..end * 6]
+                for (n, &value) in self.pcm[start * N + channel..end * N]
                     .iter()
-                    .step_by(6)
+                    .step_by(N)
                     .enumerate()
                 {
                     let sampled = sample(start + n + channel * 7);
@@ -66,9 +66,9 @@ impl Transform<'_> {
                 let half = if shift == 0 { 0 } else { 1 << (shift - 1) };
                 let mut previous = self.previous;
                 let mut sum_folded = self.sum_folded;
-                for (n, value) in self.pcm[start * 6 + channel..end * 6]
+                for (n, value) in self.pcm[start * N + channel..end * N]
                     .iter_mut()
-                    .step_by(6)
+                    .step_by(N)
                     .enumerate()
                 {
                     let sampled = sample(start + n + channel * 7);
@@ -112,6 +112,6 @@ impl Transform<'_> {
                 }
             }
         }
-        Ok(self.channel == 6)
+        Ok(self.channel == N)
     }
 }

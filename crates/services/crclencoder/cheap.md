@@ -45,6 +45,12 @@ All integer fields remain little endian and bit payloads remain MSB first. The m
 | TIME | 28-byte common prefix followed by time metadata TLVs, no CRC. |
 | END | 28-byte common prefix followed by total frames `u64`, reference file bytes `u64`, DATA count `u32`, completion status `u32`: 52 bytes total, no SHA-256 or CRC. |
 
+The Evo four-channel profile declares `[32,1,4,3]` at header bytes 36..40,
+with four entries in channel-order TLV 6. Its DATA prefix carries three
+descriptors (64 bytes), and channel IDs are 2, 3 and 4. Its 256-frame/10-bit
+DATA bound is 1216 bytes. Six-channel headers/descriptors and output are
+unchanged. The same independent-channel transform and quantization apply.
+
 Segment identity is the explicit 16-byte tuple `(UTC microseconds u64, first source frame u64)`. Device and boot identity remain mandatory metadata and reference-comment checks. Metadata, UTC stems/hourly folders, sequence and sample indices, shared rotation, admission and failure handling continue through the paired recorder. The recorder skips reference hashing and hashed segment identity entirely for v2. Standard FLAC frame CRCs remain part of the lossless reference format.
 
 The Python decoder detects the version automatically. V2 retains bounds, sequence, sample-count, metadata and padding checks, but does not detect arbitrary payload corruption or verify reference PCM contents. Reports explicitly contain `crc_present=false` and `digest_verified=false`. `--recover` exposes a structurally checked prefix without claiming checksum validation. Precision and power-of-two scaling need beamforming/angle-estimation evaluation; CPU and byte improvements alone do not establish equivalent fidelity.

@@ -68,7 +68,7 @@ def tlvs(data, checkpoint=False):
     require(required <= values.keys(), "missing mandatory metadata")
     if checkpoint:
         require(values.keys() <= {1, 2, 8, 9}, "unexpected checkpoint metadata")
-    lengths = {1: 16, 2: 28, 4: 4, 6: 6, 8: 16, 9: 24, 11: 1}
+    lengths = {1: 16, 2: 28, 4: 4, 8: 16, 9: 24, 11: 1}
     for kind, size in lengths.items():
         if kind in values:
             require(len(values[kind]) == size, "invalid metadata field length")
@@ -81,7 +81,7 @@ def tlvs(data, checkpoint=False):
             require(0 < len(values[kind]) <= limit, "invalid text metadata length")
             values[kind].decode("utf-8", errors="strict")
     if not checkpoint:
-        require(values[6] == bytes(range(1, 7)) and values[11][0] in (0, 1, 2), "invalid channel/prediction metadata")
+        require(len(values[6]) in (4, 6) and values[6] == bytes(range(1, len(values[6])+1)) and values[11][0] in (0, 1, 2), "invalid channel/prediction metadata")
         keys = ("pdm_clock_hz", "sinc_order", "decimation", "cic_scale", "hpf_enabled", "pcm_shift", "gain_tenths_db")
         pattern = ";".join(key + r"=-?\d+" for key in keys)
         require(re.fullmatch(pattern, values[7].decode("utf-8")) is not None, "invalid capture configuration")
@@ -150,11 +150,19 @@ def reference(path):
                 comments.extend(data[offset + 8:offset + 8 + size])
             offset += 8 + size + (size & 1)
         fmt = 1
-    require(channels == 1 and depth == 32 and len(raw) % 4 == 0, "reference must be mono signed 32-bit PCM")
+    require(channels == 1 and (depth == 32 or fmt == 2 and depth == 24) and len(raw) % 4 == 0, "reference must be mono signed 24/32-bit FLAC or 32-bit WAV")
     pcm = array.array("i")
     pcm.frombytes(raw)
     if sys.byteorder != "little":
         pcm.byteswap()
+    if depth == 24:
+        # ffmpeg expands 24-bit FLAC into left-aligned s32. CRCL uses the
+        # original signed PCM values, with no implicit gain change.
+        pcm = array.array("i", (v >> 8 for v in pcm))
+        packed = array.array("i", pcm)
+        if sys.byteorder != "little":
+            packed.byteswap()
+        raw = packed.tobytes()
     return dict(rate=rate, format=fmt, pcm=pcm, raw=raw, metadata=bytes(comments), file_bytes=len(data))
 
 
@@ -167,11 +175,14 @@ def decode(data, ref, recover=False):
     require(number(data, 12, "I") == 0 and data[76:92] == bytes(16), "unsupported flags/reserved fields")
     require(number(data, 68, "I") == length - 96 and number(data, 72, "I") > 0, "invalid metadata length/timebase")
     require(number(data, length - 4, "I") == crc32c(data[:length - 4]), "header CRC mismatch")
-    require(data[36:40] == bytes((32, 1, 6, 5)), "unsupported channel profile")
+    total_channels = data[38]
+    side_channels = total_channels - 1
+    require(total_channels in (4, 6) and data[36:40] == bytes((32, 1, total_channels, side_channels)), "unsupported channel profile")
     block, precision = number(data, 40, "H"), data[42]
     require(block in (256, 512, 1024, 2048, 4096) and precision in (6, 8, 10, 12), "invalid block/precision")
     require(number(data, 32, "I") == ref["rate"] and data[43] == ref["format"], "reference profile mismatch")
     metadata = tlvs(data[92:length - 4])
+    require(len(metadata[6]) == total_channels, "channel order/profile mismatch")
     identity = hashlib.sha256(b"CRCL-segment-v1" + struct.pack("<H", len(metadata[3])) + metadata[3]
                               + metadata[4] + data[52:60] + data[44:52]).digest()[:16]
     require(identity == data[16:32], "segment identity mismatch")
@@ -188,7 +199,7 @@ def decode(data, ref, recover=False):
             require(offset + 32 <= len(data) and data[offset:offset + 4] == b"CRBK", "truncated/invalid record header")
             header, size = number(data, offset + 6, "H"), number(data, offset + 8, "I")
             kind = data[offset + 4]
-            maximum = 96 + 5 * ((block * precision + 7) // 8) if kind == 1 else 548 if kind == 2 else 92
+            maximum = 36 + side_channels * 12 + side_channels * ((block * precision + 7) // 8) if kind == 1 else 548 if kind == 2 else 92
             require(kind in (1, 2, 3) and size <= maximum and 32 <= header <= size - 4
                     and offset + size <= len(data), "invalid/truncated record size")
             record = data[offset:offset + size]
@@ -198,10 +209,10 @@ def decode(data, ref, recover=False):
             require(number(record, 12, "I") == sequence and number(record, 16, "Q") == frames, "record sequence/sample alignment mismatch")
             count = number(record, 24, "H")
             if kind == 1:
-                require(header == 92 and record[26] == 5 and 1 <= count <= block and not short, "invalid DATA dimensions/order")
+                require(header == 32 + side_channels * 12 and record[26] == side_channels and 1 <= count <= block and not short, "invalid DATA dimensions/order")
                 require(frames + count <= len(ref["pcm"]), "reference is shorter than sidecar")
-                channels, payload = [], 92
-                for c in range(5):
+                channels, payload = [], 32 + side_channels * 12
+                for c in range(side_channels):
                     descriptor = 28 + c * 12
                     channel_id, mode, reserved, k, scale, payload_size = struct.unpack_from("<BBBBII", record, descriptor)
                     require(channel_id == c + 2 and mode <= 3 and reserved == 0, "invalid channel descriptor")
@@ -253,7 +264,7 @@ def decode(data, ref, recover=False):
         if not recover:
             raise
         recovery_error = str(error)
-    return output, dict(frames=frames, sample_rate_hz=ref["rate"], channels=6, precision=precision,
+    return output, dict(frames=frames, sample_rate_hz=ref["rate"], channels=total_channels, precision=precision,
                         data_records=records, complete=ended, digest_verified=digest_verified,
                         completion_status=status, recovery_error=recovery_error, segment_id=identity.hex())
 
@@ -268,11 +279,14 @@ def decode_cheap(data, ref, recover=False):
     require(92 <= length <= 4096 and length <= len(data), "invalid v2 header length")
     require(number(data, 12, "I") == 1 and data[76:92] == bytes(16), "unsupported v2 flags/reserved fields")
     require(number(data, 68, "I") == length - 92 and number(data, 72, "I") > 0, "invalid metadata length/timebase")
-    require(data[36:40] == bytes((32, 1, 6, 5)), "unsupported channel profile")
+    total_channels = data[38]
+    side_channels = total_channels - 1
+    require(total_channels in (4, 6) and data[36:40] == bytes((32, 1, total_channels, side_channels)), "unsupported channel profile")
     block, precision = number(data, 40, "H"), data[42]
     require(block in (256, 512, 1024, 2048, 4096) and precision in (6, 8, 10, 12), "invalid block/precision")
     require(number(data, 32, "I") == ref["rate"] and data[43] == ref["format"], "reference profile mismatch")
     metadata = tlvs(data[92:length])
+    require(len(metadata[6]) == total_channels, "channel order/profile mismatch")
     require(metadata[11] == b"\1", "v2 requires temporal prediction")
     identity = data[52:60] + data[44:52]
     require(identity == data[16:32], "segment identity mismatch")
@@ -291,7 +305,7 @@ def decode_cheap(data, ref, recover=False):
             require(offset + 28 <= len(data) and data[offset:offset + 4] == b"CRBK", "truncated/invalid record header")
             header, size = number(data, offset + 6, "H"), number(data, offset + 8, "I")
             kind = data[offset + 4]
-            maximum = 88 + 5 * ((precision + (block - 1) * (precision + 2) + 7) // 8) if kind == 1 else 544 if kind == 2 else 52
+            maximum = 28 + side_channels * 12 + side_channels * ((precision + (block - 1) * (precision + 2) + 7) // 8) if kind == 1 else 544 if kind == 2 else 52
             require(kind in (1, 2, 3) and size <= maximum and 28 <= header <= size
                     and offset + size <= len(data), "invalid/truncated record size")
             record = data[offset:offset + size]
@@ -299,11 +313,11 @@ def decode_cheap(data, ref, recover=False):
             require(number(record, 12, "I") == sequence and number(record, 16, "Q") == frames, "record sequence/sample alignment mismatch")
             count = number(record, 24, "H")
             if kind == 1:
-                require(header == 88 and record[26] == 5 and 1 <= count <= block and not short, "invalid DATA dimensions/order")
+                require(header == 28 + side_channels * 12 and record[26] == side_channels and 1 <= count <= block and not short, "invalid DATA dimensions/order")
                 require(frames + count <= len(ref["pcm"]), "reference is shorter than sidecar")
-                channels, payload = [], 88
+                channels, payload = [], 28 + side_channels * 12
                 cap = (precision + (count - 1) * (precision + 2) + 7) // 8
-                for c in range(5):
+                for c in range(side_channels):
                     channel_id, mode, reserved, k, shift, payload_size = struct.unpack_from("<BBBBII", record, 28 + c * 12)
                     require(channel_id == c + 2 and mode == 2 and reserved == 0, "invalid v2 channel descriptor")
                     require(k <= precision and shift <= 32 - precision, "invalid Rice parameter/shift")
@@ -343,7 +357,7 @@ def decode_cheap(data, ref, recover=False):
         if not recover:
             raise
         recovery_error = str(error)
-    return output, dict(frames=frames, sample_rate_hz=ref["rate"], channels=6, precision=precision,
+    return output, dict(frames=frames, sample_rate_hz=ref["rate"], channels=total_channels, precision=precision,
                         version=2, algorithm="independent_temporal_shift", crc_present=False, digest_verified=False,
                         data_records=records, complete=ended, completion_status=status,
                         recovery_error=recovery_error, segment_id=identity.hex())
@@ -353,7 +367,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sidecar", type=Path)
     parser.add_argument("--reference", required=True, type=Path)
-    parser.add_argument("--output", type=Path, help="reconstructed six-channel 32-bit WAV")
+    parser.add_argument("--output", type=Path, help="reconstructed four- or six-channel 32-bit WAV")
     parser.add_argument("--recover", action="store_true", help="expose an incomplete checked prefix; v2 has no checksum/digest")
     args = parser.parse_args()
     try:
@@ -362,7 +376,7 @@ def main():
             if sys.byteorder != "little":
                 pcm.byteswap()
             with wave.open(str(args.output), "wb") as audio:
-                audio.setparams((6, 4, report["sample_rate_hz"], 0, "NONE", "not compressed"))
+                audio.setparams((report["channels"], 4, report["sample_rate_hz"], 0, "NONE", "not compressed"))
                 audio.writeframes(pcm.tobytes())
         print(json.dumps(report, indent=2))
     except (FormatError, UnicodeError, OSError, subprocess.CalledProcessError, wave.Error) as error:

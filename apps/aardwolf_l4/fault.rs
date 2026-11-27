@@ -56,7 +56,14 @@ pub fn emergency() -> ! {
             let p = address as *mut u32;
             p.write_volatile((p.read_volatile() & !clear) | set);
         };
-        modify(0x4002_0044, 1, 0); // DMA1 channel 4 EN
+        for channel in 3..7 {
+            modify(0x4002_0008 + channel * 0x14, 1, 0); // DMA1 CH4..CH7 EN
+        }
+        let dfsdm = embassy_stm32::pac::DFSDM1 as usize;
+        for filter in 0..4 {
+            modify(dfsdm + 0x100 + filter * 0x80, 1, 0);
+        } // All DFEN off
+        modify(dfsdm, 1 << 31, 0); // Stop the common microphone clock
         modify(0x4002_0458, 1, 0); // DMA2 channel 5 EN
         modify(0x4002_104c, 0, 1 << 1); // RCC AHB2ENR GPIOBEN
         modify(0x4001_3444, 1 << 15, 0); // TIM8 MOE off

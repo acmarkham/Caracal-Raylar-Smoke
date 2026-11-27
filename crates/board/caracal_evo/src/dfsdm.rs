@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use embassy_stm32::{
     gpio::{AfType, Flex, OutputType, Pull, Speed},
     pac,
-    peripherals::{PB12, PC2},
+    peripherals::{PB10, PB12, PB6, PC2, PC7},
     Peri,
 };
 static CLAIMED: AtomicBool = AtomicBool::new(false);
@@ -21,6 +21,94 @@ const FILTER_CONFIG: u32 = (1 << 29) | (1 << 24) | (1 << 21) | (1 << 18); // FAS
 
 pub fn read(offset: usize) -> u32 {
     unsafe { core::ptr::read_volatile((pac::DFSDM1 as usize + offset) as *const u32) }
+}
+
+/// Four rising-edge microphone lanes, clocked and started by filter 0.
+/// Lane order is PB12/CH1, PC7/CH3, PB6/CH5, PB10/CH7. The schematic
+/// microphone pairs are M1/M5, M2/M6, M4/M8, M3/M7 respectively.
+pub struct QuadDfsdm {
+    _pins: [Flex<'static>; 5],
+}
+pub fn filter_data_ptr(filter: usize) -> *mut u32 {
+    assert!(filter < 4);
+    (pac::DFSDM1 as usize + FLT_RDATAR + filter * 0x80) as *mut u32
+}
+impl QuadDfsdm {
+    pub fn new(
+        clock: Peri<'static, PC2>,
+        a: Peri<'static, PB12>,
+        b: Peri<'static, PC7>,
+        c: Peri<'static, PB6>,
+        d: Peri<'static, PB10>,
+    ) -> Self {
+        defmt::assert!(!CLAIMED.swap(true, Ordering::AcqRel));
+        let mut pins = [
+            Flex::new(clock),
+            Flex::new(a),
+            Flex::new(b),
+            Flex::new(c),
+            Flex::new(d),
+        ];
+        pins[0].set_as_af_unchecked(6, AfType::output(OutputType::PushPull, Speed::VeryHigh));
+        for pin in &mut pins[1..] {
+            pin.set_as_af_unchecked(6, AfType::input(Pull::None));
+        }
+        pac::RCC.apb2enr().modify(|w| w.set_dfsdmen(true));
+        pac::RCC.apb2rstr().modify(|w| w.set_dfsdmrst(true));
+        pac::RCC.apb2rstr().modify(|w| w.set_dfsdmrst(false));
+        pac::RCC
+            .ccipr()
+            .modify(|w| w.set_dfsdmsel(pac::rcc::vals::Dfsdmsel::from_bits(0)));
+        write(CH0, (CLOCK_DIVIDER - 1) << 16);
+        for filter in 0..4 {
+            let channel = 2 * filter + 1;
+            write(channel * 0x20 + 4, RIGHT_SHIFT << 3);
+            write(channel * 0x20, (1 << 7) | (1 << 6) | (1 << 2));
+            write(FLT_CR2 + filter * 0x80, 0);
+            write(
+                FLT_FCR + filter * 0x80,
+                (SINC_ORDER << 29) | ((FOSR - 1) << 16) | (IOSR - 1),
+            );
+            write(FLT_CR1 + filter * 0x80, Self::config(filter));
+        }
+        write(CH0, read(CH0) | (1 << 31));
+        Self { _pins: pins }
+    }
+    fn config(filter: usize) -> u32 {
+        (1 << 29)
+            | (((2 * filter + 1) as u32) << 24)
+            | (1 << 21)
+            | (1 << 18)
+            | if filter == 0 { 0 } else { 1 << 19 } // RSYNC: regular conversion follows filter 0.
+    }
+    pub fn start(&mut self) {
+        // All DMA channels must already be armed. Enable slaves first, then
+        // software-start only the master, preserving a common sample epoch.
+        for filter in (0..4).rev() {
+            write(FLT_ICR + filter * 0x80, (1 << 17) | (1 << 3) | (1 << 2));
+            write(FLT_CR1 + filter * 0x80, Self::config(filter) | 1);
+        }
+        write(FLT_CR1, Self::config(0) | 1 | (1 << 17));
+        for filter in 0..4 {
+            defmt::assert!(read(FLT_CR1 + filter * 0x80) == Self::config(filter) | 1);
+            defmt::assert!(read(FLT_FCR + filter * 0x80) == 0x80c7_0000);
+            defmt::info!(
+                "L4 QUAD filter={} channel={} cr1={:08x} fcr={:08x}",
+                filter,
+                2 * filter + 1,
+                read(FLT_CR1 + filter * 0x80),
+                read(FLT_FCR + filter * 0x80)
+            );
+        }
+    }
+    pub fn stop(&mut self) {
+        for filter in 0..4 {
+            write(FLT_CR1 + filter * 0x80, Self::config(filter));
+            let channel = 2 * filter + 1;
+            write(channel * 0x20, read(channel * 0x20) & !(1 << 7));
+        }
+        write(CH0, read(CH0) & !(1 << 31));
+    }
 }
 fn write(offset: usize, value: u32) {
     unsafe {

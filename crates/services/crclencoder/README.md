@@ -2,6 +2,21 @@
 
 Heapless, `no_std` CRCL v1 encoding for five spatial differences alongside a lossless mono MIC1 reference. See the [ADR](../../../SpecAndDesign/ADR/services/audio/Service%20Multichannel%20Audio%20Recording.md) for the file layout and recording lifecycle.
 
+The existing `Encoder` and `Transform` names retain the six-channel profile.
+`ChannelEncoder::<4>` and `ChannelTransform::<4>` support the Evo four-channel
+profile through the same implementation. Use
+`config.workspace_capacity_for_channels(4)` and
+`config.record_capacity_for_channels(frames, 4)` for its smaller workspaces.
+The header declares four total channels and three side channels; channel-order
+TLV 6 contains `[1,2,3,4]`. DATA headers contain three descriptors: 68 bytes in
+v1 or 64 bytes in v2. TIME/END and coding rules are unchanged. Existing six-channel
+files remain byte-identical. See [the L4 decision](../../../SpecAndDesign/Platform/L4/ADR-L4-016-four-channel-flac-crcl.md).
+
+Paired mono FLAC references may contain signed 24- or 32-bit PCM. The fixed
+header's source-width field remains 32 because the codec consumes unpacked `i32`
+values; FLAC STREAMINFO declares the reference's actual precision. The desktop
+decoder reverses FFmpeg's 24-bit left alignment before using those native values.
+
 `Transform::new` borrows one owned interleaved six-channel PCM block. Call `advance(256)` between executor yields until complete, then pass the transform to `Encoder::data`. MIC1 remains unchanged; MIC2..MIC6 become quantized differences in their existing `i32` slots. Scaling uses native 32-bit arithmetic with an overflow-safe fallback. There are no difference, quantization or temporal-residual arrays.
 
 The caller supplies output capacity through `workspace_capacity(block_frames, bits)`, appends each complete record, and commits the codec counters only after a successful append. Direct Rice, first-difference Rice and automatic selection all retain a packed quantized fallback. Input must satisfy `Config::max_abs_pcm`; arbitrary full-range `i32` audio is rejected. The default supports the signed 24-bit microphone values produced by the current eight-bit PCM shift.

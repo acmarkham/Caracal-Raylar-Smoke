@@ -4,10 +4,10 @@
 mod bitstream;
 mod metadata;
 mod predict;
-use bitstream::{Bits, crc8, crc16};
-pub use predict::Analysis;
+use bitstream::{crc16, crc8, Bits};
 #[cfg(feature = "benchmark")]
 pub use predict::benchmark::{Options as BenchmarkOptions, RiceMethod, Search};
+pub use predict::Analysis;
 use predict::{fold, residual};
 
 pub const DEFAULT_BLOCK_SAMPLES: usize = 2048;
@@ -59,7 +59,7 @@ impl Default for Config {
 impl Config {
     pub fn validate(self) -> Result<(), Error> {
         if !matches!(self.bits_per_sample, 8 | 16 | 24 | 32)
-            || !matches!(self.block_samples, 1024 | 2048 | 4096)
+            || !matches!(self.block_samples, 256 | 512 | 1024 | 2048 | 4096)
             || self.sample_rate_hz == 0
             || self.sample_rate_hz >= 1 << 20
             || rate_code(self.sample_rate_hz).is_none()

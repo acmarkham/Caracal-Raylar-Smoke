@@ -57,6 +57,7 @@ dependencies = [
  "heapless 0.8.0",
  "raylar-audio-recorder-service",
  "raylar-audiosource",
+ "raylar-crcl-encoder-service",
  "raylar-drivers",
  "raylar-location-service",
  "raylar-logging-service",

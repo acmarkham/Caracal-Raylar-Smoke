@@ -2,18 +2,45 @@
 
 Explicit STM32L476RGT6 application composition using the upstream Aardwolf
 policy and shared services. See [ADR-L4-012](../../SpecAndDesign/Platform/L4/ADR-L4-012-aardwolf-evo-port.md)
-and [ADR-L4-014](../../SpecAndDesign/Platform/L4/ADR-L4-014-mono-flac-and-cpu.md).
+and [ADR-L4-016](../../SpecAndDesign/Platform/L4/ADR-L4-016-four-channel-flac-crcl.md).
 Validation records: [initial port](evidence/README.md), [fault UI and WAV](VALIDATION-20261126.md),
-[FLAC and CPU comparison](VALIDATION-FLAC-20261126.md).
+[mono FLAC](VALIDATION-FLAC-20261126.md), [four-channel FLAC/CRCL and CPU](VALIDATION-QUAD-20261126.md).
 
-The normal image records mono 16 kHz **24-bit FLAC** in one-minute files with concurrent
-syslog on the existing exFAT SD card. It waits for real GPS UTC, uses captured
-PPS for the unchanged Time Service calibration, and continues recording through
-GPS standby/holdover. No radio, inertial sensors, battery services or button.
-It uses the upstream fixed order-1 predictor, 1024-sample blocks and static
-workspaces. DFSDM uses Sinc4/FOSR200/IOSR1 at 3.2 MHz. FLAC input is signed
-24-bit PCM right-justified in `i32`; the `wav` reference feature instead writes
-PCM32 with those 24 significant bits left aligned and the low byte zero.
+The normal image captures **four synchronous 16 kHz DFSDM channels**. Lane 0
+records lossless mono **24-bit FLAC**, and lanes 1–3 record in the paired **CRCL
+v2** container using U5's 10-bit temporal Rice / minimum-shift-6 profile. The
+three side channels are lossy. Both files rotate together each minute, alongside
+concurrent syslog. It waits for real GPS UTC, uses captured PPS for the shared
+Time Service calibration and continues through GPS standby/holdover. No radio,
+inertial sensors, battery services or button.
+
+DFSDM uses Sinc4/FOSR200/IOSR1 at 3.2 MHz, right shift 8. Input is signed
+24-bit PCM right-justified in `i32`. Logical lane order is PB12/CH1, PC7/CH3,
+PB6/CH5, PB10/CH7 (schematic microphone pairs M1/M5, M2/M6, M4/M8, M3/M7).
+All lanes use the rising edge; physical microphone positions need acoustic
+calibration. Filters 1–3 synchronize to filter 0. DMA1_CH4..CH7 drain on a
+priority Embassy executor using the free TIM6_DAC vector. Four DMA rings have
+128-frame halves (8 ms); AudioSource retains 5120 scalars / 80 ms.
+
+The continuous `local-time` laboratory profile uses larger 256-frame DMA halves
+(16 ms) and 6144 retained scalars (96 ms), using RAM otherwise reserved for GPS.
+The fixture-export bench retains the smaller buffers to fit its export workspace.
+SDMMC and SD DMA interrupts run below the audio executor. See the
+[runtime fault investigation](VALIDATION-FAULTS-20261127.md) for the extended test.
+
+The four-channel recorder now tolerates source-buffer overruns and recoverable
+DMA ring overwrites. Missing whole frames become zero PCM in both the mono FLAC
+and all CRCL channels, preserving file durations and channel alignment. Syslog
+records substituted frame ranges and recovery counters; the paired reference
+FLAC metadata marks the silence policy. U5 retains its strict default policy. See
+[ADR-L4-017](../../SpecAndDesign/Platform/L4/ADR-L4-017-overrun-silence-recovery.md)
+and the [glitch validation](VALIDATION-GAPS-20261127.md).
+
+The reference uses fixed order-1 prediction and 256-sample FLAC blocks; CRCL uses
+256-frame blocks. Static workspaces fit the L476's 96 KiB SRAM1, with the separate
+32 KiB SRAM2 stack and existing guard. `mono` retains the previous 1024-sample
+mono FLAC reference profile. `wav` implies `mono` and retains PCM32 WAV with
+the 24 significant bits left aligned and the low byte zero.
 
 Build each chip separately from the workspace root:
 
@@ -40,13 +67,13 @@ default GPS policy is 60 seconds minimum tracking / 1800 seconds standby after
 the full initial calibration; clean-PPS phase qualification may extend tracking
 to 180 seconds. Current consumption is not inferred from UART silence.
 
-Files use exclusive `/hour/aud_<utc>.flac` creation. `/syslog.txt` is appended.
+Files use exclusive `/hour/aud_<utc>.flac` and `.CRCL` creation. `/syslog.txt` is appended.
 Nothing is formatted or deleted. Existing-file collisions, insufficient reserve
-or I/O/acquisition errors stop the run with diagnostics. Blue indicates an open
+or hard I/O/peripheral errors stop the run with diagnostics. Blue indicates an open
 audio file; green indicates search or an admitted GPS anchor. Red flashes on a
 latched error, accompanied by a descending buzzer melody every 10 seconds.
 PB14/TIM8_CH2N also plays the policy startup melody. PC6 card detection runs
-continuously; removal or a storage/acquisition error stops recording and writes
+continuously; removal or an unrecoverable storage/acquisition error stops recording and writes
 until reset. Reinsertion alone does not resume an interrupted filesystem session.
 An unplugged card cannot receive its own fault log; inspect RTT and the indicators.
 The interrupted file and filesystem metadata are not guaranteed complete after
@@ -54,23 +81,37 @@ physical removal. Nothing attempts to format, repair or automatically remount it
 
 Syslog includes a heartbeat each second, GPS/time/location status every 10 seconds,
 and CPU executor load plus logging health and I/O maxima every 60 seconds. CPU
-measurement matches U5's executor-idle method; it does not profile individual IRQ
-cycles. Queue drops/truncation are counted and reported without stopping capture.
+measurement counts the union of both executor polling intervals without overlap;
+it does not profile bare IRQ cycles before executor entry. This extends U5's
+executor-idle method to the priority capture executor. Queue drops/truncation are counted and reported without stopping capture.
 Keep RTT attached for initial qualification; the L4
 transport is nonblocking so losing the host does not block interrupts.
 
-The short codec test records two complete minutes, closes both streams and
-checks fresh-filesystem readback and CPU records. After DMA stops it also
-exports a real encoded block for independent Xiph/FFmpeg decoding:
+The short codec test records two complete minute pairs, closes all three streams,
+stops DMA and checks full fresh-filesystem readback and CPU records. It exports
+real four-lane PCM and encoded blocks for independent Xiph/FFmpeg/CRCL decoding.
+Use the explicit laboratory clock to leave GPS out of this audio check:
 
 ```powershell
-rtk cargo build -p aardwolf-l4 --release --target thumbv7em-none-eabihf --features bench-codec --locked --offline
-rtk proxy python apps/aardwolf_l4/tools/capture.py flac --evidence-dir apps/aardwolf_l4/evidence/20261126-flac
-rtk proxy python apps/aardwolf_l4/tools/verify_flac_fixture.py apps/aardwolf_l4/evidence/20261126-flac/flac.log --flac target/flac-tools/flac-1.5.0-win/Win64/flac.exe
+rtk cargo build -p aardwolf-l4 --release --target thumbv7em-none-eabihf --features bench-local-time --locked --offline
+rtk proxy python apps/aardwolf_l4/tools/capture.py quad --evidence-dir apps/aardwolf_l4/evidence/20261126-quad
+rtk proxy python apps/aardwolf_l4/tools/verify_quad_fixture.py apps/aardwolf_l4/evidence/20261126-quad/quad.log --flac target/flac-tools/flac-1.5.0-win/Win64/flac.exe
 ```
 
-Use `--features wav` for the reference recording format, or `wav,bench-codec`
-for its finite check. Compare only complete CPU windows during recording;
+`local-time` alone records continuously with GPS tasks disabled; `bench-local-time`
+also selects the finite `bench-codec` test. Syslog and file metadata explicitly
+mark `LOCAL-TIME-BENCH`, with unknown UTC and boot-specific synthetic labels.
+These labels are not present-day UTC. The default image retains real GPS.
+Use `bench-codec` without `local-time` for the finite real-GPS check.
+
+`bench-glitches` selects the finite fake-GPS bench and injects a 100 ms DMA
+consumer pause plus a 1500 ms audio append delay across the first minute
+boundary. It requires recovery, logs the substituted ranges, and performs
+fresh-mount file/syslog readback. Build with `local-time` alone afterwards to
+leave ordinary continuous recording without fault injection.
+
+Use `--features mono` for the previous mono FLAC reference, `wav` for PCM32 WAV,
+or `wav,bench-codec` for its finite check. Compare only complete CPU windows during recording;
 GPS search and waiting for the first minute are idle/preparation time.
 
 The finite hardware qualification build shortens only GPS standby to 30 seconds:
@@ -82,13 +123,13 @@ rtk proxy python apps/aardwolf_l4/tools/capture.py bench-03
 
 It keeps the full estimator and post-wake tracking requirements. After a
 successful sleep/wake/phase-qualified shutdown cycle it finishes the current
-minute, closes both streams and reads back every recorded byte. Allow roughly
+minute, closes all streams and reads back every recorded byte. Allow roughly
 15–20 minutes including flashing. The default image records continuously.
 Do not halt or attach memory reads during DMA capture.
 
 A shorter audio/UI qualification records two minutes with real GPS UTC and
 inserts a two-second 1 kHz buzzer tone in the first file. It reopens and hashes
-both WAVs and syslog, checks PCM packing, reports the acoustic spectrum and
+the two WAV segments and syslog, checks PCM packing, reports the acoustic spectrum and
 requires CPU telemetry and zero logging/acquisition errors. The uncalibrated
 buzzer-to-microphone coupling has no acoustic pass/fail threshold; listen to
 the recordings to assess their sound:

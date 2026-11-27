@@ -27,6 +27,9 @@ Read these decisions in order:
 | [L4-012: Aardwolf Evo port](ADR-L4-012-aardwolf-evo-port.md) | Real GPS/PPS, mono WAV/syslog, shared calibration and M10 software standby/wake |
 | [L4-013: Fault UI, telemetry and audio correction](ADR-L4-013-fault-ui-telemetry-audio.md) | Evo buzzer, latched SD-removal errors, CPU/syslog health, PCM scaling and revised decimation |
 | [L4-014: Mono FLAC and CPU comparison](ADR-L4-014-mono-flac-and-cpu.md) | Shared FLAC encoder, L4 memory profile, lossless samples and measured recording load |
+| [L4-015: GNSS autodetection](ADR-L4-015-gnss-autodetect.md) | One image detects u-blox generations and selects volatile UART/power commands |
+| [L4-016: Four-channel FLAC/CRCL](ADR-L4-016-four-channel-flac-crcl.md) | Synchronous four-filter DMA, shared paired recorder, priority capture, CPU and SD verification |
+| [L4-017: Overrun silence recovery](ADR-L4-017-overrun-silence-recovery.md) | Bounded DMA recovery and aligned silence through SD backpressure, with explicit gap diagnostics |
 
 The most consequential correction to the initial brief is **128 KiB physical
 SRAM, not 192 KiB**, for the STM32L476RGT6. The flash limit is 1 MiB.
@@ -42,6 +45,6 @@ target ADRs. Any later target-specific behavioral exception needs a structured
 
 The first LED image selects its HAL chip at the leaf and preserves existing U5
 defaults; L4-006 records why broad U5 manifest extraction is deferred. It does
-not complete the full migration baseline. Four-channel recording comes after
-memory placement, SDMMC, GPS and microphone acquisition have separate evidence.
+not complete the full migration baseline. Four-channel recording is implemented in L4-016 after
+memory placement, SDMMC, GPS and mono acquisition received separate evidence.
 The milestone gates in L4-004 determine when a capability can be called supported.

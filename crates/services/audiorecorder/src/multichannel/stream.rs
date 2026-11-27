@@ -1,9 +1,9 @@
 use super::*;
-use crate::crcl::{Completion, Transform};
-use embassy_time::{Instant, with_timeout};
+use crate::crcl::{ChannelTransform, Completion};
+use embassy_time::{with_timeout, Instant};
 
-impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
-    HexaphonicRecorder<'_, S, M, C, R>
+impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize, const N: usize>
+    ChannelRecorder<'_, S, M, C, R, N>
 {
     pub(super) async fn read_next(
         &mut self,
@@ -11,13 +11,13 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
     ) -> Result<RecorderProgress, AudioRecorderError<S::Error>> {
         let start = self.started_utc.ok_or(AudioRecorderError::NotStarted)?;
         if let Some(duration) = timeout {
-            with_timeout(duration, self.reader.wait_for_samples(6))
+            with_timeout(duration, self.reader.wait_for_samples(N))
                 .await
                 .map_err(|_| AudioRecorderError::SourceTimeout)?
                 .map_err(AudioRecorderError::AudioSource)?;
         } else {
             self.reader
-                .wait_for_samples(6)
+                .wait_for_samples(N)
                 .await
                 .map_err(AudioRecorderError::AudioSource)?;
         }
@@ -26,9 +26,10 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         } else {
             self.frames_target - self.frames_accepted - self.pcm_frames
         };
-        let requested = (self.config.spatial.block_frames - self.pcm_frames).min(remaining) * 6;
+        let requested = (self.config.spatial.block_frames - self.pcm_frames).min(remaining) * N;
         let expected = self.expected_position;
         let expected_ticks = self.expected_ticks;
+        let fill_gaps = self.fill_gaps_with_silence;
         let start_ticks = if self.seeking_start {
             self.metadata.system_ticks_at(start)
         } else {
@@ -40,26 +41,61 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let mut copied = 0;
         let mut gap = false;
         let mut next = None;
+        let mut silence_samples = 0;
+        let mut advanced = false;
+        // Keep time-model arithmetic outside the AudioSource callback. An
+        // interrupt-safe producer must not wait for it while PCM is borrowed.
+        let end_ticks = start
+            .seconds
+            .checked_add(self.config.recorder.recording_seconds.into())
+            .and_then(|s| UtcTimestamp::new(s, start.microseconds))
+            .and_then(|u| self.metadata.system_ticks_at(u));
         let pcm = &mut self.buffers.pcm;
-        let offset = self.pcm_frames * 6;
+        let offset = self.pcm_frames * N;
         let source_profile =
             raylar_stage_profiling::Span::new(raylar_stage_profiling::Stage::SourceCopy);
         let status = self
             .reader
             .read(requested, |chunk| {
-                gap = chunk.dropped_since_last_read != 0
-                    || expected.is_some_and(|p| p != chunk.position)
-                    || expected_ticks
-                        .zip(chunk.timestamp_ticks)
-                        .is_some_and(|(a, b)| a.abs_diff(b) > 2 * (hz / rate).max(1));
-                if gap {
-                    return 0;
-                }
-                let Some(ticks) = chunk.timestamp_ticks else {
+                let Some(source_ticks) = chunk.timestamp_ticks else {
                     gap = true;
                     return 0;
                 };
-                let frames = chunk.len() / 6;
+                let position = expected.unwrap_or_else(|| {
+                    if fill_gaps {
+                        chunk.position.saturating_sub(chunk.dropped_since_last_read)
+                    } else {
+                        chunk.position
+                    }
+                });
+                let missing = chunk.position.saturating_sub(position);
+                let padding = fill_gaps && missing != 0;
+                let ticks = if padding {
+                    expected_ticks.unwrap_or_else(|| {
+                        source_ticks.saturating_sub(missing / N as u64 * hz / rate)
+                    })
+                } else {
+                    source_ticks
+                };
+                // Only a measured forward sample-position gap is recoverable.
+                // An epoch reset, unknown gap length or backwards clock is not.
+                gap = position > chunk.position
+                    || (!padding && (chunk.dropped_since_last_read != 0 || missing != 0))
+                    || chunk.dropped_since_last_read > missing
+                    || !missing.is_multiple_of(N as u64)
+                    || expected_ticks.is_some_and(|t| {
+                        let projected = t.saturating_add(missing / N as u64 * hz / rate);
+                        projected.abs_diff(source_ticks) > 2 * (hz / rate).max(1)
+                    });
+                if gap {
+                    return 0;
+                }
+                let position = if padding { position } else { chunk.position };
+                let frames = if padding {
+                    (missing / N as u64).min((requested / N) as u64) as usize
+                } else {
+                    chunk.len() / N
+                };
                 let skip = start_ticks
                     .map(|t| {
                         t.saturating_sub(ticks) * rate / hz
@@ -70,11 +106,6 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
                     .unwrap_or(0)
                     .min(frames as u64) as usize;
                 // When opening, limit this first read to the shared UTC end cutoff too.
-                let end_ticks = start
-                    .seconds
-                    .checked_add(self.config.recorder.recording_seconds.into())
-                    .and_then(|s| UtcTimestamp::new(s, start.microseconds))
-                    .and_then(|u| self.metadata.system_ticks_at(u));
                 let accepted = if self.reference_handle.is_none() {
                     let cutoff = end_ticks
                         .map(|t| t.saturating_sub(ticks).saturating_mul(rate).div_ceil(hz) as usize)
@@ -83,30 +114,40 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
                 } else {
                     frames - skip
                 };
-                let take = accepted * 6;
-                for (destination, value) in pcm[offset..offset + take]
-                    .iter_mut()
-                    .zip(chunk.first.iter().chain(chunk.second).skip(skip * 6))
-                {
-                    *destination = *value;
+                let take = accepted * N;
+                if padding {
+                    pcm[offset..offset + take].fill(0);
+                    silence_samples = take;
+                } else {
+                    for (destination, value) in pcm[offset..offset + take]
+                        .iter_mut()
+                        .zip(chunk.first.iter().chain(chunk.second).skip(skip * N))
+                    {
+                        *destination = *value;
+                    }
                 }
                 copied = accepted;
                 if copied != 0 {
                     first = Some((
-                        chunk.position / 6 + skip as u64,
+                        position / N as u64 + skip as u64,
                         ticks + skip as u64 * hz / rate,
                     ));
                 }
-                let consumed = (skip + accepted) * 6;
+                let consumed = (skip + accepted) * N;
                 next = Some((
-                    chunk.position + consumed as u64,
+                    position + consumed as u64,
                     ticks + (skip + accepted) as u64 * hz / rate,
                 ));
-                consumed
+                advanced = consumed != 0;
+                if padding {
+                    0
+                } else {
+                    consumed
+                }
             })
             .map_err(AudioRecorderError::AudioSource)?;
         drop(source_profile);
-        if gap || status.dropped_since_last_read != 0 {
+        if gap || (!fill_gaps && status.dropped_since_last_read != 0) {
             return Err(AudioRecorderError::Discontinuity {
                 dropped_samples: status.dropped_since_last_read,
             });
@@ -116,7 +157,7 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             self.expected_ticks = Some(ticks);
         }
         if copied == 0 {
-            if status.consumed_samples == 0 {
+            if !advanced {
                 // The requested segment has already expired; do not spin on
                 // an unconsumable packet after a late start or invalid mapping.
                 return Err(AudioRecorderError::TimeUnavailable);
@@ -154,9 +195,9 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             self.reset_segment(next);
         }
         Ok(RecorderProgress {
-            pcm_samples: copied * 6,
+            pcm_samples: copied * N,
             encoded_frames,
-            dropped_samples: 0,
+            dropped_samples: silence_samples as u64,
             rotated,
             codec_elapsed_us: codec_us,
             storage_elapsed_us: storage_us,
@@ -167,7 +208,7 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let frames = self.pcm_frames;
         let started = Instant::now();
         let mut transform =
-            Transform::new(&mut self.buffers.pcm[..frames * 6], self.config.spatial)
+            ChannelTransform::<N>::new(&mut self.buffers.pcm[..frames * N], self.config.spatial)
                 .map_err(AudioRecorderError::Spatial)?;
         while !transform
             .advance(256)

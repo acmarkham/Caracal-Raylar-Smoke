@@ -1,6 +1,6 @@
 use super::*;
-use crate::RecordingMetadata;
 use crate::crcl::crc32c;
+use crate::RecordingMetadata;
 use raylar_audiosource::AudioFormat;
 use raylar_storage_service::StorageLayout;
 use std::{
@@ -549,4 +549,370 @@ fn slow_open_overrun_closes_prefix_and_capture_restart_recovers_without_stale_ti
     block_on(r.stop()).unwrap();
     assert_eq!(end(&r.storage().files[3]).0, 256);
     assert_eq!(end(&r.storage().files[3]).1, 2);
+}
+
+#[test]
+fn quad_rotation_and_tail_preserve_every_reference_sample() {
+    for cheap in [false, true] {
+        for flac in [false, true] {
+            let source = AudioSource::<4096, 1>::new(AudioFormat::new(16000, 4, 1000000));
+            let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+                ([0; 1024], [0; 1536], [0; 512], [0; 2080]);
+            let mut profile = config(16000, 1, flac);
+            if flac {
+                profile.reference = ReferenceFormat::Flac(FlacConfig {
+                    sample_rate_hz: 16000,
+                    bits_per_sample: 24,
+                    block_samples: 256,
+                    ..FlacConfig::default()
+                });
+            }
+            if cheap {
+                profile.spatial = Config {
+                    block_frames: 256,
+                    min_shift: 6,
+                    ..Config::cheap()
+                };
+            }
+            let mut recorder = ChannelRecorder::<_, _, 4096, 1, 4>::new(
+                &source,
+                Storage::default(),
+                Metadata { mapped: false },
+                profile,
+                HexaphonicBuffers {
+                    pcm: &mut pcm,
+                    spatial_output: &mut spatial,
+                    reference_pcm: &mut ref_pcm,
+                    reference_output: &mut ref_out,
+                },
+            )
+            .unwrap();
+            block_on(recorder.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+            assert!(recorder.storage().files.is_empty());
+            let mut original = Vec::new();
+            let mut position = 0;
+            while position < 16013 {
+                let n = (16013 - position).min(317);
+                let input: Vec<_> = (position..position + n)
+                    .flat_map(|n| {
+                        (0..4).map(move |c| ((n as i32 * 13 + c * 157) % 200_000) - 100_000)
+                    })
+                    .collect();
+                original.extend(input.iter().step_by(4).copied());
+                source
+                    .write(&input, position as u64 * 1000000 / 16000)
+                    .unwrap();
+                while recorder.reader.stats().available_samples > 0 {
+                    block_on(recorder.record_next()).unwrap();
+                }
+                position += n;
+            }
+            block_on(recorder.stop()).unwrap();
+            assert_eq!(
+                recorder.storage().suffixes,
+                if flac {
+                    vec!["flac", "CRCL", "flac", "CRCL"]
+                } else {
+                    vec!["wav", "CRCL", "wav", "CRCL"]
+                }
+            );
+            assert_eq!(recorder.storage().closed, [0, 1, 2, 3]);
+            for (segment, count) in [(0, 16000), (1, 13)] {
+                let storage = recorder.storage();
+                let (total, status, digest) = end(&storage.files[segment * 2 + 1]);
+                assert_eq!(total, count as u64);
+                assert_eq!(&storage.files[segment * 2 + 1][36..40], &[32, 1, 4, 3]);
+                assert_eq!(status, if segment == 0 { 1 } else { 2 });
+                assert_eq!(storage.starts[segment * 2], storage.starts[segment * 2 + 1]);
+                let offset = if segment == 0 { 0 } else { 16000 };
+                let raw: Vec<_> = original[offset..offset + count]
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect();
+                let mut hash = Sha256::new();
+                hash.update(&raw);
+                if cheap {
+                    assert_eq!(digest, [0; 32]);
+                } else {
+                    assert_eq!(digest, hash.finish());
+                }
+                if !flac {
+                    assert_eq!(&storage.files[segment * 2][1024..], raw);
+                }
+                if let Some(directory) = std::env::var_os("RAYLAR_CRCL_TEST_OUTPUT") {
+                    let dir = std::path::PathBuf::from(directory);
+                    std::fs::create_dir_all(&dir).unwrap();
+                    let stem = std::format!(
+                        "quad-{}{}-{segment}",
+                        if cheap { "cheap-" } else { "" },
+                        if flac { "flac" } else { "wav" }
+                    );
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.{}", if flac { "flac" } else { "wav" })),
+                        &storage.files[segment * 2],
+                    )
+                    .unwrap();
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.CRCL")),
+                        &storage.files[segment * 2 + 1],
+                    )
+                    .unwrap();
+                    std::fs::write(dir.join(std::format!("{stem}.s32le")), raw).unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn silence_policy_preserves_partial_block_and_gap_across_two_rotations() {
+    for initial in [0, 128] {
+        for flac in [false, true] {
+            let source = AudioSource::<1024, 1>::new(AudioFormat::new(16000, 4, 1000000));
+            let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+                ([0; 1024], [0; 1536], [0; 256], [0; 1056]);
+            let mut profile = config(16000, 1, flac);
+            profile.spatial = Config {
+                block_frames: 256,
+                min_shift: 6,
+                ..Config::cheap()
+            };
+            if flac {
+                profile.reference = ReferenceFormat::Flac(FlacConfig {
+                    sample_rate_hz: 16000,
+                    bits_per_sample: 24,
+                    block_samples: 256,
+                    ..FlacConfig::default()
+                });
+            }
+            let mut r = ChannelRecorder::<_, _, 1024, 1, 4>::new(
+                &source,
+                Storage::default(),
+                Metadata { mapped: true },
+                profile,
+                HexaphonicBuffers {
+                    pcm: &mut pcm,
+                    spatial_output: &mut spatial,
+                    reference_pcm: &mut ref_pcm,
+                    reference_output: &mut ref_out,
+                },
+            )
+            .unwrap();
+            r.set_silence_on_overrun(true).unwrap();
+            block_on(r.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+            let frame = |n: usize| (0..4).map(move |c| 10000 + n as i32 * 3 + c * 640);
+            source
+                .write(&(0..initial).flat_map(frame).collect::<Vec<_>>(), 0)
+                .unwrap();
+            if initial != 0 {
+                assert_eq!(block_on(r.record_next()).unwrap().pcm_samples, initial * 4);
+            }
+            // A blocked writer lets the producer lap the ring many times. Only the
+            // final 256 frames survive; the gap includes two UTC boundaries.
+            source
+                .write(
+                    &(initial..32512).flat_map(frame).collect::<Vec<_>>(),
+                    initial as u64 * 1000000 / 16000,
+                )
+                .unwrap();
+            let mut lost = 0;
+            while r.reader.stats().available_samples != 0 {
+                lost += block_on(r.record_next()).unwrap().dropped_samples;
+            }
+            block_on(r.stop()).unwrap();
+            assert_eq!(lost, (32256 - initial) as u64 * 4);
+            assert_eq!(r.storage().closed, [0, 1, 2, 3, 4, 5]);
+            for segment in 0..3 {
+                let frames = if segment < 2 { 16000 } else { 512 };
+                let begin = segment * 16000;
+                let expected: Vec<i32> = (begin..begin + frames)
+                    .flat_map(|n| {
+                        if (initial..32256).contains(&n) {
+                            vec![0; 4]
+                        } else {
+                            frame(n).collect()
+                        }
+                    })
+                    .collect();
+                let reference: Vec<u8> = expected
+                    .chunks_exact(4)
+                    .flat_map(|f| f[0].to_le_bytes())
+                    .collect();
+                let (count, completion, _) = end(&r.storage().files[segment * 2 + 1]);
+                assert_eq!(count, frames as u64);
+                assert_eq!(completion, if segment < 2 { 1 } else { 2 });
+                assert_eq!(
+                    r.storage().starts[segment * 2].seconds,
+                    1700000040 + segment as i64
+                );
+                if !flac {
+                    assert_eq!(&r.storage().files[segment * 2][1024..], reference);
+                }
+                if let Some(directory) = std::env::var_os("RAYLAR_CRCL_TEST_OUTPUT") {
+                    let dir = std::path::PathBuf::from(directory);
+                    std::fs::create_dir_all(&dir).unwrap();
+                    let stem = std::format!(
+                        "gap-{initial}-{}-{segment}",
+                        if flac { "flac" } else { "wav" }
+                    );
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.{}", if flac { "flac" } else { "wav" })),
+                        &r.storage().files[segment * 2],
+                    )
+                    .unwrap();
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.CRCL")),
+                        &r.storage().files[segment * 2 + 1],
+                    )
+                    .unwrap();
+                    std::fs::write(dir.join(std::format!("{stem}.s32le")), reference).unwrap();
+                    std::fs::write(
+                        dir.join(std::format!("{stem}.interleaved.s32le")),
+                        expected
+                            .iter()
+                            .flat_map(|v| v.to_le_bytes())
+                            .collect::<Vec<_>>(),
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn silence_policy_does_not_hide_unquantifiable_hardware_epoch_reset() {
+    let source = AudioSource::<1024, 1>::new(AudioFormat::new(16000, 4, 1000000));
+    let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+        ([0; 1024], [0; 1536], [0; 1024], [0; 4128]);
+    let mut profile = config(16000, 1, false);
+    profile.spatial = Config {
+        block_frames: 256,
+        ..Config::cheap()
+    };
+    let mut r = ChannelRecorder::<_, _, 1024, 1, 4>::new(
+        &source,
+        Storage::default(),
+        Metadata { mapped: false },
+        profile,
+        HexaphonicBuffers {
+            pcm: &mut pcm,
+            spatial_output: &mut spatial,
+            reference_pcm: &mut ref_pcm,
+            reference_output: &mut ref_out,
+        },
+    )
+    .unwrap();
+    r.set_silence_on_overrun(true).unwrap();
+    block_on(r.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+    source.write(&[500; 512], 0).unwrap();
+    block_on(r.record_next()).unwrap();
+    source.report_discontinuity(400);
+    source.write(&[500; 512], 50000).unwrap();
+    assert!(matches!(
+        block_on(r.record_next()),
+        Err(AudioRecorderError::Discontinuity { .. })
+    ));
+}
+
+#[test]
+fn further_overruns_during_silence_catchup_extend_the_gap_without_replaying_audio() {
+    let source = Arc::new(AudioSource::<1024, 1>::new(AudioFormat::new(
+        16000, 4, 1000000,
+    )));
+    let producer = source.clone();
+    let mut injected = false;
+    let storage = Storage {
+        open_hook: Some(std::boxed::Box::new(move || {
+            if !injected {
+                injected = true;
+                producer.write(&vec![123456; 10000 * 4], 16000).unwrap();
+            }
+        })),
+        ..Storage::default()
+    };
+    let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+        ([0; 1024], [0; 1536], [0; 1024], [0; 4128]);
+    let mut profile = config(16000, 1, false);
+    profile.spatial = Config {
+        block_frames: 256,
+        ..Config::cheap()
+    };
+    let mut r = ChannelRecorder::<_, _, 1024, 1, 4>::new(
+        &source,
+        storage,
+        Metadata { mapped: true },
+        profile,
+        HexaphonicBuffers {
+            pcm: &mut pcm,
+            spatial_output: &mut spatial,
+            reference_pcm: &mut ref_pcm,
+            reference_output: &mut ref_out,
+        },
+    )
+    .unwrap();
+    r.set_silence_on_overrun(true).unwrap();
+    block_on(r.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+    source.write(&vec![654321; 256 * 4], 0).unwrap();
+    block_on(r.record_next()).unwrap();
+    let first = block_on(r.record_next()).unwrap();
+    assert_eq!(first.dropped_samples, 256 * 4);
+    source.write(&vec![345678; 10000 * 4], 641000).unwrap();
+    let mut dropped = first.dropped_samples;
+    while r.reader.stats().available_samples != 0 {
+        dropped += block_on(r.record_next()).unwrap().dropped_samples;
+    }
+    block_on(r.stop()).unwrap();
+    assert_eq!(dropped, 19744 * 4);
+    let raw: Vec<i32> = [0, 2]
+        .into_iter()
+        .flat_map(|i| {
+            r.storage().files[i][1024..]
+                .chunks_exact(4)
+                .map(|b| i32::from_le_bytes(b.try_into().unwrap()))
+        })
+        .collect();
+    assert_eq!(&raw[..256], &vec![654321; 256]);
+    assert!(raw[256..20000].iter().all(|&v| v == 0));
+    assert_eq!(&raw[20000..], &vec![345678; 256]);
+}
+
+#[test]
+fn silence_policy_still_propagates_failed_storage_and_closes_both_streams() {
+    let source = AudioSource::<1024, 1>::new(AudioFormat::new(16000, 4, 1000000));
+    let (mut pcm, mut spatial, mut ref_pcm, mut ref_out) =
+        ([0; 1024], [0; 1536], [0; 1024], [0; 4128]);
+    let mut profile = config(16000, 1, false);
+    profile.spatial = Config {
+        block_frames: 256,
+        ..Config::cheap()
+    };
+    let mut r = ChannelRecorder::<_, _, 1024, 1, 4>::new(
+        &source,
+        Storage::default(),
+        Metadata { mapped: false },
+        profile,
+        HexaphonicBuffers {
+            pcm: &mut pcm,
+            spatial_output: &mut spatial,
+            reference_pcm: &mut ref_pcm,
+            reference_output: &mut ref_out,
+        },
+    )
+    .unwrap();
+    r.set_silence_on_overrun(true).unwrap();
+    block_on(r.start_at(UtcTimestamp::new(1700000040, 0).unwrap())).unwrap();
+    source.write(&[123456; 1024], 0).unwrap();
+    block_on(r.record_next()).unwrap();
+    r.storage_mut().fail_at = Some(r.storage().operations + 1);
+    source.write(&[654321; 1024], 16000).unwrap();
+    assert!(matches!(
+        block_on(r.record_next()),
+        Err(AudioRecorderError::Storage(()))
+    ));
+    assert_eq!(r.storage().closed, [0, 1]);
+    assert!(matches!(
+        block_on(r.record_next()),
+        Err(AudioRecorderError::NotStarted)
+    ));
 }

@@ -1,11 +1,11 @@
 use super::*;
 use crate::crcl::{Completion, Header, TimeAnchor};
-use crate::{RecordingMetadata, container::flac_comment};
+use crate::{container::flac_comment, RecordingMetadata};
 use core::fmt::Write;
 use heapless::String;
 
-impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
-    HexaphonicRecorder<'_, S, M, C, R>
+impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize, const N: usize>
+    ChannelRecorder<'_, S, M, C, R, N>
 {
     pub(super) fn time_anchor(
         &self,
@@ -142,6 +142,11 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             });
         let mut comment =
             flac_comment(&metadata, profile).map_err(|_| AudioRecorderError::InvalidConfig)?;
+        if self.fill_gaps_with_silence {
+            comment
+                .push_str(";gap_policy=silence_all_channels")
+                .map_err(|_| AudioRecorderError::InvalidConfig)?;
+        }
         comment
             .push_str(";segment_id=")
             .map_err(|_| AudioRecorderError::InvalidConfig)?;
@@ -219,11 +224,11 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         let block = self.config.spatial.block_frames;
         let full = frames / block;
         let tail = frames % block;
-        let side = full as u64 * self.config.spatial.record_capacity(block) as u64
+        let side = full as u64 * self.config.spatial.record_capacity_for_channels(block, N) as u64
             + if tail == 0 {
                 0
             } else {
-                self.config.spatial.record_capacity(tail) as u64
+                self.config.spatial.record_capacity_for_channels(tail, N) as u64
             }
             + 4096
             + 548 * self.config.recorder.recording_seconds as u64

@@ -1,56 +1,85 @@
-//! Aardwolf Evo L4: shared services, mono FLAC and M10 PPS timing.
+//! Aardwolf Evo L4: four synchronous microphones, paired FLAC/CRCL and shared time.
 #![no_std]
 #![no_main]
+#[cfg(feature = "mono")]
+mod audio;
+#[cfg(not(feature = "mono"))]
+#[path = "quad_audio.rs"]
 mod audio;
 mod diagnostics;
 mod fault;
 mod gnss;
 mod gnss_diagnostics;
+#[cfg(feature = "local-time")]
+mod local_time;
+mod quad;
+#[cfg(all(not(feature = "mono"), feature = "bench-codec"))]
+mod quad_fixture;
 mod setup;
 mod streams;
 mod ui;
+#[cfg(feature = "mono")]
+mod verify;
+#[cfg(not(feature = "mono"))]
+#[path = "quad_verify.rs"]
 mod verify;
 use aardwolf_l4::*;
 use caracal_evo::{capture, dfsdm, sd, stack_probe};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
+#[cfg(not(feature = "local-time"))]
+use embassy_stm32::usart::{self, BufferedUart};
 use embassy_stm32::{
     gpio::{Input, Level, Output, Pull, Speed},
     pac,
     rcc::{self, *},
     sdmmc::{Config as SdConfig, Sdmmc},
     time::Hertz,
-    usart::{self, BufferedUart},
 };
 use embassy_time::{Duration, Instant, Timer};
-use raylar_audio_recorder_service::{AudioRecorder, AudioRecorderConfig, AudioRecorderError};
+use raylar_audio_recorder_service::AudioRecorderError;
+#[cfg(feature = "mono")]
+use raylar_audio_recorder_service::{AudioRecorder, AudioRecorderConfig};
 use raylar_audiosource::{AudioFormat, AudioSource};
 use raylar_drivers::gps::GpsResources;
 use raylar_location_service::LocationResources;
 use raylar_logging_service::{LoggingResources, LoggingService};
+#[cfg(feature = "mono")]
 use raylar_storage_service::StorageLayout;
 use raylar_time_service::{TimeResources, UtcTimestamp};
-use static_cell::{ConstStaticCell, StaticCell};
+#[cfg(any(feature = "mono", not(feature = "local-time")))]
+use static_cell::ConstStaticCell;
+use static_cell::StaticCell;
 
-const AUDIO_CAPACITY: usize = 4096;
+const AUDIO_CAPACITY: usize = if cfg!(feature = "mono") {
+    4096
+} else if cfg!(all(feature = "local-time", not(feature = "bench-codec"))) {
+    6144
+} else {
+    5120
+};
+const STREAM_COUNT: usize = if cfg!(feature = "mono") { 2 } else { 3 };
 static AUDIO: AudioSource<AUDIO_CAPACITY, 1> =
-    AudioSource::new(AudioFormat::new(SAMPLE_RATE, 1, 1_000_000));
+    AudioSource::new(AudioFormat::new(SAMPLE_RATE, CHANNELS as u8, 1_000_000));
 static TIME: TimeResources<2, 2> = TimeResources::new();
 static GPS: GpsResources<128, 4, 8, 2> = GpsResources::new();
 static LOCATION: LocationResources<2> = LocationResources::new();
 static LOGGING: LoggingResources<192, 8> = LoggingResources::new();
 static SDMMC: StaticCell<Sdmmc<'static>> = StaticCell::new();
+#[cfg(not(feature = "local-time"))]
 static UART_RX: ConstStaticCell<[u8; 2048]> = ConstStaticCell::new([0; 2048]);
+#[cfg(not(feature = "local-time"))]
 static UART_TX: ConstStaticCell<[u8; 128]> = ConstStaticCell::new([0; 128]);
 static CONSUMED_SAMPLES: AtomicU32 = AtomicU32::new(0);
 static MAX_CODEC_US: AtomicU32 = AtomicU32::new(0);
-#[cfg(not(feature = "wav"))]
+#[cfg(all(feature = "mono", not(feature = "wav")))]
 static ENCODED: ConstStaticCell<[u8; FLAC_ENCODE_BYTES]> =
     ConstStaticCell::new([0; FLAC_ENCODE_BYTES]);
-#[cfg(not(feature = "wav"))]
+#[cfg(all(feature = "mono", not(feature = "wav")))]
 static PCM: ConstStaticCell<[i32; FLAC_BLOCK]> = ConstStaticCell::new([0; FLAC_BLOCK]);
 static MAX_BACKLOG: AtomicU32 = AtomicU32::new(0);
+static RETENTION_SILENCE_FRAMES: AtomicU32 = AtomicU32::new(0);
 static ARMED: AtomicBool = AtomicBool::new(false);
 #[global_allocator]
 static HEAP: embedded_alloc::LlffHeap = embedded_alloc::LlffHeap::empty();
@@ -73,7 +102,7 @@ impl<F: core::future::Future> core::future::Future for Phase<F> {
 async fn main(spawner: Spawner) -> ! {
     stack_probe::initialize();
     unsafe {
-        embedded_alloc::init!(HEAP, 4096);
+        embedded_alloc::init!(HEAP, 3072);
     }
     let mut config = embassy_stm32::Config::default();
     config.rcc.hse = Some(Hse {
@@ -103,6 +132,13 @@ async fn main(spawner: Spawner) -> ! {
     config.rcc.mux.clk48sel = rcc::mux::Clk48sel::PLLSAI1_Q;
     config.rcc.ls = LsConfig::off();
     let p = embassy_stm32::init(config);
+    // Bulk SD traffic must not preempt the microphone drain executor (P1).
+    // DMA1 audio completion and the system timer retain their P0 priority.
+    {
+        use embassy_stm32::interrupt::{InterruptExt, Priority};
+        embassy_stm32::interrupt::SDMMC1.set_priority(Priority::P2);
+        embassy_stm32::interrupt::DMA2_CHANNEL5.set_priority(Priority::P2);
+    }
     let red = Output::new(p.PB11, Level::High, Speed::Low);
     let green = Output::new(p.PC3, Level::High, Speed::Low);
     let blue = Output::new(p.PC1, Level::High, Speed::Low);
@@ -126,31 +162,43 @@ async fn main(spawner: Spawner) -> ! {
         FLAC_BLOCK,
         config::GPS_OFF_SECONDS
     );
-    let chain = capture::start(p.TIM3, p.TIM2, p.PB5);
-    defmt::info!("AARDWOLF L4 PPS uncertainty_us={}", chain.uncertainty_us);
-    let mut uart_config = usart::Config::default();
-    uart_config.baudrate = 38400;
-    uart_config.eager_reads = Some(1);
-    let uart = BufferedUart::new(
-        p.USART2,
-        p.PA3,
-        p.PA2,
-        UART_TX.take(),
-        UART_RX.take(),
-        gnss::Irqs,
-        uart_config,
-    )
-    .unwrap();
-    spawner.spawn(gnss::time_task().unwrap());
-    spawner.spawn(gnss::anchors_task().unwrap());
-    spawner.spawn(gnss::location_task().unwrap());
-    spawner.spawn(gnss::quality_task().unwrap());
-    spawner.spawn(
-        gnss::driver_task(gnss::Serial::new(uart), gnss::Pps { _chain: chain }, enable).unwrap(),
-    );
-    GPS.command_sender()
-        .send(raylar_drivers::gps::GpsCommand::Start)
-        .await;
+    // A fresh hardware random boot ID binds companion files across resets.
+    streams::BOOT_ID.store(quad::boot_id(p.RNG), Relaxed);
+    #[cfg(not(feature = "local-time"))]
+    {
+        let chain = capture::start(p.TIM3, p.TIM2, p.PB5);
+        defmt::info!("AARDWOLF L4 PPS uncertainty_us={}", chain.uncertainty_us);
+        let mut uart_config = usart::Config::default();
+        uart_config.baudrate = 38400;
+        uart_config.eager_reads = Some(1);
+        let uart = BufferedUart::new(
+            p.USART2,
+            p.PA3,
+            p.PA2,
+            UART_TX.take(),
+            UART_RX.take(),
+            gnss::Irqs,
+            uart_config,
+        )
+        .unwrap();
+        spawner.spawn(gnss::time_task().unwrap());
+        spawner.spawn(gnss::anchors_task().unwrap());
+        spawner.spawn(gnss::location_task().unwrap());
+        spawner.spawn(gnss::quality_task().unwrap());
+        spawner.spawn(
+            gnss::driver_task(gnss::Serial::new(uart), gnss::Pps { _chain: chain }, enable)
+                .unwrap(),
+        );
+        GPS.command_sender()
+            .send(raylar_drivers::gps::GpsCommand::Start)
+            .await;
+    }
+    #[cfg(feature = "local-time")]
+    {
+        let _ = enable;
+        spawner.spawn(gnss::time_task().unwrap());
+        spawner.spawn(local_time::task().unwrap());
+    }
     let mut sd_config = SdConfig::default();
     sd_config.data_transfer_timeout = 24_000_000;
     let sdmmc = SDMMC.init(Sdmmc::new_4bit(
@@ -182,7 +230,12 @@ async fn main(spawner: Spawner) -> ! {
         },
     );
     streams::log(format_args!(
-        "startup target=L4Evo mode=REAL-GPS firmware={} git={} build_unix={}",
+        "startup target=L4Evo mode={} firmware={} git={} build_unix={}",
+        if cfg!(feature = "local-time") {
+            "LOCAL-TIME-BENCH"
+        } else {
+            "REAL-GPS"
+        },
         env!("CARGO_PKG_VERSION"),
         env!("L4_GIT"),
         env!("L4_BUILD_UNIX")
@@ -203,7 +256,7 @@ async fn main(spawner: Spawner) -> ! {
             version.as_str()
         }
     ));
-    streams::log(format_args!("policy mono=16000 codec={} source_bits=24 block={} predictor=Fixed1 segment_s=60 gps_off_s={}",CODEC,FLAC_BLOCK,config::GPS_OFF_SECONDS));
+    streams::log(format_args!("policy channels={} rate=16000 reference={} bits=24 flac_block={} crcl_block={} crcl_bits=10 min_shift=6 segment_s=60",CHANNELS,CODEC,FLAC_BLOCK,SPATIAL_BLOCK));
     if Phase(logging.drain()).await.is_err() || Phase(logging.flush()).await.is_err() {
         fault::park(fault::Fault::Storage).await;
     }
@@ -218,7 +271,7 @@ async fn main(spawner: Spawner) -> ! {
         },
     )
     .unwrap();
-    #[cfg(not(feature = "wav"))]
+    #[cfg(all(feature="mono",not(feature = "wav")))]
     let mut recorder = AudioRecorder::<_, _, AUDIO_CAPACITY, 1, FLAC_ENCODE_BYTES, FLAC_BLOCK>::new_flac_with_buffers(
         &AUDIO, streams::Recording::new(), streams::metadata(),
         AudioRecorderConfig { recording_seconds: SEGMENT_SECONDS, storage_layout: StorageLayout::HourlyFolders },
@@ -226,8 +279,18 @@ async fn main(spawner: Spawner) -> ! {
             block_samples: FLAC_BLOCK, prediction: raylar_audio_recorder_service::FlacPrediction::Fixed(1) },
         ENCODED.take(), PCM.take(),
     ).unwrap();
+    #[cfg(not(feature = "mono"))]
+    let mut recorder = quad::recorder();
     spawner.spawn(diagnostics::cpu_task().unwrap());
+    #[cfg(feature = "mono")]
     spawner.spawn(audio::capture(p.PC2, p.PB12, p.DMA1_CH4).unwrap());
+    #[cfg(not(feature = "mono"))]
+    audio::spawner().spawn(
+        audio::capture(
+            p.PC2, p.PB12, p.PC7, p.PB6, p.PB10, p.DMA1_CH4, p.DMA1_CH5, p.DMA1_CH6, p.DMA1_CH7,
+        )
+        .unwrap(),
+    );
     let (_, syslog) = Phase(embassy_futures::join::join(
         recording_session(&mut recorder),
         logging_session(logging),
@@ -238,8 +301,16 @@ async fn main(spawner: Spawner) -> ! {
         cfg!(any(feature = "bench-audio-ui", feature = "bench-codec"))
             || (cfg!(feature = "bench-gps-cycle") && gnss::BENCH_FINISH.load(Relaxed))
     );
-    defmt::assert!(streams::OPEN.load(Relaxed) == 0 && streams::MAX_OPEN.load(Relaxed) == 2);
+    defmt::assert!(
+        streams::OPEN.load(Relaxed) == 0 && streams::MAX_OPEN.load(Relaxed) == STREAM_COUNT as u32
+    );
     defmt::assert!(audio::DMA_ERRORS.load(Relaxed) == 0 && capture::FAULTS.load(Relaxed) == 0);
+    #[cfg(all(feature = "bench-glitches", not(feature = "mono")))]
+    defmt::assert!(
+        audio::DMA_RECOVERIES.load(Relaxed) > 0
+            && audio::DMA_SILENCE_FRAMES.load(Relaxed) > 0
+            && RETENTION_SILENCE_FRAMES.load(Relaxed) > 0
+    );
     defmt::assert!(
         streams::CLOSED.load(Relaxed) == recorder.storage().opened
             && streams::CLOSED.load(Relaxed)
@@ -275,7 +346,7 @@ type Recorder = AudioRecorder<
     1,
     4096,
 >;
-#[cfg(not(feature = "wav"))]
+#[cfg(all(feature = "mono", not(feature = "wav")))]
 type Recorder = AudioRecorder<
     'static,
     streams::Recording,
@@ -286,6 +357,8 @@ type Recorder = AudioRecorder<
     FLAC_BLOCK,
     raylar_audio_recorder_service::BorrowedBuffers<'static, FLAC_ENCODE_BYTES, FLAC_BLOCK>,
 >;
+#[cfg(not(feature = "mono"))]
+type Recorder = quad::Recorder;
 async fn recording_session(recorder: &mut Recorder) {
     while TIME.current_utc().is_err() {
         Timer::after_millis(100).await;
@@ -314,7 +387,8 @@ async fn recording_session(recorder: &mut Recorder) {
             fault::park(fault::Fault::Storage).await;
         }
     }
-    // Prepare the filesystem/cache and header before any PCM is published.
+    // Prepare the filesystem/cache before any PCM is published. Paired headers
+    // retain the actual first source-frame index and timestamp on first read.
     // Large-card bitmap scans and first-directory allocation have no DMA deadline.
     if let Err(error) = Phase(recorder.start_at(UtcTimestamp::from_micros(next))).await {
         defmt::error!("AARDWOLF L4 prepare {}", error);
@@ -331,13 +405,33 @@ async fn recording_session(recorder: &mut Recorder) {
         start.as_ticks()
     ));
     stack_probe::check("recording");
+    let mut timeline_frames = 0u64;
+    let mut gap_start = 0u64;
+    let mut gap_frames = 0u64;
     loop {
         match recorder
             .record_next_with_source_timeout(Duration::from_secs(3))
             .await
         {
             Ok(progress) => {
+                #[cfg(feature = "mono")]
                 defmt::assert!(progress.dropped_samples == 0, "AARDWOLF L4 dropped samples");
+                RETENTION_SILENCE_FRAMES
+                    .fetch_add((progress.dropped_samples / CHANNELS as u64) as u32, Relaxed);
+                if progress.dropped_samples != 0 {
+                    if gap_frames == 0 {
+                        gap_start = timeline_frames;
+                    }
+                    gap_frames += progress.dropped_samples / CHANNELS as u64;
+                }
+                if gap_frames != 0
+                    && (progress.rotated
+                        || (progress.dropped_samples == 0 && progress.pcm_samples != 0))
+                {
+                    streams::log(format_args!("audio_gap reason=retention first_source_frame={} frames={} fill=zero_all_channels",gap_start,gap_frames));
+                    gap_frames = 0;
+                }
+                timeline_frames += (progress.pcm_samples / CHANNELS) as u64;
                 CONSUMED_SAMPLES.fetch_add(progress.pcm_samples as u32, Relaxed);
                 MAX_BACKLOG.fetch_max(progress.backlog_samples as u32, Relaxed);
                 MAX_CODEC_US.fetch_max(progress.codec_elapsed_us as u32, Relaxed);
@@ -374,8 +468,10 @@ async fn recording_session(recorder: &mut Recorder) {
 
 fn finish_bench() {
     streams::log(format_args!(
-        "bench_complete segments={} dma_errors=0 dropped_samples=0 real_gps=true",
-        streams::CLOSED.load(Relaxed)
+        "bench_complete segments={} retention_silence_frames={} local_time={}",
+        streams::CLOSED.load(Relaxed),
+        RETENTION_SILENCE_FRAMES.load(Relaxed),
+        cfg!(feature = "local-time")
     ));
     ARMED.store(false, Relaxed);
     audio::STOP.store(true, Relaxed);
@@ -420,6 +516,9 @@ async fn logging_session(
                 audio::DMA_ERRORS.load(Relaxed)
             ));
             if heartbeat % 10 == 0 {
+                #[cfg(not(feature = "mono"))]
+                streams::log(format_args!("audio_recovery dma_rejoins={} dma_silence_frames={} retention_silence_frames={} policy=silence_all_channels",
+                    audio::DMA_RECOVERIES.load(Relaxed),audio::DMA_SILENCE_FRAMES.load(Relaxed),RETENTION_SILENCE_FRAMES.load(Relaxed)));
                 let gps = GPS.stats();
                 let time = TIME.time_state();
                 let location = LOCATION.state();

@@ -8,7 +8,7 @@ use crate::{
 };
 use embassy_time::Duration;
 use raylar_audiosource::{AudioSource, Reader, ReaderStart};
-use raylar_crcl_encoder_service::{Config, Encoder, Sha256};
+use raylar_crcl_encoder_service::{ChannelEncoder, Config, Sha256};
 use raylar_flac_encoder_service::{Config as FlacConfig, Encoder as FlacEncoder};
 use raylar_time_service::UtcTimestamp;
 
@@ -40,7 +40,7 @@ pub struct HexaphonicConfig {
 }
 
 /// All sample and output buffers are supplied once by the caller. Quantization
-/// overwrites the five non-reference channels in `pcm`, without sample scratch.
+/// overwrites the non-reference channels in `pcm`, without sample scratch.
 pub struct HexaphonicBuffers<'a> {
     pub pcm: &'a mut [i32],
     pub spatial_output: &'a mut [u8],
@@ -61,19 +61,25 @@ pub struct LifecycleMetrics {
     pub first_source_frame: u64,
 }
 
-pub struct HexaphonicRecorder<
+/// Original U5 six-channel entry point; its profile and output are unchanged.
+pub type HexaphonicRecorder<'a, S, M, const C: usize, const R: usize> =
+    ChannelRecorder<'a, S, M, C, R, 6>;
+
+/// Shared paired recorder for four or six synchronous interleaved channels.
+pub struct ChannelRecorder<
     'a,
     S: RecordingStorage,
     M,
     const CAPACITY: usize,
     const READERS: usize,
+    const N: usize,
 > {
     reader: Reader<'a, CAPACITY, READERS>,
     storage: S,
     metadata: M,
     config: HexaphonicConfig,
     buffers: HexaphonicBuffers<'a>,
-    spatial: Encoder,
+    spatial: ChannelEncoder<N>,
     flac: Option<FlacEncoder>,
     rate: u32,
     tick_hz: u32,
@@ -94,10 +100,17 @@ pub struct HexaphonicRecorder<
     first_ticks: u64,
     last_checkpoint_second: u64,
     lifecycle: LifecycleMetrics,
+    fill_gaps_with_silence: bool,
 }
 
-impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
-    HexaphonicRecorder<'a, S, M, C, R>
+impl<
+        'a,
+        S: RecordingStorage,
+        M: MetadataSource,
+        const C: usize,
+        const R: usize,
+        const N: usize,
+    > ChannelRecorder<'a, S, M, C, R, N>
 {
     pub fn new(
         source: &'a AudioSource<C, R>,
@@ -115,13 +128,14 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             .ok()
             .and_then(|rate| rate.checked_mul(config.recorder.recording_seconds as usize + 1))
             .ok_or(AudioRecorderError::InvalidConfig)?;
-        if format.channels != 6
+        if !matches!(N, 4 | 6)
+            || format.channels as usize != N
             || format.sample_rate_hz == 0
             || format.timestamp_hz == 0
-            || !C.is_multiple_of(6)
+            || !C.is_multiple_of(N)
             || config.recorder.recording_seconds == 0
-            || buffers.pcm.len() < config.spatial.block_frames * 6
-            || buffers.spatial_output.len() < config.spatial.workspace_capacity()
+            || buffers.pcm.len() < config.spatial.block_frames * N
+            || buffers.spatial_output.len() < config.spatial.workspace_capacity_for_channels(N)
             || buffers.reference_output.len() < 1024
             || max_frames > u32::MAX as usize / 4
         {
@@ -131,7 +145,7 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             ReferenceFormat::Wav => None,
             ReferenceFormat::Flac(c) => {
                 if c.sample_rate_hz != format.sample_rate_hz
-                    || c.bits_per_sample != 32
+                    || !matches!(c.bits_per_sample, 24 | 32)
                     || buffers.reference_pcm.len() < c.block_samples
                     || buffers.reference_output.len()
                         < raylar_flac_encoder_service::frame_capacity(c.block_samples)
@@ -141,7 +155,8 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
                 Some(FlacEncoder::new(c).map_err(AudioRecorderError::Codec)?)
             }
         };
-        let spatial = Encoder::new(config.spatial).map_err(AudioRecorderError::Spatial)?;
+        let spatial =
+            ChannelEncoder::<N>::new(config.spatial).map_err(AudioRecorderError::Spatial)?;
         let reader = source
             .register(ReaderStart::Latest)
             .map_err(AudioRecorderError::AudioSource)?;
@@ -172,7 +187,21 @@ impl<'a, S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             first_ticks: 0,
             last_checkpoint_second: 0,
             lifecycle: LifecycleMetrics::default(),
+            fill_gaps_with_silence: false,
         })
+    }
+    /// Opt in before starting. Forward loss in the source's absolute sample
+    /// timeline becomes zero PCM in every lane; the default closes the prefix.
+    /// Storage failures and unquantifiable/backward timeline changes still fail.
+    pub fn set_silence_on_overrun(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), AudioRecorderError<S::Error>> {
+        if self.started_utc.is_some() {
+            return Err(AudioRecorderError::InvalidConfig);
+        }
+        self.fill_gaps_with_silence = enabled;
+        Ok(())
     }
     pub fn storage(&self) -> &S {
         &self.storage

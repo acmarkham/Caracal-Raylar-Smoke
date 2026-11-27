@@ -33,6 +33,9 @@ pub async fn storage(sdmmc: &'static mut Sdmmc<'static>) -> Setup {
         "AARDWOLF L4 insufficient free space"
     );
     let (mut old_log_length, needs_separator) = Phase(inspect_syslog(&mut fs)).await;
+    if cfg!(feature = "inspect-syslog") {
+        core::future::pending::<()>().await;
+    }
     defmt::assert!(old_log_length < aardwolf_l4::config::LOG_BUDGET_BYTES);
     defmt::info!(
         "AARDWOLF L4 SD ready serial={:08x} free_bytes={} cluster_bytes={} old_syslog_bytes={}",
@@ -72,6 +75,20 @@ async fn inspect_syslog(fs: &mut Fs) -> (u64, bool) {
             .await
             .unwrap();
         let length = file.metadata().len();
+        #[cfg(feature = "inspect-syslog")]
+        {
+            file.seek(fs, length.saturating_sub(16384)).await.unwrap();
+            let mut bytes = [0u8; 128];
+            loop {
+                let n = file.read(fs, &mut bytes).await.unwrap().unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                defmt::info!("SD SYSLOG data={=[u8]:02x}", &bytes[..n]);
+                embassy_time::Timer::after_millis(60).await;
+            }
+            defmt::info!("SD SYSLOG END length={}", length);
+        }
         let mut tail = [b'\n'];
         if length > 0 {
             file.seek(fs, length - 1).await.unwrap();

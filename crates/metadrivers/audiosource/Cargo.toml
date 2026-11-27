@@ -9,6 +9,9 @@ embassy-sync = "0.7.2"
 
 [features]
 default = []
+# Opt in only when producers/readers cross thread/interrupt execution contexts.
+# PCM callbacks then run inside a critical section and must remain bounded.
+interrupt-safe = []
 defmt = ["dep:defmt", "embassy-sync/defmt"]
 
 [dependencies.defmt]

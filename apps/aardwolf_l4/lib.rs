@@ -1,5 +1,6 @@
 //! L4 composition; the portable Aardwolf policy remains owned by the U5 app.
 #![no_std]
+pub mod audio_recovery;
 pub mod config;
 pub mod gnss_profile;
 #[path = "../aardwolf/policy.rs"]
@@ -9,7 +10,10 @@ pub mod ui_policy;
 pub const SAMPLE_RATE: u32 = 16_000;
 pub const SEGMENT_SECONDS: u32 = 60;
 pub const SEGMENT_SAMPLES: usize = SAMPLE_RATE as usize * SEGMENT_SECONDS as usize;
-pub const FLAC_BLOCK: usize = 1024;
+pub const CHANNELS: usize = if cfg!(feature = "mono") { 1 } else { 4 };
+pub const SPATIAL_BLOCK: usize = 256;
+pub const SPATIAL_ENCODE_BYTES: usize = 1536;
+pub const FLAC_BLOCK: usize = if cfg!(feature = "mono") { 1024 } else { 256 };
 pub const FLAC_ENCODE_BYTES: usize = FLAC_BLOCK * 4 + 32;
 pub const VERIFY_BYTES: usize = 1024 + FLAC_BLOCK * 3 + 32;
 pub const CODEC: &str = if cfg!(feature = "wav") { "wav" } else { "flac" };
@@ -21,7 +25,11 @@ pub const FILE_BUDGET: u64 = if cfg!(feature = "wav") {
 };
 pub const PAYLOAD_BYTES: u64 = SAMPLE_RATE as u64 * SEGMENT_SECONDS as u64 * 4;
 pub const FILE_BYTES: u64 = 512 + PAYLOAD_BYTES;
-pub const BENCH_SEGMENTS: usize = 20;
+pub const BENCH_SEGMENTS: usize = if cfg!(feature = "bench-gps-cycle") {
+    20
+} else {
+    2
+};
 pub const FNV_INITIAL: u32 = 0x811c9dc5;
 pub fn hash_bytes(mut hash: u32, bytes: &[u8]) -> u32 {
     for byte in bytes {
@@ -124,7 +132,8 @@ mod tests {
     #[test]
     fn storage_gate_preserves_aardwolf_reserve_and_cluster_rounding() {
         let cluster = 32768;
-        let needed = config::LOG_RESERVE_BYTES + FILE_BUDGET.div_ceil(cluster) * cluster + 1024;
+        let needed =
+            config::LOG_RESERVE_BYTES + config::AUDIO_FILE_BYTES.div_ceil(cluster) * cluster + 1024;
         assert!(!policy::can_start_audio(needed - 1, cluster as u32, 1024));
         assert!(policy::can_start_audio(needed, cluster as u32, 1024));
         assert!(!policy::can_start_audio(u64::MAX - 1, 1, u64::MAX - 1));

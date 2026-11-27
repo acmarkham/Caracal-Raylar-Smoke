@@ -1,6 +1,6 @@
 use crate::{
     bits::{fold, Bits},
-    Config, Error, Prediction, Representation, Sha256, Transform,
+    ChannelTransform, Config, Error, Prediction, Representation, Sha256,
 };
 
 const fn crc_table() -> [u32; 256] {
@@ -109,15 +109,18 @@ pub enum Completion {
     Discontinuity = 4,
 }
 
-pub struct Encoder {
+pub struct ChannelEncoder<const N: usize> {
     config: Config,
     frames: u64,
     sequence: u32,
     data_records: u32,
 }
-impl Encoder {
+impl<const N: usize> ChannelEncoder<N> {
     pub fn new(config: Config) -> Result<Self, Error> {
         config.validate()?;
+        if !matches!(N, 4 | 6) {
+            return Err(Error::InvalidConfig);
+        }
         Ok(Self {
             config,
             frames: 0,
@@ -134,7 +137,13 @@ impl Encoder {
         self.frames
     }
     pub fn header(&self, header: &Header<'_>, output: &mut [u8]) -> Result<usize, Error> {
-        if output.len() < crate::HEADER_CAPACITY {
+        if output.len()
+            < if N == 6 {
+                crate::HEADER_CAPACITY
+            } else {
+                crate::COMPACT_HEADER_CAPACITY
+            }
+        {
             return Err(Error::OutputTooSmall);
         }
         if header.sample_rate_hz == 0
@@ -168,7 +177,7 @@ impl Encoder {
         put32(output, 12, u32::from(self.config.is_cheap()));
         output[16..32].copy_from_slice(&header.identity);
         put32(output, 32, header.sample_rate_hz);
-        output[36..40].copy_from_slice(&[32, 1, 6, 5]);
+        output[36..40].copy_from_slice(&[32, 1, N as u8, (N - 1) as u8]);
         put16(output, 40, self.config.block_frames as u16);
         output[42] = self.config.bits;
         output[43] = header.reference_format;
@@ -176,7 +185,8 @@ impl Encoder {
         put64(output, 52, header.intended_utc_us);
         put64(output, 60, header.planned_frames);
         put32(output, 72, header.tick_hz);
-        let mut writer = Tlvs::new(&mut output[92..4092]);
+        let end = output.len().min(4096) - 4;
+        let mut writer = Tlvs::new(&mut output[92..end]);
         time_tlvs(&mut writer, header.time)?;
         writer.add(3, true, header.device.as_bytes())?;
         writer.add(4, true, &header.boot.to_le_bytes())?;
@@ -189,7 +199,7 @@ impl Encoder {
                 header.firmware.as_bytes()
             },
         )?;
-        writer.add(6, true, &[1, 2, 3, 4, 5, 6])?;
+        writer.add(6, true, &[1, 2, 3, 4, 5, 6][..N])?;
         writer.add(7, true, header.capture_config.as_bytes())?;
         if let Some(id) = header.calibration_id {
             writer.add(10, false, id.as_bytes())?;
@@ -213,21 +223,25 @@ impl Encoder {
         Ok(len)
     }
     /// The caller appends the complete returned record, then calls commit_data.
-    pub fn data(&self, transformed: Transform<'_>, output: &mut [u8]) -> Result<usize, Error> {
+    pub fn data(
+        &self,
+        transformed: ChannelTransform<'_, N>,
+        output: &mut [u8],
+    ) -> Result<usize, Error> {
         use raylar_stage_profiling::{Span, Stage};
         let _profile = Span::new(Stage::CrclSerialize);
         if !transformed.ready() || transformed.config != self.config {
             return Err(Error::NotReady);
         }
-        let frames = transformed.pcm.len() / 6;
-        if output.len() < self.config.record_capacity(frames) {
+        let frames = transformed.pcm.len() / N;
+        if output.len() < self.config.record_capacity_for_channels(frames, N) {
             return Err(Error::OutputTooSmall);
         }
         self.validate_next(frames)?;
-        let data_header = if self.config.is_cheap() { 88 } else { 92 };
+        let data_header = 28 + (N - 1) * 12 + if self.config.is_cheap() { 0 } else { 4 };
         output[..data_header].fill(0);
         let mut position = data_header;
-        for (c, info) in transformed.channels.iter().enumerate() {
+        for (c, info) in transformed.channels[..N - 1].iter().enumerate() {
             let _pack_profile = Span::new(Stage::CrclPack);
             raylar_stage_profiling::representation(info.representation as u8);
             let descriptor = 28 + c * 12;
@@ -238,7 +252,7 @@ impl Encoder {
             let mut bits = Bits::new(&mut output[position..]);
             let mut previous = 0;
             for n in 0..frames {
-                let q = transformed.pcm[n * 6 + c + 1];
+                let q = transformed.pcm[n * N + c + 1];
                 match info.representation {
                     Representation::Zero => {}
                     Representation::Packed => bits.write(q as u32, self.config.bits)?,
@@ -260,7 +274,7 @@ impl Encoder {
             put32(output, descriptor + 8, bytes as u32);
             position += bytes;
         }
-        finish_record(
+        finish_record::<N>(
             self.config.is_cheap(),
             output,
             1,
@@ -280,7 +294,7 @@ impl Encoder {
         let mut writer = Tlvs::new(&mut output[header..544]);
         time_tlvs(&mut writer, time)?;
         let end = header + writer.position;
-        finish_record(
+        finish_record::<N>(
             self.config.is_cheap(),
             output,
             2,
@@ -311,7 +325,7 @@ impl Encoder {
         if !self.config.is_cheap() {
             output[56..88].copy_from_slice(&digest);
         }
-        finish_record(
+        finish_record::<N>(
             self.config.is_cheap(),
             output,
             3,
@@ -347,7 +361,7 @@ impl Encoder {
     }
 }
 
-fn finish_record(
+fn finish_record<const N: usize>(
     cheap: bool,
     out: &mut [u8],
     kind: u8,
@@ -357,7 +371,7 @@ fn finish_record(
     payload_end: usize,
 ) -> Result<usize, Error> {
     let (header, channels) = if kind == 1 {
-        (if cheap { 88 } else { 92 }, 5)
+        (28 + (N - 1) * 12 + if cheap { 0 } else { 4 }, (N - 1) as u8)
     } else {
         (if cheap { 28 } else { 32 }, 0)
     };

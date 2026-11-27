@@ -196,7 +196,11 @@ pub async fn files(
                 lines += 1;
                 heartbeats += u32::from(line.contains("heartbeat="));
                 closed += u32::from(line.contains("segment_closed"));
-                real_marker |= line.contains("REAL-GPS");
+                real_marker |= line.contains(if cfg!(feature = "local-time") {
+                    "LOCAL-TIME-BENCH"
+                } else {
+                    "REAL-GPS"
+                });
                 complete_marker |= line.contains("bench_complete");
                 cpu += u32::from(line.contains("cpu usage="));
                 line.clear();

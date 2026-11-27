@@ -34,8 +34,8 @@ pub(super) fn wav_header(
     Ok(1024)
 }
 
-impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
-    HexaphonicRecorder<'_, S, M, C, R>
+impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize, const N: usize>
+    ChannelRecorder<'_, S, M, C, R, N>
 {
     pub(super) async fn feed_reference(
         &mut self,
@@ -50,7 +50,7 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
             for start in (0..frames).step_by(capacity) {
                 let count = capacity.min(frames - start);
                 for n in 0..count {
-                    let bytes = self.buffers.pcm[(start + n) * 6].to_le_bytes();
+                    let bytes = self.buffers.pcm[(start + n) * N].to_le_bytes();
                     if !self.config.spatial.is_cheap() {
                         self.hash.update(&bytes);
                     }
@@ -66,7 +66,7 @@ impl<S: RecordingStorage, M: MetadataSource, const C: usize, const R: usize>
         } else {
             let block = self.flac.as_ref().unwrap().config().block_samples;
             for n in 0..frames {
-                let value = self.buffers.pcm[n * 6];
+                let value = self.buffers.pcm[n * N];
                 if !self.config.spatial.is_cheap() {
                     self.hash.update(&value.to_le_bytes());
                 }

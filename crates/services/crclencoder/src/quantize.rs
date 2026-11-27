@@ -84,7 +84,7 @@ impl RiceStats {
 
 /// Bounded, resumable two-pass transform over interleaved recorder-owned PCM.
 /// No extra sample arrays; MIC1 stays unchanged even when block sizes differ.
-pub struct Transform<'a> {
+pub struct ChannelTransform<'a, const N: usize> {
     pub(crate) pcm: &'a mut [i32],
     pub(crate) channels: [Channel; 5],
     pub(crate) config: Config,
@@ -98,10 +98,14 @@ pub struct Transform<'a> {
     direct: RiceStats,
     temporal: RiceStats,
 }
-impl<'a> Transform<'a> {
+impl<'a, const N: usize> ChannelTransform<'a, N> {
     pub fn new(pcm: &'a mut [i32], config: Config) -> Result<Self, Error> {
         config.validate()?;
-        if pcm.is_empty() || !pcm.len().is_multiple_of(6) || pcm.len() / 6 > config.block_frames {
+        if !matches!(N, 4 | 6)
+            || pcm.is_empty()
+            || !pcm.len().is_multiple_of(N)
+            || pcm.len() / N > config.block_frames
+        {
             return Err(Error::InvalidConfig);
         }
         Ok(Self {
@@ -124,13 +128,13 @@ impl<'a> Transform<'a> {
         if self.config.is_cheap() {
             return self.advance_cheap(budget);
         }
-        let frames = self.pcm.len() / 6;
-        while budget != 0 && self.channel < 6 {
-            let index = self.offset * 6 + self.channel;
+        let frames = self.pcm.len() / N;
+        while budget != 0 && self.channel < N {
+            let index = self.offset * N + self.channel;
             let sampled = sample(self.offset + self.channel * 7);
             if !self.quantizing {
                 let _profile = sampled.then(|| Span::new(Stage::SpatialDeltaSample));
-                let reference = self.pcm[self.offset * 6];
+                let reference = self.pcm[self.offset * N];
                 let value = self.pcm[index];
                 let bound = self.config.max_abs_pcm;
                 if reference < -bound || reference > bound || value < -bound || value > bound {
@@ -175,7 +179,7 @@ impl<'a> Transform<'a> {
                 }
             }
         }
-        Ok(self.channel == 6)
+        Ok(self.channel == N)
     }
     fn finish_channel(&mut self, frames: usize) {
         let _profile = Span::new(Stage::RiceSelect);
@@ -215,6 +219,6 @@ impl<'a> Transform<'a> {
         self.temporal = RiceStats::default();
     }
     pub(crate) fn ready(&self) -> bool {
-        self.channel == 6
+        self.channel == N
     }
 }

@@ -16,17 +16,17 @@ mod wav;
 pub use buffers::{BorrowedBuffers, OwnedBuffers, RecorderBuffers};
 pub use metadata::{MetadataSource, RecordingMetadata, TimeMetadataSource};
 pub use multichannel::{
-    CaptureParameters, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder, LifecycleMetrics,
-    ReferenceFormat,
+    CaptureParameters, ChannelRecorder, HexaphonicBuffers, HexaphonicConfig, HexaphonicRecorder,
+    LifecycleMetrics, ReferenceFormat,
 };
 pub use raylar_crcl_encoder_service as crcl;
 pub use raylar_flac_encoder_service::{
-    Config as FlacConfig, DEFAULT_BLOCK_SAMPLES as FLAC_BLOCK_SAMPLES,
-    Prediction as FlacPrediction, frame_capacity as flac_frame_capacity,
+    frame_capacity as flac_frame_capacity, Config as FlacConfig, Prediction as FlacPrediction,
+    DEFAULT_BLOCK_SAMPLES as FLAC_BLOCK_SAMPLES,
 };
 pub use service::{
-    AudioRecorder, AudioRecorderConfig, AudioRecorderError, DEFAULT_ENCODE_BUFFER_BYTES,
-    RecorderProgress,
+    AudioRecorder, AudioRecorderConfig, AudioRecorderError, RecorderProgress,
+    DEFAULT_ENCODE_BUFFER_BYTES,
 };
 pub use storage::RecordingStorage;
-pub use wav::{WAV_HEADER_BYTES, WavContainer};
+pub use wav::{WavContainer, WAV_HEADER_BYTES};

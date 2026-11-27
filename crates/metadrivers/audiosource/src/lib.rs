@@ -11,19 +11,21 @@ extern crate std;
 
 use core::cell::RefCell;
 
-use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-#[cfg(target_arch = "arm")]
+#[cfg(all(target_arch = "arm", not(feature = "interrupt-safe")))]
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::watch::{Receiver as WatchReceiver, Watch};
 
 pub const DEFAULT_READERS: usize = 4;
 
 // PCM callbacks can be nontrivial. On Cortex-M the buffer is task-context-only
-// so those callbacks do not mask DMA interrupts. The host fallback is for tests.
-#[cfg(target_arch = "arm")]
+// so those callbacks do not mask DMA interrupts. L4 explicitly opts into the
+// interrupt-safe critical-section mutex for its priority capture executor.
+// The default U5 mutex and callback behavior remain unchanged.
+#[cfg(all(target_arch = "arm", not(feature = "interrupt-safe")))]
 type SourceMutex = ThreadModeRawMutex;
-#[cfg(not(target_arch = "arm"))]
+#[cfg(any(not(target_arch = "arm"), feature = "interrupt-safe"))]
 type SourceMutex = CriticalSectionRawMutex;
 type NotificationMutex = CriticalSectionRawMutex;
 type NotificationReceiver<'a, const READERS: usize> =
@@ -172,6 +174,22 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
         CAPACITY
     }
 
+    /// Largest unread backlog among active readers, in interleaved scalars.
+    /// Samples already copied by a read callback are consumed even while the
+    /// caller subsequently encodes or writes that block asynchronously.
+    pub fn maximum_reader_backlog(&self) -> usize {
+        self.state.lock(|cell| {
+            let state = cell.borrow();
+            state
+                .readers
+                .iter()
+                .filter(|r| r.active)
+                .map(|r| (state.write_position - r.cursor) as usize)
+                .max()
+                .unwrap_or(0)
+        })
+    }
+
     fn validate(&self) -> Result<usize, Error> {
         let channels = usize::from(self.format.channels);
         if self.format.sample_rate_hz == 0 || channels == 0 || self.format.timestamp_hz == 0 {
@@ -185,7 +203,8 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
 
     /// Append complete interleaved PCM frames.
     ///
-    /// Call this from task/thread mode, not an interrupt handler.
+    /// Default Cortex-M builds require thread mode. With `interrupt-safe`,
+    /// bounded interrupt-executor producers are permitted too.
     ///
     /// The first non-empty write establishes the timeline epoch from its
     /// `timestamp_ticks`; later timestamps are accepted so producers can use
@@ -199,7 +218,8 @@ impl<const CAPACITY: usize, const READERS: usize> AudioSource<CAPACITY, READERS>
     /// Append samples generated directly into the ring.
     ///
     /// This lets a hardware adapter interleave planar DMA channels without an
-    /// intermediate staging buffer. Call it from task/thread mode.
+    /// intermediate staging buffer. Default Cortex-M builds require thread
+    /// mode; `interrupt-safe` permits bounded interrupt-executor callbacks.
     pub fn write_from_fn<F>(
         &self,
         sample_count: usize,
@@ -389,7 +409,8 @@ impl<const CAPACITY: usize, const READERS: usize> Reader<'_, CAPACITY, READERS> 
     ///
     /// The callback returns how many samples it consumed. The value is clamped
     /// to the supplied chunk and must preserve whole interleaved frames.
-    /// This API is task/thread-mode-only.
+    /// Default Cortex-M builds require thread mode. With `interrupt-safe`,
+    /// the callback masks interrupts and must be kept bounded.
     pub fn read<F>(&mut self, max_samples: usize, consume: F) -> Result<ReadStatus, Error>
     where
         F: FnOnce(AudioChunk<'_>) -> usize,

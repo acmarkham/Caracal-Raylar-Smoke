@@ -30,6 +30,38 @@ class DecoderTests(unittest.TestCase):
     def test_known_crc(self):
         self.assertEqual(crc32c(b"123456789"), 0xE3069283)
 
+    def test_four_channels_and_24bit_flac_rotation_tail_and_quantization(self):
+        for cheap in (False, True):
+            for kind in ("wav", "flac"):
+                for segment, count in ((0, 16000), (1, 13)):
+                    stem = FIXTURES / f"quad-{'cheap-' if cheap else ''}{kind}-{segment}"
+                    ref = reference(stem.with_suffix("." + kind))
+                    self.assertEqual(ref["raw"], stem.with_suffix(".s32le").read_bytes())
+                    data = stem.with_suffix(".CRCL").read_bytes()
+                    decoded, report = decode(data, ref)
+                    self.assertEqual((report["channels"], report["frames"], report["complete"]), (4, count, True))
+                    self.assertEqual(decoded[::4], ref["pcm"])
+                    offset = int.from_bytes(data[10:12], "little")
+                    first = 0
+                    while data[offset + 4] != 3:
+                        size = int.from_bytes(data[offset + 8:offset + 12], "little")
+                        if data[offset + 4] == 1:
+                            frames = int.from_bytes(data[offset + 24:offset + 26], "little")
+                            for c in range(1, 4):
+                                scale = int.from_bytes(data[offset + 32 + (c - 1) * 12:offset + 36 + (c - 1) * 12], "little")
+                                bound = (1 << (scale - 1)) if cheap and scale else (scale + 510) // 1022
+                                for n in range(first, first + frames):
+                                    original = (((segment * 16000 + n) * 13 + c * 157) % 200_000) - 100_000
+                                    self.assertLessEqual(abs(decoded[n * 4 + c] - original), bound)
+                            first += frames
+                        offset += size
+                    with self.assertRaises(FormatError):
+                        decode(data[:-1], ref)
+                    corrupt = bytearray(data)
+                    corrupt[38] = 6
+                    with self.assertRaises(FormatError):
+                        decode(corrupt, ref)
+
     def test_cheap_wav_flac_rotation_tail_and_bounded_independent_channels(self):
         for kind in ("wav", "flac"):
             for segment, count in ((0, 16000), (1, 13)):

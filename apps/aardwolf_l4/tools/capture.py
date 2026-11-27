@@ -13,22 +13,33 @@ import time
 
 parser=argparse.ArgumentParser()
 parser.add_argument('stage',help='Evidence filename prefix, e.g. bench-03')
-parser.add_argument('--mode',choices=['bench','continuous','fault'],default='bench')
+parser.add_argument('--mode',choices=['bench','continuous','fault','inspect'],default='bench')
 parser.add_argument('--evidence-dir',type=Path,default=Path('apps/aardwolf_l4/evidence'))
 parser.add_argument('--elf',type=Path,default=Path('target/thumbv7em-none-eabihf/release/aardwolf-l4'))
 parser.add_argument('--connect-under-reset',action='store_true',help='Recover a target after an interrupted flash')
+parser.add_argument('--attach',action='store_true',help='Collect RTT from the running image without flashing or resetting')
+parser.add_argument('--segments',type=int,default=2,help='Minute closures to observe in continuous mode')
 parser.add_argument('--timeout-seconds',type=int,help='Override the normal observation window for long cold starts')
 args=parser.parse_args()
 if Path(args.stage).name != args.stage:
     parser.error('stage must be a filename prefix')
 if args.timeout_seconds is not None and args.timeout_seconds <= 0:
     parser.error('--timeout-seconds must be positive')
+if args.segments <= 0:
+    parser.error('--segments must be positive')
 out=args.evidence_dir;out.mkdir(parents=True,exist_ok=True)
+# Freeze the image before opening USB. Later builds cannot change the image
+# associated with this capture or its decode metadata.
+frozen=out/(args.stage+'.elf')
+frozen.write_bytes(args.elf.read_bytes())
 # The shell entry point is `rtk proxy python ...`. Launch the debugger as our
 # direct child so its process handle can reliably release USB on Windows.
-cmd=['probe-rs','run','--chip','STM32L476RGTx','--probe','0483:3748','--speed','100','--verify','--preverify','--non-interactive','--no-catch-reset','--no-catch-hardfault','--disable-progressbars','--no-location',str(args.elf)]
+cmd=['probe-rs','run','--chip','STM32L476RGTx','--probe','0483:3748','--speed','100','--verify','--preverify','--non-interactive','--no-catch-reset','--no-catch-hardfault','--disable-progressbars','--no-location',str(frozen)]
 if args.connect_under_reset:cmd.insert(-1,'--connect-under-reset')
-record={'started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'command':cmd,'mode':args.mode,'elf_sha256':hashlib.sha256(args.elf.read_bytes()).hexdigest()}
+if args.attach:
+    cmd[1]='attach'
+    cmd=[x for x in cmd if x not in ('--verify','--preverify','--disable-progressbars')]
+record={'started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'command':cmd,'mode':args.mode,'source_elf':str(args.elf),'elf_sha256':hashlib.sha256(frozen.read_bytes()).hexdigest()}
 timeout=args.timeout_seconds if args.timeout_seconds is not None else (1250 if args.mode=='bench' else 480)
 record['timeout_seconds']=timeout
 launch={}
@@ -54,7 +65,7 @@ try:
                 continue
             if line is None:break
             log.write(line);log.flush();print(line.rstrip(),flush=True)
-            marker={'bench':'AARDWOLF L4 PASS','continuous':'AARDWOLF L4 closed index=2 ','fault':'AARDWOLF L4 FAULT code='}[args.mode]
+            marker={'bench':'AARDWOLF L4 PASS','continuous':f'AARDWOLF L4 closed index={args.segments} ','fault':'AARDWOLF L4 FAULT code=','inspect':'SD SYSLOG END length='}[args.mode]
             if marker in line:passed=True;passed_at=time.monotonic()
             if args.mode != 'fault' and 'AARDWOLF L4 FAULT code=' in line:
                 passed=False;break
